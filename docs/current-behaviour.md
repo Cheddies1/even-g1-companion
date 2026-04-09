@@ -87,13 +87,15 @@ Capture is the most important practical mode after Glance, but it is not yet ful
 - native LC3 decode path exists
 - decoded PCM can be written to a WAV recorder
 - the Flutter/native bridge for capture is in place
+- saved WAV files are published to the public Android recordings collection
+- on the target phone this should appear as `Internal storage/Recordings/Even Companion`
 
 ### Current caveat
 
 What still needs device confirmation is whether the glasses mic session stops cleanly in practice when Capture mode stops saving.
 
 So:
-- WAV save path is plausible and partially implemented
+- WAV save path now targets a normal user-visible recordings location
 - real stop semantics are still an open validation item
 
 ## Navigate mode

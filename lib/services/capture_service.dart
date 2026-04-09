@@ -35,7 +35,7 @@ class CaptureService {
     }
 
     _isRecording = true;
-    await TextService.get.startSendText('REC\n--\nRecording\nTilt up or double tap to save');
+    await TextService.get.startSendText('REC');
     print('${DateTime.now()} Capture: recording started');
     return true;
   }

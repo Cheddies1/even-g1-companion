@@ -45,7 +45,10 @@ Current direction:
 - stop and save a WAV file on the phone
 - show simple status / save confirmation in the glasses
 
-The WAV save path is scaffolded and partially implemented, but still needs focused device validation.
+On the current Android target, saved WAV files are published into the public recordings collection so they appear in normal phone storage under:
+- `Internal storage/Recordings/Even Companion`
+
+The save target is now user-visible, but Capture mode still needs focused device validation for end-to-end stop/save reliability.
 
 ### Navigate
 Navigate mode is a lightweight notification-driven navigation surface.

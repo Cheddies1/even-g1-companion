@@ -66,6 +66,8 @@ class GlanceService {
   }
 
   Future<void> showLatestOrAdvance() async {
+    _clearTimer?.cancel();
+    _clearTimer = null;
     if (!_isVisible) {
       _currentIndex = 0;
     } else if (_notifications.isNotEmpty) {
@@ -76,7 +78,15 @@ class GlanceService {
         _currentIndex = 0;
       }
     }
-    await _enqueueRender(autoHide: true, markInteracted: true);
+    await _enqueueRender(autoHide: false, markInteracted: true);
+  }
+
+  void startLookDownTimeout() {
+    if (!_isVisible) {
+      return;
+    }
+    _restartClearTimer();
+    print('${DateTime.now()} Glance: tilt-down timeout started');
   }
 
   Future<void> close() async {

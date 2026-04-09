@@ -154,7 +154,7 @@ Decode path:
 Current technical model:
 - glasses mic packets arrive natively
 - LC3 is decoded to PCM natively
-- decoded PCM is appended into a WAV recorder
+- decoded PCM is buffered privately, then the final WAV is published via Android's public recordings media collection
 
 Capture mode depends on this existing path rather than inventing a new one.
 

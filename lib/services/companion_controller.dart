@@ -116,6 +116,7 @@ class CompanionController extends ChangeNotifier {
         _statusMessage = 'Glance updated';
         break;
       case 3:
+        GlanceService.get.startLookDownTimeout();
         _statusMessage = 'Glance waiting';
         break;
     }
