@@ -4,6 +4,9 @@ data class DashboardNotificationEntry(
     val key: String,
     val packageName: String,
     val source: String,
+    val title: String,
+    val text: String,
+    val bigText: String,
     val message: String,
     val postedAt: Long,
 )
@@ -40,6 +43,9 @@ object NotificationFeedStore {
                 "key" to entry.key,
                 "packageName" to entry.packageName,
                 "source" to entry.source,
+                "title" to entry.title,
+                "text" to entry.text,
+                "bigText" to entry.bigText,
                 "message" to entry.message,
                 "postedAt" to entry.postedAt,
             )

@@ -218,7 +218,7 @@ class EvenAI {
       startScreenWords = headString + startScreenWords;
 
       // The glasses need to have 0x30 before they can process 0x40
-      bool isSuccess = await sendEvenAIReply(startScreenWords, 0x01, 0x30, 0);
+      await sendEvenAIReply(startScreenWords, 0x01, 0x30, 0);
       
       // Send 0x40 after 3 seconds
       await Future.delayed(Duration(seconds: 3));
@@ -226,7 +226,7 @@ class EvenAI {
       if (_isManual) {
         return;
       }
-      isSuccess = await sendEvenAIReply(startScreenWords, 0x01, 0x40, 0);
+      await sendEvenAIReply(startScreenWords, 0x01, 0x40, 0);
       return;
     }
     if (list.length == 4) {
@@ -236,12 +236,12 @@ class EvenAI {
       startScreenWords = headString + startScreenWords;
 
       // // The glasses need to have 0x30 before they can process 0x40
-      bool isSuccess = await sendEvenAIReply(startScreenWords, 0x01, 0x30, 0);
+      await sendEvenAIReply(startScreenWords, 0x01, 0x30, 0);
       await Future.delayed(Duration(seconds: 3));
       if (_isManual) {
         return;
       }
-      isSuccess = await sendEvenAIReply(startScreenWords, 0x01, 0x40, 0);
+      await sendEvenAIReply(startScreenWords, 0x01, 0x40, 0);
       return;
     }
 
@@ -249,12 +249,12 @@ class EvenAI {
       String startScreenWords =
           list.sublist(0, 5).map((str) => '$str\n').join();
       // // The glasses need to have 0x30 before they can process 0x40
-      bool isSuccess = await sendEvenAIReply(startScreenWords, 0x01, 0x30, 0);
+      await sendEvenAIReply(startScreenWords, 0x01, 0x30, 0);
       await Future.delayed(Duration(seconds: 3));
       if (_isManual) {
         return;
       }
-      isSuccess = await sendEvenAIReply(startScreenWords, 0x01, 0x40, 0);
+      await sendEvenAIReply(startScreenWords, 0x01, 0x40, 0);
       return;
     }
 

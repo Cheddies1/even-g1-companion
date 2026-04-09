@@ -68,6 +68,9 @@ class RecentNotificationsListenerService : NotificationListenerService() {
                     "key" to it.key,
                     "packageName" to it.packageName,
                     "source" to it.source,
+                    "title" to it.title,
+                    "text" to it.text,
+                    "bigText" to it.bigText,
                     "message" to it.message,
                     "postedAt" to it.postedAt,
                 )
@@ -118,6 +121,9 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             key = key,
             packageName = packageName,
             source = source.ifBlank { "Notification" },
+            title = title,
+            text = text,
+            bigText = bigText,
             message = message,
             postedAt = postTime,
         )

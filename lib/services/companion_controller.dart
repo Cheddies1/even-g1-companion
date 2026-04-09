@@ -156,12 +156,19 @@ class CompanionController extends ChangeNotifier {
         _statusMessage = 'Navigation card closed';
         break;
       case 2:
-        await NavigateService.get.showLatest();
-        _statusMessage = NavigateService.get.hasInstruction
-            ? 'Navigation refreshed'
-            : 'Waiting for Google Maps';
+        if (NavigateService.get.hasInstruction) {
+          await NavigateService.get.showDetail();
+          _statusMessage = 'Navigation details';
+        } else {
+          await NavigateService.get.showLatest();
+          _statusMessage = 'Waiting for Google Maps';
+        }
         break;
       case 3:
+        if (NavigateService.get.hasInstruction) {
+          await NavigateService.get.returnToPrimary();
+          _statusMessage = 'Navigation forward view';
+        }
         break;
     }
   }
@@ -206,6 +213,10 @@ class CompanionController extends ChangeNotifier {
     }
 
     final type = rawEvent['type'] as String? ?? 'posted';
+    if (type == 'removed') {
+      await _handleNotificationRemoved(rawEvent);
+      return;
+    }
     if (type != 'posted') {
       return;
     }
@@ -214,7 +225,10 @@ class CompanionController extends ChangeNotifier {
     await NavigateService.get.ingestNotification(notification);
 
     if (_activeMode == AppMode.navigate && notification.isGoogleMaps) {
-      await NavigateService.get.showLatest();
+      await NavigateService.get.refreshVisibleView();
+      if (!NavigateService.get.isVisible) {
+        await NavigateService.get.showLatest();
+      }
       _statusMessage = 'Navigation updated';
       notifyListeners();
       return;
@@ -273,6 +287,19 @@ class CompanionController extends ChangeNotifier {
       );
     } catch (e) {
       print('${DateTime.now()} Companion: failed to start foreground service -> $e');
+    }
+  }
+
+  Future<void> _handleNotificationRemoved(Map rawEvent) async {
+    final key = (rawEvent['key'] as String?) ?? '';
+    final packageName = (rawEvent['packageName'] as String?) ?? '';
+    final cleared = await NavigateService.get.clearIfMatches(
+      key: key,
+      packageName: packageName,
+    );
+    if (cleared) {
+      _statusMessage = 'Navigation ended';
+      notifyListeners();
     }
   }
 }

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:demo_ai_even/app.dart';
 import 'package:demo_ai_even/services/ble.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/evenai.dart';
