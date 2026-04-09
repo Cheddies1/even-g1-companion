@@ -54,5 +54,5 @@ flutter {
 }
 
 dependencies {
-    implementation 'org.jetbrains.kotlin:kotlin-reflect:1.9.23'
+    implementation 'org.jetbrains.kotlin:kotlin-reflect:2.1.10'
 }

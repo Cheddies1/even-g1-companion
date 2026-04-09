@@ -7,7 +7,13 @@ data class DashboardNotificationEntry(
     val title: String,
     val text: String,
     val bigText: String,
+    val subText: String,
     val message: String,
+    val navPrimaryInfo: String,
+    val navSecondaryInfo: String,
+    val navChipExpandedText: String,
+    val navIconPngBase64: String,
+    val navIconSource: String,
     val postedAt: Long,
 )
 
@@ -46,7 +52,13 @@ object NotificationFeedStore {
                 "title" to entry.title,
                 "text" to entry.text,
                 "bigText" to entry.bigText,
+                "subText" to entry.subText,
                 "message" to entry.message,
+                "navPrimaryInfo" to entry.navPrimaryInfo,
+                "navSecondaryInfo" to entry.navSecondaryInfo,
+                "navChipExpandedText" to entry.navChipExpandedText,
+                "navIconPngBase64" to entry.navIconPngBase64,
+                "navIconSource" to entry.navIconSource,
                 "postedAt" to entry.postedAt,
             )
         }

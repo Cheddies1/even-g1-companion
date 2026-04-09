@@ -89,8 +89,28 @@ class BleMethodChannel(
 ) {
 
     init {
-        methodChannel.setMethodCallHandler { call, result ->
-            this::class.members.find { it.name == call.method }?.call(this, call, result)
+        methodChannel.setMethodCallHandler(::onMethodCall)
+    }
+
+    private fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "startScan" -> startScan(call, result)
+            "stopScan" -> stopScan(call, result)
+            "connectToGlasses" -> connectToGlasses(call, result)
+            "disconnectFromGlasses" -> disconnectFromGlasses(call, result)
+            "send" -> send(call, result)
+            "startEvenAI" -> startEvenAI(call, result)
+            "stopEvenAI" -> stopEvenAI(call, result)
+            "getRecentNotifications" -> getRecentNotifications(call, result)
+            "dismissNotification" -> dismissNotification(call, result)
+            "isNotificationAccessEnabled" -> isNotificationAccessEnabled(call, result)
+            "openNotificationAccessSettings" -> openNotificationAccessSettings(call, result)
+            "startCompanionService" -> startCompanionService(call, result)
+            "updateCompanionMode" -> updateCompanionMode(call, result)
+            "startGlassesCapture" -> startGlassesCapture(call, result)
+            "stopGlassesCapture" -> stopGlassesCapture(call, result)
+            "cancelGlassesCapture" -> cancelGlassesCapture(call, result)
+            else -> result.notImplemented()
         }
     }
 

@@ -4,14 +4,25 @@ import android.app.Notification
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.Icon
+import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
+import android.util.Base64
 import com.example.demo_ai_even.bluetooth.BleChannelHelper
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 
 class RecentNotificationsListenerService : NotificationListenerService() {
+    private val debugTag = "MapsNotificationDump"
+
     companion object {
         @Volatile
         private var currentInstance: RecentNotificationsListenerService? = null
@@ -53,6 +64,9 @@ class RecentNotificationsListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        activeNotifications
+            ?.filter { it.packageName == "com.google.android.apps.maps" }
+            ?.forEach(::logNavigationNotification)
         val entries = activeNotifications
             ?.mapNotNull { sbn -> sbn.toDashboardNotification() }
             .orEmpty()
@@ -60,6 +74,7 @@ class RecentNotificationsListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        logNavigationNotification(sbn)
         sbn.toDashboardNotification()?.let {
             NotificationFeedStore.upsertEntry(it)
             BleChannelHelper.notificationEvent(
@@ -71,11 +86,65 @@ class RecentNotificationsListenerService : NotificationListenerService() {
                     "title" to it.title,
                     "text" to it.text,
                     "bigText" to it.bigText,
+                    "subText" to it.subText,
                     "message" to it.message,
+                    "navPrimaryInfo" to it.navPrimaryInfo,
+                    "navSecondaryInfo" to it.navSecondaryInfo,
+                    "navChipExpandedText" to it.navChipExpandedText,
+                    "navIconPngBase64" to it.navIconPngBase64,
+                    "navIconSource" to it.navIconSource,
                     "postedAt" to it.postedAt,
                 )
             )
         }
+    }
+
+    private fun logNavigationNotification(sbn: StatusBarNotification) {
+        if (sbn.packageName != "com.google.android.apps.maps") {
+            return
+        }
+
+        val notification = sbn.notification
+        val extras = notification.extras ?: Bundle.EMPTY
+        val wearableBundle = extras.getBundle("android.wearable.EXTENSIONS")
+        val carBundle = extras.getBundle("android.car.EXTENSIONS")
+        val actionSummaries = notification.actions
+            ?.mapIndexed { index, action ->
+                mapOf(
+                    "index" to index,
+                    "title" to action.title?.toString().orEmpty(),
+                    "hasIntent" to (action.actionIntent != null),
+                    "remoteInputs" to (action.remoteInputs?.size ?: 0),
+                    "extrasKeys" to action.extras?.keySet()?.sorted().orEmpty(),
+                    "extras" to summarizeBundle(action.extras),
+                )
+            }
+            .orEmpty()
+
+        val payload = linkedMapOf<String, Any?>(
+            "key" to sbn.key,
+            "postTime" to sbn.postTime,
+            "category" to notification.category,
+            "channelId" to notification.channelId,
+            "title" to extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+            "text" to extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+            "bigText" to extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
+            "subText" to extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
+            "infoText" to extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString(),
+            "summaryText" to extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString(),
+            "template" to extras.getString(Notification.EXTRA_TEMPLATE),
+            "hasSmallIcon" to (notification.smallIcon != null),
+            "hasLargeIcon" to (notification.getLargeIcon() != null),
+            "extrasKeys" to extras.keySet().sorted(),
+            "extras" to summarizeBundle(extras),
+            "actions" to actionSummaries,
+            "wearableExtKeys" to wearableBundle?.keySet()?.sorted().orEmpty(),
+            "wearableExt" to summarizeBundle(wearableBundle),
+            "carExtKeys" to carBundle?.keySet()?.sorted().orEmpty(),
+            "carExt" to summarizeBundle(carBundle),
+        )
+
+        Log.d(debugTag, payload.toString())
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
@@ -94,7 +163,21 @@ class RecentNotificationsListenerService : NotificationListenerService() {
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
         val appLabel = resolveAppLabel(packageName)
+        val navPrimaryInfo = extras.getCharSequence("android.ongoingActivityNoti.primaryInfo")
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        val navSecondaryInfo = extras.getCharSequence("android.ongoingActivityNoti.secondaryInfo")
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        val navChipExpandedText = extras.getCharSequence("android.ongoingActivityNoti.chipExpandedText")
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        val (navIconPngBase64, navIconSource) = extractBestNavigationIcon(extras)
 
         val source = appLabel.ifBlank {
             if (title.isNotBlank()) title else packageName.substringAfterLast('.')
@@ -124,7 +207,13 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             title = title,
             text = text,
             bigText = bigText,
+            subText = subText,
             message = message,
+            navPrimaryInfo = navPrimaryInfo,
+            navSecondaryInfo = navSecondaryInfo,
+            navChipExpandedText = navChipExpandedText,
+            navIconPngBase64 = navIconPngBase64,
+            navIconSource = navIconSource,
             postedAt = postTime,
         )
     }
@@ -158,5 +247,75 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             val appInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
             packageManager.getApplicationLabel(appInfo).toString().trim()
         }.getOrDefault("")
+    }
+
+    private fun summarizeBundle(bundle: Bundle?): Map<String, Any?> {
+        if (bundle == null) {
+            return emptyMap()
+        }
+        return bundle.keySet()
+            .sorted()
+            .associateWith { key -> summarizeValue(bundle.get(key)) }
+    }
+
+    private fun summarizeValue(value: Any?): Any? {
+        return when (value) {
+            null -> null
+            is Bundle -> summarizeBundle(value)
+            is CharSequence -> value.toString()
+            is Array<*> -> value.map { summarizeValue(it) }
+            is IntArray -> value.toList()
+            is LongArray -> value.toList()
+            is FloatArray -> value.toList()
+            is DoubleArray -> value.toList()
+            is BooleanArray -> value.toList()
+            is ByteArray -> "byte[${value.size}]"
+            else -> {
+                val text = value.toString()
+                if (text.length > 240) "${text.take(240)}..." else text
+            }
+        }
+    }
+
+    private fun extractBestNavigationIcon(extras: Bundle): Pair<String, String> {
+        val candidates = listOf(
+            "android.ongoingActivityNoti.chipIcon",
+            "android.ongoingActivityNoti.nowbarIcon",
+            "android.ongoingActivityNoti.secondIcon",
+        )
+
+        for (key in candidates) {
+            val icon = extras.get(key) as? Icon ?: continue
+            val pngBase64 = iconToPngBase64(icon)
+            if (pngBase64.isNotEmpty()) {
+                return pngBase64 to key
+            }
+        }
+
+        return "" to ""
+    }
+
+    private fun iconToPngBase64(icon: Icon): String {
+        return runCatching {
+            val drawable = icon.loadDrawable(this) ?: return ""
+            val bitmap = drawableToBitmap(drawable)
+            val stream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+        }.getOrDefault("")
+    }
+
+    private fun drawableToBitmap(drawable: Drawable): Bitmap {
+        if (drawable is BitmapDrawable && drawable.bitmap != null) {
+            return drawable.bitmap
+        }
+
+        val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 126
+        val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 126
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.draw(canvas)
+        return bitmap
     }
 }

@@ -37,6 +37,10 @@ WhatsApp
 Running 5 late
 ```
 
+Glance notification policy:
+- the companion app's own notifications are blocked from Glance
+- YouTube and Google Maps notifications are protected, so they can be shown but are not dismissed by Glance gestures
+
 ### Capture
 Capture mode is intended for practical meeting / voice capture from the glasses mic.
 
@@ -130,6 +134,13 @@ You need:
 This project is primarily being developed and tested on:
 - Samsung Galaxy S24 Ultra
 
+## Android Build Baseline
+
+Current known-good Android toolchain baseline:
+- AGP `8.6.1`
+- Gradle wrapper `8.7`
+- Kotlin Gradle plugin `2.1.10`
+
 ## Permissions / Setup
 
 The app depends on a few Android capabilities to be useful:
@@ -165,6 +176,22 @@ Build a debug APK:
 ```powershell
 flutter build apk --debug
 ```
+
+Known-good local validation commands:
+
+```powershell
+flutter analyze
+flutter build apk --release
+adb install -r build/app/outputs/flutter-apk/app-release.apk
+```
+
+Release validation note:
+- `flutter run` is useful for iteration, but it is not sufficient as final validation
+- final Android validation requires testing an installed release APK on device
+
+Codex workflow note:
+- use Codex for edits and narrow checks
+- use a local Windows shell for full build and release validation
 
 ## Current Status
 

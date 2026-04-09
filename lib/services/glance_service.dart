@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/companion_notification.dart';
+import 'package:demo_ai_even/services/notification_policy.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
 
@@ -71,7 +72,7 @@ class GlanceService {
     if (!_isVisible) {
       _currentIndex = 0;
     } else if (_notifications.isNotEmpty) {
-      await _dismissPendingNotificationOnPhone();
+      await _advanceFromCurrentInteraction();
       if (_notifications.isEmpty) {
         _currentIndex = 0;
       } else if (_currentIndex >= _notifications.length) {
@@ -118,7 +119,11 @@ class GlanceService {
     _isVisible = true;
     await TextService.get.startSendText(text);
     if (markInteracted) {
-      _pendingDismissKey = _currentNotification()?.key;
+      final current = _currentNotification();
+      _pendingDismissKey =
+          current != null && NotificationPolicy.canDismissFromGlance(current)
+              ? current.key
+              : null;
     } else {
       _pendingDismissKey = null;
     }
@@ -170,6 +175,28 @@ class GlanceService {
     } catch (e) {
       print('${DateTime.now()} Glance: dismiss notification failed -> $e');
     }
+  }
+
+  Future<void> _advanceFromCurrentInteraction() async {
+    final current = _currentNotification();
+    if (current == null) {
+      _pendingDismissKey = null;
+      return;
+    }
+
+    if (NotificationPolicy.canDismissFromGlance(current)) {
+      await _dismissPendingNotificationOnPhone();
+      return;
+    }
+
+    _pendingDismissKey = null;
+    if (_notifications.length <= 1) {
+      return;
+    }
+    _currentIndex = (_currentIndex + 1) % _notifications.length;
+    print(
+      '${DateTime.now()} Glance: advanced protected notification without dismiss -> ${current.packageName}',
+    );
   }
 
   void _restartClearTimer() {

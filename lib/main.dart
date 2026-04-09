@@ -9,8 +9,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   BleManager.get();
   Get.put(EvenaiModelController());
-  await CompanionController.get.init();
+  print('${DateTime.now()} App startup: runApp');
   runApp(const EvenCompanionApp());
+  Future<void>(() async {
+    print('${DateTime.now()} App startup: companion init begin');
+    await CompanionController.get.init();
+    print('${DateTime.now()} App startup: companion init end');
+  });
 }
 
 class EvenCompanionApp extends StatelessWidget {

@@ -28,6 +28,24 @@ Current implementation state:
 - `navigate`: scaffolded
 - `chat`: architecture seam only
 
+## Android build baseline
+
+Current Android toolchain baseline:
+- AGP `8.6.1`
+- Gradle wrapper `8.7`
+- Kotlin Gradle plugin `2.1.10`
+
+This is the practical baseline to preserve unless there is a deliberate upgrade pass.
+
+## Startup flow
+
+Flutter startup is intentionally ordered so the phone UI can come up first:
+- `runApp()` happens before companion initialization completes
+- companion initialization is asynchronous
+- native method-channel handlers must always resolve successfully or return `notImplemented`
+
+This matters at startup because early Android-side calls can arrive before background companion setup is finished.
+
 ## Core controller
 
 Mode ownership is centralized in:
@@ -126,6 +144,17 @@ Bridge methods/events:
 
 This listener path is a core foundation for both Glance and Navigate.
 
+Notification policy:
+- [lib/services/notification_policy.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_policy.dart)
+
+Current responsibility:
+- central classification of notifications as `blocked`, `protected`, or `normal`
+- one place for package-based Glance suppression and dismissal protection rules
+
+Current built-in rules:
+- block the companion app's own notifications from entering Glance
+- protect Google Maps and YouTube notifications from Glance-driven dismissal side effects
+
 ## Background / permanent companion foundation
 
 The app is designed to keep functioning as a companion app while backgrounded.
@@ -142,6 +171,10 @@ Current role:
 - foundation for ongoing companion behavior
 
 This is intentionally minimal, but it is part of the current architecture rather than a future bolt-on.
+
+Foreground service note:
+- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt) uses `specialUse`
+- `connectedDevice` was the wrong foreground service type for app startup behavior on the target Android environment
 
 ## Capture audio path
 

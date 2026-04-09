@@ -7,6 +7,7 @@ import 'package:demo_ai_even/services/capture_service.dart';
 import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
 import 'package:demo_ai_even/services/navigate_service.dart';
+import 'package:demo_ai_even/services/notification_policy.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -34,6 +35,7 @@ class CompanionController extends ChangeNotifier {
       return;
     }
     _initialized = true;
+    print('${DateTime.now()} Companion: init begin');
     BleManager.get().setMethodCallHandler();
     BleManager.get().startListening();
     BleManager.get().onStatusChanged = () {
@@ -47,6 +49,7 @@ class CompanionController extends ChangeNotifier {
       print('${DateTime.now()} Companion: notification stream error -> $error');
     });
     await _startBackgroundFoundation();
+    print('${DateTime.now()} Companion: init complete');
   }
 
   Future<void> disposeController() async {
@@ -234,6 +237,13 @@ class CompanionController extends ChangeNotifier {
       return;
     }
 
+    if (NotificationPolicy.shouldBlockFromGlance(notification)) {
+      print(
+        '${DateTime.now()} Companion: blocked notification skipped for Glance -> ${notification.packageName}',
+      );
+      return;
+    }
+
     final shouldAutoPopGlance =
         _activeMode == AppMode.glance && !notification.isGoogleMaps;
     await GlanceService.get.ingestNotification(
@@ -254,6 +264,9 @@ class CompanionController extends ChangeNotifier {
       final notifications = rawNotifications
               ?.whereType<Map>()
               .map(CompanionNotification.fromMap)
+              .where((notification) {
+                return !NotificationPolicy.shouldBlockFromGlance(notification);
+              })
               .toList() ??
           const <CompanionNotification>[];
       GlanceService.get.hydrateNotifications(notifications);

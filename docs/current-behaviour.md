@@ -52,8 +52,9 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 - deliberate tilt-up shows the most recent notification
 - repeated tilt-up cycles through the feed
 - when cycling deliberately:
-  - the current item is dismissed on the phone
-  - it is also removed from the local app queue
+  - normal notifications are dismissed on the phone
+  - normal notifications are also removed from the local app queue
+  - protected notifications stay visible on the phone and are only advanced locally
 - `F5 00` closes the active Glance item
 - timeout clears the active display after a short interval
 
@@ -68,6 +69,22 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 At notification-ingestion time, noisy system notifications are filtered out, including:
 - `System UI`
 - charging/battery churn
+
+### Current notification policy
+
+Glance applies three notification classes:
+- `blocked`: never shown in Glance
+- `protected`: shown in Glance but never dismissed by Glance gestures
+- `normal`: shown and dismissible
+
+Current package rules:
+- blocked:
+  - `com.example.demo_ai_even`
+- protected:
+  - `com.google.android.apps.youtube`
+  - `com.google.android.apps.maps`
+
+This means YouTube and Google Maps can appear in Glance, but deliberate Glance cycling will not dismiss them on the phone.
 
 ## Capture mode
 
@@ -130,6 +147,20 @@ Current foundation:
 - mode state is reflected in the ongoing system notification
 
 This is implemented narrowly, but it is already part of the current app shape.
+
+## Validation workflow
+
+Known-good local validation commands:
+
+```powershell
+flutter analyze
+flutter build apk --release
+adb install -r build/app/outputs/flutter-apk/app-release.apk
+```
+
+Practical rule:
+- `flutter run` is not enough as final validation
+- the app must also be checked from an installed release APK on the target phone
 
 ## Notification ingestion
 
