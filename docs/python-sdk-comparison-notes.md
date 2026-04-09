@@ -17,6 +17,15 @@ The Python SDK is useful as:
 
 It is not a substitute for live testing against the current firmware.
 
+## Document role
+
+This file is a comparison/reference document.
+
+Use alongside:
+- [even-g1-event-mapping.md](even-g1-event-mapping.md) for current trusted mappings
+- [protocol-reference.md](protocol-reference.md) for raw vendor/demo protocol notes
+- [investigation-notes.md](investigation-notes.md) for broader exploratory findings
+
 ## Overall Conclusion
 
 The Python SDK helps confirm some higher-level protocol concepts:

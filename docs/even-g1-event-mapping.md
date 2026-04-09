@@ -1,10 +1,19 @@
-# Even G1 Event Mapping Notes
+# Even G1 Event Mapping
 
 This file captures the current working understanding of `F5` gesture and state
-events observed from the Even G1 glasses while testing this demo app.
+events observed from the Even G1 glasses while testing this app.
 
 It is intentionally split by behavior category and confidence so we do not
 overstate what has been confirmed.
+
+## Document role
+
+This is the current event-behaviour mapping document.
+
+It is intentionally separate from:
+- [protocol-reference.md](protocol-reference.md): raw vendor/demo command reference
+- [investigation-notes.md](investigation-notes.md): broader exploratory notes and hypotheses
+- [python-sdk-comparison-notes.md](python-sdk-comparison-notes.md): comparison/reference only
 
 ## Scope
 
@@ -12,7 +21,7 @@ overstate what has been confirmed.
   - isolated manual test runs
   - Flutter/native debug logs
   - observed behavior on the glasses
-- This is a working note, not a finished protocol specification.
+- This is a working mapping, not a finished protocol specification.
 - Event meanings may be firmware-dependent.
 
 ## Firmware Vs App Behavior Model
