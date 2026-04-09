@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.util.Log
 import com.example.demo_ai_even.bluetooth.BleChannelHelper
 import com.example.demo_ai_even.bluetooth.BleManager
+import com.example.demo_ai_even.bluetooth.BlePermissionUtil
 import com.example.demo_ai_even.cpp.Cpp
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -15,6 +16,7 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
         super.onCreate(savedInstanceState)
         Cpp.init()
         BleManager.instance.initBluetooth(this)
+        BlePermissionUtil.ensureNotificationPermission(this)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

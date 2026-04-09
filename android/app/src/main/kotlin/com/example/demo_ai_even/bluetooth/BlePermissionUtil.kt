@@ -8,6 +8,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 object BlePermissionUtil {
+    private const val REQUEST_CODE_NOTIFICATIONS = 2
 
     /**
      *  Bluetooth scan and connect permission
@@ -36,6 +37,26 @@ object BlePermissionUtil {
             return false
         }
         return true
+    }
+
+    fun ensureNotificationPermission(context: Activity): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true
+        }
+        if (
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return true
+        }
+        ActivityCompat.requestPermissions(
+            context,
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            REQUEST_CODE_NOTIFICATIONS,
+        )
+        return false
     }
 
 }
