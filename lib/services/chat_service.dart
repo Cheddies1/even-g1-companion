@@ -31,17 +31,21 @@ class ChatService {
   bool _modeActive = false;
   bool _isListening = false;
   bool _isThinking = false;
+  bool _isDisplayVisible = false;
   DateTime? _lastSubmitStartedAt;
   int _messageSequence = 0;
   int _persistedMessageCount = 0;
   final List<ChatMessage> _messages = <ChatMessage>[];
 
   bool get hasActiveSession => _sessionId != null;
+  bool get isDisplayVisible => _isDisplayVisible;
   bool get isListening => _isListening;
   bool get isThinking => _isThinking;
   bool get isReady => _modeActive && !_isListening && !_isThinking;
 
-  Future<void> enterMode() async {
+  Future<void> enterMode({
+    bool showReadyCard = true,
+  }) async {
     await resetSession();
     _modeActive = true;
     _sessionVersion++;
@@ -53,7 +57,9 @@ class ChatService {
       id: _sessionId!,
       startedAt: startedAt,
     );
-    await _showText('Chat ready\nTilt up to talk');
+    if (showReadyCard) {
+      await _showText('Chat ready\nTilt up to talk');
+    }
     print('${DateTime.now()} Chat: session started -> $_sessionId');
   }
 
@@ -66,6 +72,7 @@ class ChatService {
     _modeActive = false;
     _isListening = false;
     _isThinking = false;
+    _isDisplayVisible = false;
     _lastSubmitStartedAt = null;
     _messageSequence = 0;
     _persistedMessageCount = 0;
@@ -235,6 +242,7 @@ class ChatService {
     if (!_modeActive) {
       return;
     }
+    _isDisplayVisible = true;
     await TextService.get.startSendText(text);
   }
 

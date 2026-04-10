@@ -95,6 +95,11 @@ class BleManager {
       case 'foundPairedGlasses':
         _onPairedGlassesFound(Map<String, String>.from(call.arguments));
         break;
+      case 'companionModeSwitchRequested':
+        final modeLabel =
+            (call.arguments as Map?)?['modeLabel'] as String? ?? 'Glance';
+        await CompanionController.get.handleNotificationModeSwitch(modeLabel);
+        break;
       default:
         print('Unknown method: ${call.method}');
     }

@@ -53,6 +53,7 @@ Mode ownership is centralized in:
 
 The controller owns:
 - active mode
+- active-display-state decision making
 - interpretation of trusted glasses events
 - routing into mode-specific services
 - notification event subscription
@@ -60,6 +61,18 @@ The controller owns:
 
 Supporting model:
 - [lib/models/app_mode.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/models/app_mode.dart)
+
+Current mode vs active display:
+- `current mode` means which service should own the next interaction
+- `active display` means whether something is currently being shown on the glasses right now
+- quick mode switching depends on `active display`, not only on `current mode`
+
+Current active-display sources:
+- visible Glance item
+- active Capture display
+- visible Navigate card
+- visible Chat content
+- transient mode-title card shown during idle mode cycling
 
 ## Main services
 
@@ -109,6 +122,31 @@ Current backend seam:
 - `ChatService` depends on the `ChatBackend` abstraction, not a controller-level hardcoded backend
 - the current v1 implementation uses an OpenAI-compatible backend and OpenAI transcription API
 - the backend can be replaced later without rewriting mode ownership
+
+## Quick mode switching
+
+Quick switching is routed centrally through:
+- [lib/services/companion_controller.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/companion_controller.dart)
+
+Input paths:
+- Android foreground notification action buttons
+- glasses double tap when no display content is currently active
+
+Notification path:
+- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
+- [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+
+Current behavior:
+- notification actions request a passive mode switch
+- the controller performs the actual switch
+- the foreground notification is updated to reflect the new mode
+- tapping the notification body opens the main app screen
+
+Gesture path:
+- `F5 00` now has two meanings depending on active-display state:
+  - if something is active on the glasses, close it
+  - if the display is idle, cycle to the next mode and show a short mode title card
 
 Current request shaping:
 - the OpenAI-compatible backend applies a glasses-specific system prompt

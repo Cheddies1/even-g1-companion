@@ -18,6 +18,10 @@ The app currently supports a mode-based companion model:
 - `Navigate`
 - `Chat`
 
+Quick mode switching is available through:
+- actions on the persistent Android notification
+- idle double tap on the glasses when no feature is currently active on the display
+
 ### Glance
 Glance is the most complete mode today.
 
@@ -84,6 +88,31 @@ Current flow:
 - leaving Chat mode resets the session
 
 This is not tied to a ChatGPT consumer/web session. Chat v1 uses an API-backed backend seam so the transport can be swapped later without rewriting the mode.
+
+## Quick Mode Switching
+
+The companion app now supports fast mode changes without opening the full phone UI.
+
+Available paths:
+- persistent Android notification actions:
+  - `Glance`
+  - `Capture`
+  - `Navigate`
+  - `Chat`
+- idle glasses double tap
+
+Glasses rule:
+- if something is actively shown on the glasses, double tap closes it
+- if nothing is currently active on the glasses, double tap cycles modes in this order:
+  - `Glance -> Navigate -> Chat -> Capture -> Glance`
+- after an idle double-tap mode switch, a brief mode title card is shown and auto-dismissed
+
+Quick switching is passive:
+- it changes the current mode
+- it does not auto-start recording
+- it does not auto-start listening
+- it does not auto-open navigation content
+- it does not force a Glance render
 
 Response shaping:
 - Chat responses are explicitly shaped for smart glasses

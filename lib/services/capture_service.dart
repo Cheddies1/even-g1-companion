@@ -11,9 +11,12 @@ class CaptureService {
   static CaptureService get get => _instance ??= CaptureService._();
 
   bool _isRecording = false;
+  bool _isDisplayVisible = false;
   String? _lastSavedFileName;
+  Timer? _displayTimer;
 
   bool get isRecording => _isRecording;
+  bool get isDisplayVisible => _isDisplayVisible;
   String? get lastSavedFileName => _lastSavedFileName;
 
   Future<bool> startRecording() async {
@@ -35,6 +38,8 @@ class CaptureService {
     }
 
     _isRecording = true;
+    _isDisplayVisible = true;
+    _displayTimer?.cancel();
     await TextService.get.startSendText('REC');
     print('${DateTime.now()} Capture: recording started');
     return true;
@@ -46,6 +51,7 @@ class CaptureService {
     }
 
     _isRecording = false;
+    _isDisplayVisible = true;
     final raw = await BleManager.invokeMethod<Map<dynamic, dynamic>>(
       'stopGlassesCapture',
     );
@@ -57,7 +63,9 @@ class CaptureService {
     final message =
         fileName == null ? 'Recording saved' : 'Recording saved\n$fileName';
     await TextService.get.startSendText(message);
-    Timer(const Duration(seconds: 3), () async {
+    _displayTimer?.cancel();
+    _displayTimer = Timer(const Duration(seconds: 3), () async {
+      _isDisplayVisible = false;
       await TextService.get.stopTextSendingByOS();
       await Proto.exit();
     });
@@ -66,10 +74,14 @@ class CaptureService {
   }
 
   Future<void> cancel() async {
+    _displayTimer?.cancel();
+    _displayTimer = null;
     if (!_isRecording) {
+      _isDisplayVisible = false;
       return;
     }
     _isRecording = false;
+    _isDisplayVisible = false;
     await BleManager.invokeMethod('cancelGlassesCapture');
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();

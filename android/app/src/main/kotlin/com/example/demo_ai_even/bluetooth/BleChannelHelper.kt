@@ -202,4 +202,7 @@ class BleMethodChannel(
 
     fun flutterGlassesDisconnected(deviceInfo: Map<String, Any>) = methodChannel.invokeMethod("glassesDisconnected", deviceInfo)
 
+    fun flutterCompanionModeSwitchRequested(modeLabel: String) =
+        methodChannel.invokeMethod("companionModeSwitchRequested", mapOf("modeLabel" to modeLabel))
+
 }

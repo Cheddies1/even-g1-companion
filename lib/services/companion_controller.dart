@@ -8,6 +8,8 @@ import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
 import 'package:demo_ai_even/services/navigate_service.dart';
 import 'package:demo_ai_even/services/notification_policy.dart';
+import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/services/text_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -19,6 +21,8 @@ class CompanionController extends ChangeNotifier {
 
   static const _eventNotifications = 'eventNotifications';
   final EventChannel _notificationChannel = const EventChannel(_eventNotifications);
+  Timer? _modeCardTimer;
+  bool _isModeCardVisible = false;
 
   bool _initialized = false;
   StreamSubscription<dynamic>? _notificationSubscription;
@@ -29,6 +33,12 @@ class CompanionController extends ChangeNotifier {
   AppMode get activeMode => _activeMode;
   String get statusMessage => _statusMessage;
   bool get notificationAccessEnabled => _notificationAccessEnabled;
+  bool get hasActiveDisplay =>
+      _isModeCardVisible ||
+      GlanceService.get.isVisible ||
+      CaptureService.get.isDisplayVisible ||
+      NavigateService.get.isVisible ||
+      ChatService.get.isDisplayVisible;
 
   Future<void> init() async {
     if (_initialized) {
@@ -54,6 +64,7 @@ class CompanionController extends ChangeNotifier {
 
   Future<void> disposeController() async {
     await _notificationSubscription?.cancel();
+    _modeCardTimer?.cancel();
   }
 
   Future<void> refreshCompanionState() async {
@@ -62,15 +73,19 @@ class CompanionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setMode(AppMode mode) async {
+  Future<void> setMode(
+    AppMode mode, {
+    bool passive = false,
+    bool showModeCard = false,
+  }) async {
     if (_activeMode == mode) {
+      if (showModeCard) {
+        await _showModeCard(mode);
+      }
       return;
     }
 
     await _closeActiveView(sendExit: false);
-    if (_activeMode == AppMode.chat) {
-      ChatService.get.resetSession();
-    }
 
     _activeMode = mode;
     _statusMessage = '${mode.label} mode active';
@@ -80,18 +95,49 @@ class CompanionController extends ChangeNotifier {
     );
 
     if (mode == AppMode.chat) {
-      await ChatService.get.enterMode();
-      _statusMessage = 'Chat ready';
+      await ChatService.get.enterMode(showReadyCard: !passive);
+      _statusMessage = passive ? 'Chat mode active' : 'Chat ready';
     }
 
-    if (mode == AppMode.navigate && NavigateService.get.hasInstruction) {
+    if (!passive &&
+        mode == AppMode.navigate &&
+        NavigateService.get.hasInstruction) {
       await NavigateService.get.showLatest();
+    }
+
+    if (showModeCard) {
+      await _showModeCard(mode);
     }
 
     notifyListeners();
   }
 
   Future<void> handleGlassesGesture(int eventId, String side) async {
+    if (eventId != 0 && _isModeCardVisible) {
+      await _hideModeCard();
+    }
+
+    if (eventId == 0) {
+      if (hasActiveDisplay) {
+        if (_isModeCardVisible) {
+          await _hideModeCard();
+          _statusMessage = '${_activeMode.label} mode active';
+          notifyListeners();
+          return;
+        }
+        await _handleCloseGesture();
+      } else {
+        await setMode(
+          _activeMode.nextMode,
+          passive: true,
+          showModeCard: true,
+        );
+        _statusMessage = '${_activeMode.label} mode active';
+      }
+      notifyListeners();
+      return;
+    }
+
     switch (_activeMode) {
       case AppMode.glance:
         await _handleGlanceGesture(eventId);
@@ -111,6 +157,13 @@ class CompanionController extends ChangeNotifier {
 
   Future<void> openNotificationAccessSettings() async {
     await BleManager.invokeMethod('openNotificationAccessSettings');
+  }
+
+  Future<void> handleNotificationModeSwitch(String modeLabel) async {
+    final mode = AppModeParseX.fromLabel(modeLabel);
+    await setMode(mode, passive: true, showModeCard: false);
+    _statusMessage = '${mode.label} mode active';
+    notifyListeners();
   }
 
   Future<void> _handleGlanceGesture(int eventId) async {
@@ -221,6 +274,44 @@ class CompanionController extends ChangeNotifier {
         await ChatService.get.resetSession();
         break;
     }
+  }
+
+  Future<void> _handleCloseGesture() async {
+    switch (_activeMode) {
+      case AppMode.glance:
+        await _handleGlanceGesture(0);
+        break;
+      case AppMode.capture:
+        await _handleCaptureGesture(0);
+        break;
+      case AppMode.navigate:
+        await _handleNavigateGesture(0);
+        break;
+      case AppMode.chat:
+        await _handleChatGesture(0);
+        break;
+    }
+  }
+
+  Future<void> _showModeCard(AppMode mode) async {
+    _modeCardTimer?.cancel();
+    _isModeCardVisible = true;
+    await TextService.get.startSendText(mode.label);
+    _modeCardTimer = Timer(const Duration(seconds: 2), () async {
+      await _hideModeCard();
+      notifyListeners();
+    });
+  }
+
+  Future<void> _hideModeCard() async {
+    _modeCardTimer?.cancel();
+    _modeCardTimer = null;
+    if (!_isModeCardVisible) {
+      return;
+    }
+    _isModeCardVisible = false;
+    await TextService.get.stopTextSendingByOS();
+    await Proto.exit();
   }
 
   Future<void> _handleNotificationEvent(dynamic rawEvent) async {
