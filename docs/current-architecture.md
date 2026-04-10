@@ -24,8 +24,8 @@ Only one mode is active at a time.
 
 Current implementation state:
 - `glance`: implemented and actively used
-- `capture`: scaffolded / partially implemented
-- `navigate`: implemented, still being tuned on device
+- `capture`: implemented for practical on-device use, still needs ongoing validation
+- `navigate`: implemented and working for walking navigation, still open to incremental tuning
 - `chat`: implemented as a practical v1 voice loop
 
 ## Android build baseline
@@ -72,7 +72,6 @@ Current active-display sources:
 - active Capture display
 - visible Navigate card
 - visible Chat content
-- transient mode-title card shown during idle mode cycling
 
 ## Main services
 
@@ -130,7 +129,7 @@ Quick switching is routed centrally through:
 
 Input paths:
 - Android foreground notification action buttons
-- glasses double tap when no display content is currently active
+- phone UI mode selector
 
 Notification path:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
@@ -143,10 +142,14 @@ Current behavior:
 - the foreground notification is updated to reflect the new mode
 - tapping the notification body opens the main app screen
 
-Gesture path:
-- `F5 00` now has two meanings depending on active-display state:
+Phone UI path:
+- the home screen mode buttons route through the same central controller `setMode(...)` path
+- mode selection is immediate and does not depend on a temporary title-card overlay
+
+Glasses close path:
+- `F5 00` has one trusted meaning only:
   - if something is active on the glasses, close it
-  - if the display is idle, cycle to the next mode and show a short mode title card
+  - if the display is idle, do nothing
 
 Current request shaping:
 - the OpenAI-compatible backend applies a glasses-specific system prompt
@@ -158,6 +161,12 @@ Current session-history behaviour:
 - requests currently send only the most recent history window when the conversation grows beyond a light cap
 - there is no summarisation in this phase
 - the cap is intentionally light-touch so useful follow-up context is preserved for normal conversations
+
+Current mode-entry idle displays:
+- `capture`: `*`
+- `chat`: `Chat ready` / `Tilt up to talk`
+- `navigate`: `Open Google Maps` / `to start navigation` unless a live instruction is already available
+- `glance`: no separate idle title card; content appears only when a Glance item is actually shown
 
 ## BLE and protocol path
 
@@ -206,6 +215,10 @@ Bridge methods/events:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
 
 This listener path is a core foundation for both Glance and Navigate.
+
+Maps payload dump logging:
+- the Android notification listener still contains a deep Google Maps payload dump path for investigation
+- it is now gated behind the native log tag `MapsNotificationDump` and is off by default
 
 Notification policy:
 - [lib/services/notification_policy.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_policy.dart)
@@ -276,6 +289,16 @@ The UI is intentionally simple:
 - legacy/demo area separated from the main UX
 
 Chat mode is intentionally wired into the same simple mode selector. There is no settings UI for backend configuration in this phase; Chat backend configuration is done at build time with `dart-define`.
+
+## Logging posture
+
+The app now uses a split logging posture:
+- concise operational lifecycle/error logs remain enabled by default
+- verbose investigation logs are gated behind:
+  - Flutter build-time define: `COMPANION_VERBOSE_LOGS=true`
+  - Android log tag enablement for Maps payload dumps: `MapsNotificationDump`
+
+This keeps day-to-day release builds quieter while preserving useful diagnosis paths when needed.
 
 ## Legacy / demo code posture
 

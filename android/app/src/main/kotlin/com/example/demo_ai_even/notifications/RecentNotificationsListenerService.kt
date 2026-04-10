@@ -22,6 +22,8 @@ import java.util.Locale
 
 class RecentNotificationsListenerService : NotificationListenerService() {
     private val debugTag = "MapsNotificationDump"
+    private val isMapsDebugEnabled: Boolean
+        get() = Log.isLoggable(debugTag, Log.DEBUG)
 
     companion object {
         @Volatile
@@ -64,9 +66,11 @@ class RecentNotificationsListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        activeNotifications
-            ?.filter { it.packageName == "com.google.android.apps.maps" }
-            ?.forEach(::logNavigationNotification)
+        if (isMapsDebugEnabled) {
+            activeNotifications
+                ?.filter { it.packageName == "com.google.android.apps.maps" }
+                ?.forEach(::logNavigationNotification)
+        }
         val entries = activeNotifications
             ?.mapNotNull { sbn -> sbn.toDashboardNotification() }
             .orEmpty()
@@ -100,7 +104,7 @@ class RecentNotificationsListenerService : NotificationListenerService() {
     }
 
     private fun logNavigationNotification(sbn: StatusBarNotification) {
-        if (sbn.packageName != "com.google.android.apps.maps") {
+        if (!isMapsDebugEnabled || sbn.packageName != "com.google.android.apps.maps") {
             return
         }
 

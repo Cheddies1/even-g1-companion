@@ -31,7 +31,7 @@ It is intentionally separate from:
 
 ### Quick mode switching
 - available from the persistent Android notification
-- available from glasses double tap only when the display is idle
+- available from the app UI mode selector
 
 ## Glance mode
 
@@ -101,6 +101,7 @@ Capture is the most important practical mode after Glance, but it is not yet ful
 - recording + tilt-up -> stop and save
 - recording + double tap -> stop and save
 - idle + double tap -> no-op
+- idle display shows `*`
 - show a recording indicator while active
 - show a short save confirmation after recording completes
 
@@ -136,6 +137,7 @@ Navigate is intentionally lean and notification-driven.
 - the notification ingestion path is already available
 - Maps notification fields are parsed
 - startup and waiting states stay text-rendered
+- idle state shows `Open Google Maps` / `to start navigation`
 - real navigation instructions use a custom BMP card with the Maps-provided maneuver icon and text fields
 - updates are throttled and serialized to reduce unstable overlapping BMP uploads
 
@@ -150,6 +152,7 @@ Chat mode is now a working v1 feature.
 ### Gesture flow
 
 - entering Chat mode creates a fresh in-memory session
+- idle state shows `Chat ready` / `Tilt up to talk`
 - tilt up starts listening from the glasses mic
 - tilt down stops capture and submits what was said
 - a short transcript preview may be shown
@@ -239,33 +242,53 @@ Quick mode switching is now part of normal companion behavior.
 
 ### Notification switching
 
-- the persistent Android foreground notification shows 4 actions:
+- the persistent Android foreground notification shows the 3 modes that are not currently active
+- the action order is stable using the global mode order:
   - `Glance`
-  - `Capture`
   - `Navigate`
   - `Chat`
+  - `Capture`
 - tapping one switches mode immediately
 - the mode changes without opening the full app UI
 - the notification title updates to the new mode
 - tapping the notification body opens the main app screen
 
-### Idle double-tap mode cycling
+### App and glasses behavior
 
+- app UI mode buttons switch mode immediately through the same central controller path as notification actions
 - double tap still closes the current feature when something is active on the glasses
-- if the glasses display is idle, double tap cycles modes in this order:
-  - `Glance -> Navigate -> Chat -> Capture -> Glance`
-- after an idle double-tap mode switch, a brief mode title card is shown
-- the title card auto-dismisses after a short timeout
+- if the glasses display is idle, double tap is now a no-op
 
 ### Passive switching rules
 
 Quick mode switches are passive:
 - they do not auto-start Capture recording
 - they do not auto-start Chat listening
-- they do not auto-open a Navigate card
+- they do not auto-open a live Navigate instruction card
 - they do not force a Glance notification render
 
 Leaving a mode through quick switching follows the same cleanup rules as normal mode changes, including Chat session reset.
+
+## Logging
+
+Current logging posture:
+- operational lifecycle and error logs remain enabled
+- verbose investigation logs are disabled by default
+
+To re-enable verbose Flutter-side logging:
+
+```powershell
+flutter run --dart-define="COMPANION_VERBOSE_LOGS=true"
+```
+
+To re-enable native Google Maps payload dumps:
+
+```powershell
+adb shell setprop log.tag.MapsNotificationDump DEBUG
+adb logcat -s MapsNotificationDump
+```
+
+This keeps normal daily-use builds quieter while preserving a path for targeted investigation.
 
 ## Background behaviour
 

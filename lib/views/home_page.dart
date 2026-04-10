@@ -80,7 +80,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return Expanded(
       child: FilledButton(
         onPressed: enabled
-            ? () => CompanionController.get.setMode(mode)
+            ? () => CompanionController.get.setMode(
+                  mode,
+                  source: 'HomePage.modeButton',
+                )
             : null,
         style: FilledButton.styleFrom(
           backgroundColor:

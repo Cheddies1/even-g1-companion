@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:demo_ai_even/services/proto.dart';
 
@@ -60,7 +61,7 @@ class TextService {
   int retryCount = 0;
   Future<bool> doSendText(String text, int type, int status, int pos) async {
    
-    print('${DateTime.now()} doSendText--currentPage---${getCurrentPage()}-----text----$text-----type---$type---status---$status----pos---$pos-');
+    AppLog.debug('${DateTime.now()} doSendText--currentPage---${getCurrentPage()}-----text----$text-----type---$type---status---$status----pos---$pos-');
     if (!isRunning) {
       return false;
     }

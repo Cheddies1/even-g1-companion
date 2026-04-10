@@ -1,4 +1,5 @@
 import 'package:demo_ai_even/models/companion_notification.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/navigate_bitmap_service.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
@@ -29,13 +30,25 @@ class NavigateService {
       return;
     }
     _latestInstruction = notification;
-    print(
+    AppLog.debug(
       '${DateTime.now()} Navigate: payload primary="${notification.navPrimaryInfo}" secondary="${notification.navSecondaryInfo}" subText="${notification.subText}" iconSource="${notification.navIconSource}"',
     );
   }
 
   Future<void> showLatest() async {
     await _scheduleRender();
+  }
+
+  Future<void> showIdlePrompt() async {
+    if (_latestInstruction != null) {
+      await _scheduleRender();
+      return;
+    }
+    _isVisible = true;
+    _renderDirty = false;
+    _lastRenderUsedBitmap = false;
+    await TextService.get.startSendText('Open Google Maps\nto start navigation');
+    print('${DateTime.now()} Navigate: render -> idle-prompt');
   }
 
   Future<void> showDetail() async {

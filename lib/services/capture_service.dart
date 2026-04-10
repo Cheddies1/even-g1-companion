@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
 
@@ -18,6 +19,19 @@ class CaptureService {
   bool get isRecording => _isRecording;
   bool get isDisplayVisible => _isDisplayVisible;
   String? get lastSavedFileName => _lastSavedFileName;
+
+  void markDisplayVisible({
+    required bool value,
+    required String source,
+  }) {
+    if (_isDisplayVisible == value) {
+      return;
+    }
+    AppLog.debug(
+      '${DateTime.now()} DisplayState: source=$source service=Capture old=$_isDisplayVisible new=$value mode=Capture',
+    );
+    _isDisplayVisible = value;
+  }
 
   Future<bool> startRecording() async {
     if (_isRecording) {
@@ -38,11 +52,21 @@ class CaptureService {
     }
 
     _isRecording = true;
-    _isDisplayVisible = true;
+    markDisplayVisible(value: true, source: 'Capture.startRecording');
     _displayTimer?.cancel();
     await TextService.get.startSendText('REC');
     print('${DateTime.now()} Capture: recording started');
     return true;
+  }
+
+  Future<void> showReadyIndicator() async {
+    if (_isRecording) {
+      return;
+    }
+    _displayTimer?.cancel();
+    markDisplayVisible(value: true, source: 'Capture.showReadyIndicator');
+    await TextService.get.startSendText('*');
+    print('${DateTime.now()} Capture: ready indicator shown');
   }
 
   Future<String?> stopAndSave() async {
@@ -51,7 +75,7 @@ class CaptureService {
     }
 
     _isRecording = false;
-    _isDisplayVisible = true;
+    markDisplayVisible(value: true, source: 'Capture.stopAndSave.result');
     final raw = await BleManager.invokeMethod<Map<dynamic, dynamic>>(
       'stopGlassesCapture',
     );
@@ -65,7 +89,7 @@ class CaptureService {
     await TextService.get.startSendText(message);
     _displayTimer?.cancel();
     _displayTimer = Timer(const Duration(seconds: 3), () async {
-      _isDisplayVisible = false;
+      markDisplayVisible(value: false, source: 'Capture.stopAndSave.timeout');
       await TextService.get.stopTextSendingByOS();
       await Proto.exit();
     });
@@ -77,11 +101,11 @@ class CaptureService {
     _displayTimer?.cancel();
     _displayTimer = null;
     if (!_isRecording) {
-      _isDisplayVisible = false;
+      markDisplayVisible(value: false, source: 'Capture.cancel.idle');
       return;
     }
     _isRecording = false;
-    _isDisplayVisible = false;
+    markDisplayVisible(value: false, source: 'Capture.cancel.recording');
     await BleManager.invokeMethod('cancelGlassesCapture');
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();

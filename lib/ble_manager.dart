@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:demo_ai_even/services/ble.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:demo_ai_even/services/proto.dart';
@@ -169,7 +170,7 @@ class BleManager {
 
     String cmd = "${res.lr}${res.getCmd().toRadixString(16).padLeft(2, '0')}";
     if (res.getCmd() != 0xf1) {
-      print(
+      AppLog.debug(
         "${DateTime.now()} BleManager receive cmd: $cmd, len: ${res.data.length}, data = ${res.data.hexString}",
       );
     }
@@ -194,7 +195,7 @@ class BleManager {
           .join(' ');
       final eventLabel = _describeF5Event(notifyIndex, res);
 
-      print(
+      AppLog.debug(
         "${DateTime.now()} F5 event: lr=${res.lr}, id=$notifyIndex, label=$eventLabel, payload=[$payload], deltaMs=${deltaMs ?? 'n/a'}",
       );
       
@@ -294,7 +295,7 @@ class BleManager {
     final sequenceGuess = res.data.length > 3 ? res.data[3].toInt() : -1;
     final grouped = _groupHexBytes(res.data, 7);
 
-    print(
+      AppLog.debug(
       "${DateTime.now()} CMD21 event: lr=${res.lr}, len=${res.data.length}, lengthField=$lengthField, sequenceGuess=$sequenceGuess, deltaMs=${deltaMs ?? 'n/a'}, groups=[$grouped]",
     );
   }
@@ -305,7 +306,7 @@ class BleManager {
         _lastCmd22EventMs == null ? null : nowMs - _lastCmd22EventMs!;
     _lastCmd22EventMs = nowMs;
 
-    print(
+    AppLog.debug(
       "${DateTime.now()} CMD22 event: lr=${res.lr}, family=0x22, len=${res.data.length}, deltaMs=${deltaMs ?? 'n/a'}, data=${res.data.hexString}",
     );
   }
@@ -340,7 +341,7 @@ class BleManager {
   static _checkTimeout(String cmd, int timeoutMs, Uint8List data, String lr) {
     _reqTimeout.remove(cmd);
     var cb = _reqListen.remove(cmd);
-    print('${DateTime.now()} _checkTimeout-----timeoutMs----$timeoutMs-----cb----$cb-----');
+    AppLog.debug('${DateTime.now()} _checkTimeout-----timeoutMs----$timeoutMs-----cb----$cb-----');
     if (cb != null) {
       var res = BleReceive();
       res.isTimeout = true;

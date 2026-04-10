@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/chat_message.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/chat_backend.dart';
 import 'package:demo_ai_even/services/chat_history_store.dart';
 import 'package:demo_ai_even/services/openai_chat_backend.dart';
@@ -43,6 +44,19 @@ class ChatService {
   bool get isThinking => _isThinking;
   bool get isReady => _modeActive && !_isListening && !_isThinking;
 
+  void markDisplayVisible({
+    required bool value,
+    required String source,
+  }) {
+    if (_isDisplayVisible == value) {
+      return;
+    }
+    AppLog.debug(
+      '${DateTime.now()} DisplayState: source=$source service=Chat old=$_isDisplayVisible new=$value mode=Chat',
+    );
+    _isDisplayVisible = value;
+  }
+
   Future<void> enterMode({
     bool showReadyCard = true,
   }) async {
@@ -72,7 +86,7 @@ class ChatService {
     _modeActive = false;
     _isListening = false;
     _isThinking = false;
-    _isDisplayVisible = false;
+    markDisplayVisible(value: false, source: 'Chat.resetSession');
     _lastSubmitStartedAt = null;
     _messageSequence = 0;
     _persistedMessageCount = 0;
@@ -238,11 +252,18 @@ class ChatService {
   String get summary =>
       'Chat mode reuses glasses audio capture, transcribes speech, sends it to a swappable backend, and renders the reply on the glasses while the mode stays active.';
 
+  Future<void> showReadyPrompt() async {
+    if (!_modeActive || _isListening || _isThinking) {
+      return;
+    }
+    await _showText('Chat ready\nTilt up to talk');
+  }
+
   Future<void> _showText(String text) async {
     if (!_modeActive) {
       return;
     }
-    _isDisplayVisible = true;
+    markDisplayVisible(value: true, source: 'Chat.showText');
     await TextService.get.startSendText(text);
   }
 

@@ -20,7 +20,7 @@ The app currently supports a mode-based companion model:
 
 Quick mode switching is available through:
 - actions on the persistent Android notification
-- idle double tap on the glasses when no feature is currently active on the display
+- the app UI mode selector
 
 ### Glance
 Glance is the most complete mode today.
@@ -99,13 +99,11 @@ Available paths:
   - `Capture`
   - `Navigate`
   - `Chat`
-- idle glasses double tap
+- app UI mode selector
 
 Glasses rule:
 - if something is actively shown on the glasses, double tap closes it
-- if nothing is currently active on the glasses, double tap cycles modes in this order:
-  - `Glance -> Navigate -> Chat -> Capture -> Glance`
-- after an idle double-tap mode switch, a brief mode title card is shown and auto-dismissed
+- if nothing is currently active on the glasses, double tap does nothing
 
 Quick switching is passive:
 - it changes the current mode
@@ -113,6 +111,12 @@ Quick switching is passive:
 - it does not auto-start listening
 - it does not auto-open navigation content
 - it does not force a Glance render
+
+Mode-entry displays:
+- `Capture` shows `*` when idle and ready
+- `Chat` shows `Chat ready` / `Tilt up to talk`
+- `Navigate` shows `Open Google Maps` / `to start navigation` until a live navigation instruction is available
+- `Glance` remains notification-driven and does not show a separate idle title card
 
 Response shaping:
 - Chat responses are explicitly shaped for smart glasses
@@ -241,6 +245,23 @@ Optional build-time defines:
 --dart-define="CHAT_MAX_OUTPUT_TOKENS=220"
 --dart-define="CHAT_MAX_RESPONSE_CHARS=900"
 --dart-define="CHAT_MAX_HISTORY_MESSAGES=16"
+--dart-define="COMPANION_VERBOSE_LOGS=true"
+```
+
+Debug logging:
+- verbose Flutter-side investigation logs are off by default
+- enable them with:
+
+```powershell
+--dart-define="COMPANION_VERBOSE_LOGS=true"
+```
+
+- verbose native Google Maps payload dumps are also off by default
+- enable them on a connected device with:
+
+```powershell
+adb shell setprop log.tag.MapsNotificationDump DEBUG
+adb logcat -s MapsNotificationDump
 ```
 
 ## Running The App

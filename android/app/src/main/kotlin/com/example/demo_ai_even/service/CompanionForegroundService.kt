@@ -48,7 +48,7 @@ class CompanionForegroundService : Service() {
             pendingFlags(PendingIntent.FLAG_UPDATE_CURRENT),
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Even Companion - $modeLabel")
             .setContentText("Companion mode active in background")
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -56,11 +56,18 @@ class CompanionForegroundService : Service() {
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(contentIntent)
-            .addAction(0, "Glance", buildModeActionPendingIntent("Glance", 1))
-            .addAction(0, "Capture", buildModeActionPendingIntent("Capture", 2))
-            .addAction(0, "Navigate", buildModeActionPendingIntent("Navigate", 3))
-            .addAction(0, "Chat", buildModeActionPendingIntent("Chat", 4))
-            .build()
+
+        listOf("Glance", "Navigate", "Chat", "Capture")
+            .filter { it != modeLabel }
+            .forEachIndexed { index, label ->
+                builder.addAction(
+                    0,
+                    label,
+                    buildModeActionPendingIntent(label, index + 1),
+                )
+            }
+
+        return builder.build()
     }
 
     private fun buildModeActionPendingIntent(modeLabel: String, requestCode: Int): PendingIntent {
