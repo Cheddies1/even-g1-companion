@@ -162,6 +162,15 @@ Chat mode is now a working v1 feature.
 - the transcript plus in-memory conversation history are sent to the configured chat backend
 - the assistant reply is displayed in the glasses and can page across multiple screens if long
 
+### Response shaping and limits
+
+- the backend uses a smart-glasses-specific system prompt
+- responses are biased toward short, practical, high-signal answers
+- output tokens are capped at the backend request level
+- response characters are also capped locally before display as a second safety rail
+- session history is only lightly capped to the most recent messages if it grows unusually large
+- there is no summarisation in this phase
+
 ### Current configuration
 
 Chat mode requires an OpenAI API key at build/run time.
@@ -184,12 +193,39 @@ Optional defines:
 --dart-define="CHAT_MODEL=gpt-4.1-mini"
 --dart-define="CHAT_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe"
 --dart-define="CHAT_TRANSCRIPTION_LANGUAGE=en"
+--dart-define="CHAT_MAX_OUTPUT_TOKENS=220"
+--dart-define="CHAT_MAX_RESPONSE_CHARS=900"
+--dart-define="CHAT_MAX_HISTORY_MESSAGES=16"
 ```
+
+### Failure handling
+
+Current short on-glasses failure messages:
+- no speech / empty transcript:
+  - `Didn't catch that`
+- transcription auth failure:
+  - `API key issue`
+- transcription timeout:
+  - `Transcription timed out`
+- transcription network failure:
+  - `Network problem`
+- generic transcription failure:
+  - `Transcription failed`
+- backend auth failure:
+  - `API key issue`
+- backend timeout:
+  - `Request timed out`
+- backend network failure:
+  - `Network problem`
+- generic backend or flow failure:
+  - `Something went wrong`
+
+Richer technical detail is kept in app logs rather than dumped into the glasses display.
 
 ### Current caveats
 
 - Chat mode depends on network reachability and a valid API key
-- sessions are in-memory only and are cleared when leaving Chat mode
+- long conversations are lightly windowed if they exceed the recent-history cap
 - there is no spoken TTS reply in this phase
 - there is no consumer ChatGPT account linking in this phase
 

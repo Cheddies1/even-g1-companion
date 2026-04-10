@@ -11,6 +11,7 @@ import 'package:demo_ai_even/services/text_service.dart';
 
 class ChatService {
   static const _closeGestureGraceWindow = Duration(milliseconds: 1500);
+  static const _maxGlassesResponseChars = 900;
 
   static ChatService? _instance;
   static ChatService get get => _instance ??= ChatService._();
@@ -98,7 +99,7 @@ class ChatService {
 
     final started = await BleManager.invokeMethod<bool>('startGlassesCapture');
     if (started != true) {
-      await _showText('Chat listen failed');
+      await _showText('Mic start failed');
       return 'Chat listen failed';
     }
 
@@ -145,7 +146,7 @@ class ChatService {
       }
 
       if (transcript.isEmpty) {
-        await _showText('No speech detected');
+        await _showText("Didn't catch that");
         return 'No speech detected';
       }
 
@@ -175,7 +176,7 @@ class ChatService {
         return 'Chat session changed';
       }
 
-      final cleanedAnswer = _cleanText(answer);
+      final cleanedAnswer = _capForGlasses(_cleanText(answer));
       _messages.add(
         ChatMessage(
           role: ChatRole.assistant,
@@ -192,16 +193,19 @@ class ChatService {
       );
       return 'Assistant replied';
     } on ChatTranscriptionException catch (e) {
-      await _showText('Speech error\n${_shortPreview(e.message, max: 40)}');
+      print('${DateTime.now()} Chat: transcription error -> ${e.kind} | ${e.message}');
+      await _showText(_transcriptionErrorMessage(e));
       return 'Speech error';
     } on ChatBackendException catch (e) {
-      await _showText('Chat error\n${_shortPreview(e.message, max: 40)}');
+      print('${DateTime.now()} Chat: backend error -> ${e.kind} | ${e.message}');
+      await _showText(_backendErrorMessage(e));
       return 'Chat backend error';
     } on ChatFlowException catch (e) {
-      await _showText(_shortPreview(e.message, max: 60));
+      print('${DateTime.now()} Chat: flow error -> ${e.message}');
+      await _showText(_flowErrorMessage(e));
       return e.message;
     } catch (e) {
-      await _showText('Chat failed');
+      await _showText('Something went wrong');
       print('${DateTime.now()} Chat: submit failed -> $e');
       return 'Chat failed';
     } finally {
@@ -276,6 +280,47 @@ class ChatService {
 
   String _cleanText(String value) {
     return value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  String _capForGlasses(String value) {
+    if (value.length <= _maxGlassesResponseChars) {
+      return value;
+    }
+    return '${value.substring(0, _maxGlassesResponseChars).trimRight()}…';
+  }
+
+  String _transcriptionErrorMessage(ChatTranscriptionException error) {
+    switch (error.kind) {
+      case ChatTranscriptionErrorKind.auth:
+        return 'API key issue';
+      case ChatTranscriptionErrorKind.timeout:
+        return 'Transcription timed out';
+      case ChatTranscriptionErrorKind.network:
+        return 'Network problem';
+      case ChatTranscriptionErrorKind.generic:
+        return 'Transcription failed';
+    }
+  }
+
+  String _backendErrorMessage(ChatBackendException error) {
+    switch (error.kind) {
+      case ChatBackendErrorKind.auth:
+        return 'API key issue';
+      case ChatBackendErrorKind.timeout:
+        return 'Request timed out';
+      case ChatBackendErrorKind.network:
+        return 'Network problem';
+      case ChatBackendErrorKind.generic:
+        return 'Something went wrong';
+    }
+  }
+
+  String _flowErrorMessage(ChatFlowException error) {
+    switch (error.message) {
+      case 'No recorded audio to transcribe':
+        return 'Transcription failed';
+    }
+    return 'Something went wrong';
   }
 }
 

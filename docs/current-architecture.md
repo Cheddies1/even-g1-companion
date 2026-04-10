@@ -110,6 +110,17 @@ Current backend seam:
 - the current v1 implementation uses an OpenAI-compatible backend and OpenAI transcription API
 - the backend can be replaced later without rewriting mode ownership
 
+Current request shaping:
+- the OpenAI-compatible backend applies a glasses-specific system prompt
+- request output is bounded with a max completion token limit
+- response text is also capped locally before being rendered to the glasses
+
+Current session-history behaviour:
+- the full in-memory Chat turn list is tracked while Chat mode stays active
+- requests currently send only the most recent history window when the conversation grows beyond a light cap
+- there is no summarisation in this phase
+- the cap is intentionally light-touch so useful follow-up context is preserved for normal conversations
+
 ## BLE and protocol path
 
 The app intentionally preserves the working BLE and protocol foundation from the old demo app.

@@ -9,6 +9,9 @@ class OpenAiTranscriptionService {
             Dio(
               BaseOptions(
                 baseUrl: _baseUrl,
+                connectTimeout: const Duration(seconds: 20),
+                receiveTimeout: const Duration(seconds: 45),
+                sendTimeout: const Duration(seconds: 45),
                 headers: {
                   'Authorization': 'Bearer $_apiKey',
                 },
@@ -37,12 +40,16 @@ class OpenAiTranscriptionService {
     if (!isConfigured) {
       throw const ChatTranscriptionException(
         'Missing OPENAI_API_KEY for speech transcription',
+        kind: ChatTranscriptionErrorKind.auth,
       );
     }
 
     final file = File(filePath);
     if (!file.existsSync()) {
-      throw const ChatTranscriptionException('Recorded audio file not found');
+      throw const ChatTranscriptionException(
+        'Recorded audio file not found',
+        kind: ChatTranscriptionErrorKind.generic,
+      );
     }
 
     try {
@@ -69,19 +76,52 @@ class OpenAiTranscriptionService {
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;
       final statusMessage = e.response?.statusMessage ?? e.message;
+      if (statusCode == 401 || statusCode == 403) {
+        throw ChatTranscriptionException(
+          'Transcription failed: $statusCode $statusMessage',
+          kind: ChatTranscriptionErrorKind.auth,
+        );
+      }
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        throw ChatTranscriptionException(
+          'Transcription timed out: $statusMessage',
+          kind: ChatTranscriptionErrorKind.timeout,
+        );
+      }
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.unknown) {
+        throw ChatTranscriptionException(
+          'Transcription network error: $statusMessage',
+          kind: ChatTranscriptionErrorKind.network,
+        );
+      }
       throw ChatTranscriptionException(
         statusCode == null
             ? 'Transcription failed: $statusMessage'
             : 'Transcription failed: $statusCode $statusMessage',
+        kind: ChatTranscriptionErrorKind.generic,
       );
     }
   }
 }
 
+enum ChatTranscriptionErrorKind {
+  auth,
+  timeout,
+  network,
+  generic,
+}
+
 class ChatTranscriptionException implements Exception {
-  const ChatTranscriptionException(this.message);
+  const ChatTranscriptionException(
+    this.message, {
+    this.kind = ChatTranscriptionErrorKind.generic,
+  });
 
   final String message;
+  final ChatTranscriptionErrorKind kind;
 
   @override
   String toString() => message;

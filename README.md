@@ -85,6 +85,12 @@ Current flow:
 
 This is not tied to a ChatGPT consumer/web session. Chat v1 uses an API-backed backend seam so the transport can be swapped later without rewriting the mode.
 
+Response shaping:
+- Chat responses are explicitly shaped for smart glasses
+- the backend prompt biases toward concise, practical, small-display answers
+- short sentences and compact chunks are preferred over long paragraphs
+- actionable next steps are prioritised over background explanation
+
 ## Trusted Glasses Interaction Model
 
 The app is built only on interactions we trust from live testing.
@@ -203,6 +209,9 @@ Optional build-time defines:
 --dart-define="CHAT_MODEL=gpt-4.1-mini"
 --dart-define="CHAT_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe"
 --dart-define="CHAT_TRANSCRIPTION_LANGUAGE=en"
+--dart-define="CHAT_MAX_OUTPUT_TOKENS=220"
+--dart-define="CHAT_MAX_RESPONSE_CHARS=900"
+--dart-define="CHAT_MAX_HISTORY_MESSAGES=16"
 ```
 
 ## Running The App

@@ -5,3 +5,10 @@ abstract class ChatBackend {
     required List<ChatMessage> messages,
   });
 }
+
+enum ChatBackendErrorKind {
+  auth,
+  timeout,
+  network,
+  generic,
+}
