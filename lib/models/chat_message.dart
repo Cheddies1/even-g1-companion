@@ -3,6 +3,17 @@ enum ChatRole {
   assistant,
 }
 
+extension ChatRoleX on ChatRole {
+  String get apiRole {
+    switch (this) {
+      case ChatRole.user:
+        return 'user';
+      case ChatRole.assistant:
+        return 'assistant';
+    }
+  }
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.role,
@@ -13,12 +24,7 @@ class ChatMessage {
   final String content;
 
   String get apiRole {
-    switch (role) {
-      case ChatRole.user:
-        return 'user';
-      case ChatRole.assistant:
-        return 'assistant';
-    }
+    return role.apiRole;
   }
 
   Map<String, String> toApiMap() {
