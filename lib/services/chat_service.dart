@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/chat_message.dart';
 import 'package:demo_ai_even/services/chat_backend.dart';
+import 'package:demo_ai_even/services/chat_history_store.dart';
 import 'package:demo_ai_even/services/openai_chat_backend.dart';
 import 'package:demo_ai_even/services/openai_transcription_service.dart';
 import 'package:demo_ai_even/services/proto.dart';
@@ -30,6 +31,8 @@ class ChatService {
   bool _isListening = false;
   bool _isThinking = false;
   DateTime? _lastSubmitStartedAt;
+  int _messageSequence = 0;
+  int _persistedMessageCount = 0;
   final List<ChatMessage> _messages = <ChatMessage>[];
 
   bool get hasActiveSession => _sessionId != null;
@@ -42,21 +45,42 @@ class ChatService {
     _modeActive = true;
     _sessionVersion++;
     _sessionId = DateTime.now().millisecondsSinceEpoch.toString();
+    _messageSequence = 0;
+    _persistedMessageCount = 0;
+    final startedAt = DateTime.now();
+    await ChatHistoryStore.get.startSession(
+      id: _sessionId!,
+      startedAt: startedAt,
+    );
     await _showText('Chat ready\nTilt up to talk');
     print('${DateTime.now()} Chat: session started -> $_sessionId');
   }
 
   Future<void> resetSession() async {
+    final sessionId = _sessionId;
+    final shouldDeleteSession = sessionId != null && _persistedMessageCount == 0;
+    final shouldCloseSession = sessionId != null && _persistedMessageCount > 0;
+
     _sessionVersion++;
     _modeActive = false;
     _isListening = false;
     _isThinking = false;
     _lastSubmitStartedAt = null;
+    _messageSequence = 0;
+    _persistedMessageCount = 0;
     _messages.clear();
     _sessionId = null;
     await BleManager.invokeMethod('cancelGlassesCapture');
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
+    if (shouldDeleteSession) {
+      await ChatHistoryStore.get.deleteSession(sessionId);
+    } else if (shouldCloseSession) {
+      await ChatHistoryStore.get.endSession(
+        sessionId: sessionId,
+        endedAt: DateTime.now(),
+      );
+    }
     print('${DateTime.now()} Chat: session reset');
   }
 
@@ -132,6 +156,10 @@ class ChatService {
           content: cleanedTranscript,
         ),
       );
+      await _persistMessage(
+        role: ChatRole.user,
+        text: cleanedTranscript,
+      );
 
       await _showText('You said:\n${_shortPreview(cleanedTranscript)}');
       await Future<void>.delayed(const Duration(milliseconds: 900));
@@ -153,6 +181,10 @@ class ChatService {
           role: ChatRole.assistant,
           content: cleanedAnswer,
         ),
+      );
+      await _persistMessage(
+        role: ChatRole.assistant,
+        text: cleanedAnswer,
       );
       await _showText(cleanedAnswer);
       print(
@@ -204,6 +236,25 @@ class ChatService {
 
   bool _isCurrentRequest(int requestVersion) {
     return _modeActive && requestVersion == _sessionVersion;
+  }
+
+  Future<void> _persistMessage({
+    required ChatRole role,
+    required String text,
+  }) async {
+    final sessionId = _sessionId;
+    if (sessionId == null) {
+      return;
+    }
+    await ChatHistoryStore.get.appendMessage(
+      sessionId: sessionId,
+      role: role.apiRole,
+      text: text,
+      sequence: _messageSequence,
+      createdAt: DateTime.now(),
+    );
+    _messageSequence++;
+    _persistedMessageCount++;
   }
 
   Future<void> _deleteTempFile(String filePath) async {
