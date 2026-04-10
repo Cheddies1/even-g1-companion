@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/app_mode.dart';
 import 'package:demo_ai_even/services/capture_service.dart';
+import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
 import 'package:demo_ai_even/services/navigate_service.dart';
@@ -92,6 +93,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _buildStatusCard() {
     final capture = CaptureService.get;
+    final chat = ChatService.get;
     final controller = CompanionController.get;
     final navigate = NavigateService.get;
     return Container(
@@ -124,6 +126,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             )
           else if (capture.lastSavedFileName != null)
             Text('Last saved: ${capture.lastSavedFileName}'),
+          if (controller.activeMode == AppMode.chat && chat.isListening)
+            const Text(
+              'Chat: Listening from glasses mic',
+              style: TextStyle(color: Color(0xFF9B111E)),
+            ),
+          if (controller.activeMode == AppMode.chat && chat.isThinking)
+            const Text('Chat: Waiting for assistant'),
         ],
       ),
     );
@@ -263,7 +272,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   children: [
                     _buildModeButton(AppMode.navigate),
                     const SizedBox(width: 8),
-                    _buildModeButton(AppMode.chat, enabled: false),
+                    _buildModeButton(AppMode.chat),
                   ],
                 ),
               ],

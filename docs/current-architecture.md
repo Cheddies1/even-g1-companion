@@ -25,8 +25,8 @@ Only one mode is active at a time.
 Current implementation state:
 - `glance`: implemented and actively used
 - `capture`: scaffolded / partially implemented
-- `navigate`: scaffolded
-- `chat`: architecture seam only
+- `navigate`: implemented, still being tuned on device
+- `chat`: implemented as a practical v1 voice loop
 
 ## Android build baseline
 
@@ -83,18 +83,32 @@ Owns:
 
 ### Navigate
 - [lib/services/navigate_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/navigate_service.dart)
+- [lib/services/navigate_bitmap_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/navigate_bitmap_service.dart)
 
 Owns:
 - latest maps-derived guidance model
-- text rendering for navigation cards
+- text fallback for startup / waiting states
+- Navigate-only BMP card rendering for real Google Maps guidance
 - suppression / prioritization rules relative to Glance
 
 ### Chat
 - [lib/services/chat_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_service.dart)
+- [lib/services/chat_backend.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_backend.dart)
+- [lib/services/openai_chat_backend.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/openai_chat_backend.dart)
+- [lib/services/openai_transcription_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/openai_transcription_service.dart)
 
-Current role:
-- future seam only
-- place for future speech recognition, chat session continuity, and ChatGPT request/response handling
+Owns:
+- Chat mode session lifecycle
+- in-memory turn history while Chat mode remains active
+- start / stop / submit flow driven by trusted gestures
+- STT handoff
+- backend request / response handling
+- concise text-state rendering back to the glasses
+
+Current backend seam:
+- `ChatService` depends on the `ChatBackend` abstraction, not a controller-level hardcoded backend
+- the current v1 implementation uses an OpenAI-compatible backend and OpenAI transcription API
+- the backend can be replaced later without rewriting mode ownership
 
 ## BLE and protocol path
 
@@ -191,6 +205,13 @@ Current technical model:
 
 Capture mode depends on this existing path rather than inventing a new one.
 
+Chat mode reuse:
+- Chat reuses the same native LC3 decode and PCM buffering path
+- for Chat, a narrow native method returns a temporary local WAV file instead of publishing to MediaStore
+- that temp WAV is used for speech transcription, then deleted
+
+This keeps Capture and Chat on the same proven recorder foundation while allowing different stop/output behavior.
+
 ## Phone UI
 
 Current phone control surface:
@@ -204,6 +225,8 @@ The UI is intentionally simple:
 - scan/reconnect
 - small debug/status section
 - legacy/demo area separated from the main UX
+
+Chat mode is intentionally wired into the same simple mode selector. There is no settings UI for backend configuration in this phase; Chat backend configuration is done at build time with `dart-define`.
 
 ## Legacy / demo code posture
 

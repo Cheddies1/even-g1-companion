@@ -79,6 +79,11 @@ class CompanionController extends ChangeNotifier {
       {'modeLabel': mode.label},
     );
 
+    if (mode == AppMode.chat) {
+      await ChatService.get.enterMode();
+      _statusMessage = 'Chat ready';
+    }
+
     if (mode == AppMode.navigate && NavigateService.get.hasInstruction) {
       await NavigateService.get.showLatest();
     }
@@ -179,12 +184,20 @@ class CompanionController extends ChangeNotifier {
   Future<void> _handleChatGesture(int eventId) async {
     switch (eventId) {
       case 0:
-        ChatService.get.resetSession();
-        _statusMessage = 'Chat mode coming soon';
+        if (ChatService.get.shouldIgnoreCloseGesture()) {
+          _statusMessage = ChatService.get.isThinking
+              ? 'Chat working'
+              : 'Chat submitting';
+          break;
+        }
+        await ChatService.get.resetSession();
+        _statusMessage = 'Chat closed';
         break;
       case 2:
+        _statusMessage = await ChatService.get.startListening();
+        break;
       case 3:
-        _statusMessage = 'Chat mode scaffolded only in this phase';
+        _statusMessage = await ChatService.get.stopListeningAndSubmit();
         break;
     }
   }
@@ -205,7 +218,7 @@ class CompanionController extends ChangeNotifier {
         await NavigateService.get.leaveMode();
         break;
       case AppMode.chat:
-        ChatService.get.resetSession();
+        await ChatService.get.resetSession();
         break;
     }
   }

@@ -16,7 +16,7 @@ The app currently supports a mode-based companion model:
 - `Glance`
 - `Capture`
 - `Navigate`
-- `Chat` (architected, not fully implemented yet)
+- `Chat`
 
 ### Glance
 Glance is the most complete mode today.
@@ -62,18 +62,28 @@ Current direction:
 - show concise turn guidance in the glasses
 - suppress or deprioritize ordinary Glance notifications while navigating
 
-This is currently scaffolded rather than fully polished.
+This is now implemented as a Navigate-only visual card path:
+- startup / waiting states stay text-rendered
+- real Google Maps nav cards use the Maps-provided maneuver icon bitmap
+- distance, road/context text, and route metadata are composed into a custom BMP card
+
+Navigate is working, but still needs longer real-world walking validation for timing and stability.
 
 ### Chat
-Chat mode is future-facing in this phase.
+Chat mode is now implemented as a practical v1 voice loop.
 
-It is intended to support:
-- hold-to-ask
-- speech recognition
-- short response rendering in the glasses
-- one active conversation session while Chat mode is selected
+Current flow:
+- enter `Chat` mode
+- tilt up to start listening from the glasses mic
+- tilt down to stop capture and submit
+- speech is transcribed to text
+- the app briefly confirms what was heard
+- the app shows `Thinking...`
+- the assistant reply is rendered in the glasses using the existing text path
+- follow-up turns stay in the same in-memory session while Chat mode remains active
+- leaving Chat mode resets the session
 
-Chat is not yet implemented end-to-end, and there is no current OpenAI / ChatGPT account linking in this repo.
+This is not tied to a ChatGPT consumer/web session. Chat v1 uses an API-backed backend seam so the transport can be swapped later without rewriting the mode.
 
 ## Trusted Glasses Interaction Model
 
@@ -102,6 +112,7 @@ Key parts:
 - Android notification listener
 - Android foreground companion service
 - native glasses-mic audio decode path
+- Chat STT + backend request seam
 
 ## Project Structure
 
@@ -113,6 +124,9 @@ Important Flutter files:
 - [lib/services/capture_service.dart](lib/services/capture_service.dart)
 - [lib/services/navigate_service.dart](lib/services/navigate_service.dart)
 - [lib/services/chat_service.dart](lib/services/chat_service.dart)
+- [lib/services/chat_backend.dart](lib/services/chat_backend.dart)
+- [lib/services/openai_chat_backend.dart](lib/services/openai_chat_backend.dart)
+- [lib/services/openai_transcription_service.dart](lib/services/openai_transcription_service.dart)
 - [lib/views/home_page.dart](lib/views/home_page.dart)
 
 Important Android/native files:
@@ -130,6 +144,7 @@ You need:
 - Android SDK / platform tools installed
 - a paired or pairable Even G1 glasses set
 - an Android phone with notification access enabled for the app
+- an OpenAI API key if you want Chat mode to work end-to-end
 
 This project is primarily being developed and tested on:
 - Samsung Galaxy S24 Ultra
@@ -163,6 +178,33 @@ Required for:
 ### Foreground Service
 Used so the app can behave like a permanent companion app and continue functioning while backgrounded.
 
+### Chat backend configuration
+Required for:
+- Chat mode transcription
+- Chat mode assistant responses
+
+Current v1 backend:
+- OpenAI API
+
+Required build-time define:
+
+```powershell
+--dart-define="OPENAI_API_KEY=sk-..."
+```
+
+Important:
+- pass the raw key value
+- do not include square brackets around the key
+
+Optional build-time defines:
+
+```powershell
+--dart-define="CHAT_API_BASE_URL=https://api.openai.com/v1"
+--dart-define="CHAT_MODEL=gpt-4.1-mini"
+--dart-define="CHAT_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe"
+--dart-define="CHAT_TRANSCRIPTION_LANGUAGE=en"
+```
+
 ## Running The App
 
 Run in development:
@@ -171,10 +213,22 @@ Run in development:
 flutter run
 ```
 
+Run in development with Chat mode enabled:
+
+```powershell
+flutter run --dart-define="OPENAI_API_KEY=sk-..."
+```
+
 Build a debug APK:
 
 ```powershell
 flutter build apk --debug
+```
+
+Build a release APK with Chat mode enabled:
+
+```powershell
+flutter build apk --release --dart-define="OPENAI_API_KEY=sk-..."
 ```
 
 Known-good local validation commands:
@@ -200,12 +254,13 @@ Codex workflow note:
 - text rendering to the glasses
 - notification ingestion from Android
 - Glance mode notification display and cycling
+- Chat mode end-to-end voice loop on device
 - deliberate Glance dismissal on phone while cycling
 - foreground companion-service foundation
 
 ### In Progress / Needs More Device Validation
 - Capture mode end-to-end recording reliability
-- Navigate mode real-world Google Maps behavior
+- Navigate mode longer real-world Google Maps walking behavior
 - background behavior polish
 - left/right render synchronization under heavy notification churn
 
@@ -215,7 +270,7 @@ This repo is not currently:
 - a full Even protocol reference
 - a general-purpose Even SDK
 - a polished cross-device Android release
-- a finished ChatGPT client
+- a consumer ChatGPT account-linked client
 
 It is a practical personal companion app built on the parts of the Even G1 behavior that have been confirmed enough to trust.
 

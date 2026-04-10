@@ -109,6 +109,7 @@ class BleMethodChannel(
             "updateCompanionMode" -> updateCompanionMode(call, result)
             "startGlassesCapture" -> startGlassesCapture(call, result)
             "stopGlassesCapture" -> stopGlassesCapture(call, result)
+            "stopGlassesCaptureToTemp" -> stopGlassesCaptureToTemp(call, result)
             "cancelGlassesCapture" -> cancelGlassesCapture(call, result)
             else -> result.notImplemented()
         }
@@ -180,6 +181,10 @@ class BleMethodChannel(
 
     fun stopGlassesCapture(call: MethodCall, result: MethodChannel.Result) {
         result.success(GlassesCaptureRecorder.stopAndSave())
+    }
+
+    fun stopGlassesCaptureToTemp(call: MethodCall, result: MethodChannel.Result) {
+        result.success(GlassesCaptureRecorder.stopToTemp())
     }
 
     fun cancelGlassesCapture(call: MethodCall, result: MethodChannel.Result) {

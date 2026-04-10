@@ -5,6 +5,8 @@ import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/utils/utils.dart';
 
 class FeaturesServices {
+  static Future<void> _bmpSendQueue = Future<void>.value();
+
   final bmpUpdateManager = BmpUpdateManager();
 
   Future<void> sendBmp(String imageUrl) async {
@@ -13,6 +15,12 @@ class FeaturesServices {
   }
 
   Future<void> sendBmpData(Uint8List bmpData) async {
+    final send = _bmpSendQueue.then((_) => _sendBmpDataInternal(bmpData));
+    _bmpSendQueue = send.catchError((_) {});
+    await send;
+  }
+
+  Future<void> _sendBmpDataInternal(Uint8List bmpData) async {
     int initialSeq = 0;
     bool isSuccess = await Proto.sendHeartBeat();
     print("${DateTime.now()} testBMP -------startSendBeatHeart----isSuccess---$isSuccess------");

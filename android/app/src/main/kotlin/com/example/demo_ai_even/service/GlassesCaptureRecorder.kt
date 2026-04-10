@@ -99,6 +99,49 @@ object GlassesCaptureRecorder {
     }
 
     @Synchronized
+    fun stopToTemp(): Map<String, Any> {
+        if (!isRecording) {
+            return mapOf("success" to false)
+        }
+
+        isRecording = false
+        pcmStream?.flush()
+        pcmStream?.close()
+        pcmStream = null
+
+        val pcmFile = pcmTempFile ?: return mapOf("success" to false)
+        val tempDir = File(appContext.cacheDir, "chat-temp").apply { mkdirs() }
+        val fileName = "chat_${
+            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.UK).format(Date())
+        }.wav"
+        val wavFile = File(tempDir, fileName)
+
+        return try {
+            FileOutputStream(wavFile, false).use { output ->
+                writeWaveFile(pcmFile, output)
+            }
+            pcmFile.delete()
+            pcmTempFile = null
+
+            mapOf(
+                "success" to true,
+                "localPath" to wavFile.absolutePath,
+                "fileName" to fileName,
+                "pcmBytes" to pcmBytesWritten,
+                "durationMs" to (System.currentTimeMillis() - recordingStartedAtMs),
+            )
+        } catch (e: Exception) {
+            wavFile.delete()
+            pcmFile.delete()
+            pcmTempFile = null
+            mapOf(
+                "success" to false,
+                "error" to (e.message ?: "temp capture failed"),
+            )
+        }
+    }
+
+    @Synchronized
     fun cancel() {
         isRecording = false
         pcmStream?.flush()

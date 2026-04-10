@@ -22,11 +22,12 @@ It is intentionally separate from:
 
 ### Navigate
 - intended to surface Google Maps navigation guidance from notifications
-- scaffolded, not polished
+- implemented with a Navigate-only visual card path
+- still needs longer real-world walking validation
 
 ### Chat
-- future mode only in this phase
-- no end-to-end chat behavior yet
+- voice-driven conversational mode
+- implemented end-to-end on device
 
 ## Glance mode
 
@@ -129,12 +130,68 @@ Navigate is intentionally lean and notification-driven.
 ### Current status
 
 - the notification ingestion path is already available
-- Maps detection is scaffolded
-- formatting/normalization is still light
+- Maps notification fields are parsed
+- startup and waiting states stay text-rendered
+- real navigation instructions use a custom BMP card with the Maps-provided maneuver icon and text fields
+- updates are throttled and serialized to reduce unstable overlapping BMP uploads
 
 ### Current caveat
 
-Navigate v1 depends on how good Google Maps notifications are on the actual phone/device configuration.
+Navigate v1 depends on how stable Google Maps notification updates are on the real phone/device configuration during longer walks.
+
+## Chat mode
+
+Chat mode is now a working v1 feature.
+
+### Gesture flow
+
+- entering Chat mode creates a fresh in-memory session
+- tilt up starts listening from the glasses mic
+- tilt down stops capture and submits what was said
+- a short transcript preview may be shown
+- `Thinking...` is shown while waiting for the backend
+- the assistant reply is rendered via the normal text path
+- follow-up turns continue in the same session while Chat mode stays active
+- leaving Chat mode resets and discards the session
+
+### Current implementation
+
+- glasses mic audio is captured through the existing native recorder path
+- Chat uses a temporary WAV output rather than Capture's saved-public-recording path
+- the WAV is transcribed through the configured OpenAI transcription API
+- the transcript plus in-memory conversation history are sent to the configured chat backend
+- the assistant reply is displayed in the glasses and can page across multiple screens if long
+
+### Current configuration
+
+Chat mode requires an OpenAI API key at build/run time.
+
+Known-good examples:
+
+```powershell
+flutter run --dart-define="OPENAI_API_KEY=sk-..."
+flutter build apk --release --dart-define="OPENAI_API_KEY=sk-..."
+```
+
+Important:
+- use the raw key value
+- do not wrap the key in square brackets
+
+Optional defines:
+
+```powershell
+--dart-define="CHAT_API_BASE_URL=https://api.openai.com/v1"
+--dart-define="CHAT_MODEL=gpt-4.1-mini"
+--dart-define="CHAT_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe"
+--dart-define="CHAT_TRANSCRIPTION_LANGUAGE=en"
+```
+
+### Current caveats
+
+- Chat mode depends on network reachability and a valid API key
+- sessions are in-memory only and are cleared when leaving Chat mode
+- there is no spoken TTS reply in this phase
+- there is no consumer ChatGPT account linking in this phase
 
 ## Background behaviour
 
@@ -179,5 +236,5 @@ This supports:
 - Glance left/right synchronization still needs watching under rapid notification arrival
 - some notification sources/messages still need smarter formatting
 - Capture mode needs real device validation for start/stop/save reliability
-- Navigate mode still needs human review against real Google Maps turn notifications
-- Chat mode is not implemented yet
+- Navigate mode still needs longer human review against real Google Maps walking sessions
+- Chat mode still needs broader real-world testing for latency, retries, and edge-case error handling

@@ -17,6 +17,7 @@ class NavigateBitmapService {
   static const _iconInset = 16.0;
   static const _contentLeft = 144.0;
   static const _contentRight = 18.0;
+  static const _metaTop = 100.0;
 
   static NavigateBitmapService? _instance;
   static NavigateBitmapService get get => _instance ??= NavigateBitmapService._();
@@ -101,8 +102,8 @@ class NavigateBitmapService {
         const Offset(_contentLeft, 56),
         const TextStyle(
           color: Colors.white,
-          fontSize: 24,
-          fontWeight: FontWeight.w500,
+          fontSize: 25,
+          fontWeight: FontWeight.w600,
           height: 1.1,
         ),
         maxWidth: _widthD - _contentLeft - _contentRight,
@@ -111,11 +112,11 @@ class NavigateBitmapService {
       _paintText(
         canvas,
         snapshot.metaLine,
-        const Offset(_contentLeft, 106),
+        const Offset(_contentLeft, _metaTop),
         const TextStyle(
-          color: Color(0xFFD0D0D0),
-          fontSize: 16,
-          fontWeight: FontWeight.w400,
+          color: Colors.white,
+          fontSize: 19,
+          fontWeight: FontWeight.w700,
           height: 1.0,
         ),
         maxWidth: _widthD - _contentLeft - _contentRight,
