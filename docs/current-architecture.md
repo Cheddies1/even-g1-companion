@@ -77,12 +77,15 @@ Current active-display sources:
 
 ### Glance
 - [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart)
+- [lib/services/glance_assistant_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_assistant_service.dart)
 
 Owns:
 - recent notification feed
+- separate live-score idle fallback slot
 - text rendering for Glance items
 - auto-pop / deliberate recall timing
 - phone-side dismissal of deliberately viewed notifications
+- Glance-only assistant shortcut state and ephemeral follow-up context
 
 ### Capture
 - [lib/services/capture_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/capture_service.dart)
@@ -130,6 +133,7 @@ Quick switching is routed centrally through:
 Input paths:
 - Android foreground notification action buttons
 - phone UI mode selector
+- idle-only right-hold QuickNote POC via right-leg `R21`
 
 Notification path:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
@@ -141,10 +145,19 @@ Current behavior:
 - the controller performs the actual switch
 - the foreground notification is updated to reflect the new mode
 - tapping the notification body opens the main app screen
+- a narrow `R21` hook in `BleManager` can also request an idle-only passive mode switch during QuickNote POC testing
 
 Phone UI path:
 - the home screen mode buttons route through the same central controller `setMode(...)` path
 - mode selection is immediate and does not depend on a temporary title-card overlay
+
+Right-hold POC path:
+- `BleManager._logCmd21(...)` observes `0x21`
+- only right-leg packets with the current stable `len == 42` pattern are forwarded
+- `CompanionController.handleRightHoldModeSwitchProbe()` owns the decision
+- the controller only switches mode when `hasActiveDisplay == false`
+- repeated triggers are debounced for `1500ms`
+- the switch remains passive and uses the existing mode order
 
 Glasses close path:
 - `F5 00` has one trusted meaning only:
@@ -168,6 +181,13 @@ Current mode-entry idle displays:
 - `navigate`: `Open Google Maps` / `to start navigation` unless a live instruction is already available
 - `glance`: no separate idle title card; content appears only when a Glance item is actually shown
 
+Glance assistant:
+- while in Glance mode and idle, left-hold enters a lightweight assistant flow without changing mode
+- the firmware owns the listening overlay during hold
+- after release, Flutter reuses the existing OpenAI transcription and backend request path
+- follow-ups use a small in-memory mini-session that expires after roughly 4 minutes of inactivity
+- this mini-session is separate from Chat mode and is not persisted to the Chat log
+
 ## BLE and protocol path
 
 The app intentionally preserves the working BLE and protocol foundation from the old demo app.
@@ -188,17 +208,57 @@ Key preserved behaviors:
 - existing text rendering send path
 - existing LC3 decode path
 
+## Transport health and recovery
+
+Transport health is now modeled per leg in:
+- [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+
+Current model:
+- left and right legs each track:
+  - connected state
+  - health state: `healthy`, `degraded`, `disconnected`
+  - last heartbeat timestamp
+  - last acknowledged command timestamp
+  - bounded reconnect attempt count
+
+Heartbeat handling:
+- `0x25` is sent per leg on a timer
+- heartbeat success marks that leg healthy
+- repeated heartbeat/request timeouts degrade that leg
+- a stale leg can be treated as degraded even before a full disconnect is reported
+
+Reconnect handling:
+- degraded legs trigger bounded reconnect attempts through the native bridge
+- reconnect is per-leg, not always full-session teardown
+- reconnect attempts are intentionally bounded to avoid loops or storms
+
+Resync handling:
+- when a degraded leg recovers, Flutter requests a lightweight content resync
+- active Navigate content is rerendered through the current Navigate render path
+- active text content is replayed through the shared text renderer
+- this is intended to help left/right displays converge again after one-leg transport degradation
+
 ## Trusted event routing
 
 The app only routes trusted gesture/state events into product behavior:
 - `F5 00`
 - `F5 02`
 - `F5 03`
+- `F5 17`
+- `F5 18`
 
 The broader mapping is documented in:
 - [even-g1-event-mapping.md](even-g1-event-mapping.md)
 
 The app does not rely on single taps as a core input.
+
+Current use of left-hold events:
+- in Glance mode only, the connected left-hold voice path is used for the Glance assistant shortcut
+- compatibility routing also accepts the legacy Even AI start/stop event family where needed on-device
+
+QuickNote note:
+- the right-hold mode-switch POC does not depend on `F5`
+- it is intentionally based on right-leg `R21` only because `F5` proved too overloaded for QuickNote modeling
 
 ## Notification ingestion
 
@@ -222,14 +282,25 @@ Maps payload dump logging:
 
 Notification policy:
 - [lib/services/notification_policy.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_policy.dart)
+- [lib/services/notification_settings_store.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_settings_store.dart)
 
 Current responsibility:
-- central classification of notifications as `blocked`, `protected`, or `normal`
-- one place for package-based Glance suppression and dismissal protection rules
+- central classification of notifications as `blocked`, `suppressed`, `protected`, `normal`, or `liveScore`
+- one place for package-based Glance suppression, live-score classification, and dismissal protection rules
+- persistence of user-managed suppressed package preferences
 
 Current built-in rules:
 - block the companion app's own notifications from entering Glance
-- protect Google Maps and YouTube notifications from Glance-driven dismissal side effects
+- protect YouTube notifications from Glance-driven dismissal side effects
+- suppress most ongoing notifications from the ordinary Glance queue
+- suppress low-value `Open on phone` style handoff notifications
+- seed user-manageable noisy-package suppression for SmartThings / Samsung Camera style churn
+
+Live score handling:
+- pinned live scores are represented separately from the normal Glance queue
+- they are prepared and now used as an idle fallback display surface in Glance mode
+- active queue content always wins over the idle live-score surface
+- when Glance returns to true idle, the live score can reappear automatically if it still exists
 
 ## Background / permanent companion foundation
 
@@ -271,6 +342,10 @@ Chat mode reuse:
 - Chat reuses the same native LC3 decode and PCM buffering path
 - for Chat, a narrow native method returns a temporary local WAV file instead of publishing to MediaStore
 - that temp WAV is used for speech transcription, then deleted
+
+Glance assistant reuse:
+- Glance assistant reuses the same temp-WAV recorder, transcription client, and OpenAI-compatible backend
+- it deliberately avoids Chat persistence and does not create a `ChatHistoryStore` session
 
 This keeps Capture and Chat on the same proven recorder foundation while allowing different stop/output behavior.
 

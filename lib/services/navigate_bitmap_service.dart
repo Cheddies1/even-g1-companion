@@ -20,16 +20,24 @@ class NavigateBitmapService {
   static const _distanceTop = 18.0;
   static const _contextTop = 60.0;
   static const _metaTop = 100.0;
+  static const _fileHeaderSize = 14;
+  static const _dibHeaderSize = 40;
+  static const _colorTableSize = 8;
+  static const _pixelOffset = _fileHeaderSize + _dibHeaderSize + _colorTableSize;
 
   static NavigateBitmapService? _instance;
   static NavigateBitmapService get get => _instance ??= NavigateBitmapService._();
 
   Future<void> renderAndSend(CompanionNotification? notification) async {
     final bmpBytes = await _buildBmpBytes(notification);
+    final rowBytes = (_width / 8).ceil();
+    final paddedRowBytes = ((rowBytes + 3) ~/ 4) * 4;
+    final expectedPixelBytes = paddedRowBytes * _height;
+    final expectedFileBytes = _pixelOffset + expectedPixelBytes;
     print(
-      '${DateTime.now()} Navigate BMP: render complete -> bytes=${bmpBytes.length}, iconSource=${notification?.navIconSource ?? ''}',
+      '${DateTime.now()} Navigate BMP: render complete -> bytes=${bmpBytes.length}, expectedFileBytes=$expectedFileBytes, expectedPixelBytes=$expectedPixelBytes, width=$_width, height=$_height, bpp=1, iconSource=${notification?.navIconSource ?? ''}',
     );
-    await FeaturesServices().sendBmpData(bmpBytes);
+    await FeaturesServices().sendNavigateBmpData(bmpBytes);
   }
 
   Future<Uint8List> _buildBmpBytes(CompanionNotification? notification) async {
@@ -177,18 +185,14 @@ class NavigateBitmapService {
     final rowBytes = (_width / 8).ceil();
     final paddedRowBytes = ((rowBytes + 3) ~/ 4) * 4;
     final pixelBytes = paddedRowBytes * _height;
-    const fileHeaderSize = 14;
-    const dibHeaderSize = 40;
-    const colorTableSize = 8;
-    const pixelOffset = fileHeaderSize + dibHeaderSize + colorTableSize;
-    final fileSize = pixelOffset + pixelBytes;
+    final fileSize = _pixelOffset + pixelBytes;
     final out = Uint8List(fileSize);
 
     out[0] = 0x42;
     out[1] = 0x4D;
     _writeUint32LE(out, 2, fileSize);
-    _writeUint32LE(out, 10, pixelOffset);
-    _writeUint32LE(out, 14, dibHeaderSize);
+    _writeUint32LE(out, 10, _pixelOffset);
+    _writeUint32LE(out, 14, _dibHeaderSize);
     _writeUint32LE(out, 18, _width);
     _writeUint32LE(out, 22, _height);
     _writeUint16LE(out, 26, 1);
@@ -202,9 +206,10 @@ class NavigateBitmapService {
     out.setRange(54, 58, [0x00, 0x00, 0x00, 0x00]);
     out.setRange(58, 62, [0xFF, 0xFF, 0xFF, 0x00]);
 
+    // Convert RGBA source pixels into a 1bpp, bit-packed BMP payload.
     for (var y = 0; y < _height; y++) {
       final srcY = _height - 1 - y;
-      final rowStart = pixelOffset + (y * paddedRowBytes);
+      final rowStart = _pixelOffset + (y * paddedRowBytes);
       for (var x = 0; x < _width; x++) {
         final rgbaIndex = (srcY * _width + x) * 4;
         final r = rgba[rgbaIndex];

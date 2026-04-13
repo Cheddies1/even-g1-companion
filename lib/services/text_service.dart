@@ -13,11 +13,13 @@ class TextService {
   static Timer? _timer;
   static List<String> list = [];
   static List<String> sendReplys = [];
+  static String? _lastSentText;
 
   TextService._(); 
 
   Future startSendText(String text) async {
     isRunning = true;
+    _lastSentText = text;
 
     _currentLine = 0;
     list = EvenAIDataMethod.measureStringList(text);
@@ -168,6 +170,15 @@ class TextService {
     clear();
   }
 
+  Future<bool> resendLastText() async {
+    final text = _lastSentText;
+    if (text == null || text.isEmpty || !isRunning) {
+      return false;
+    }
+    await startSendText(text);
+    return true;
+  }
+
   void clear() {
     isRunning = false;
     _currentLine = 0;
@@ -176,5 +187,6 @@ class TextService {
     list = [];
     sendReplys = [];
     retryCount = 0;
+    _lastSentText = null;
   }
 }

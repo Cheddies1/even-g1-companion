@@ -1,0 +1,156 @@
+# Current Worklist
+
+This is a short handoff note for new Codex sessions.
+
+Use this with:
+- [README.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/README.md)
+- [docs/current-behaviour.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/docs/current-behaviour.md)
+- [docs/current-architecture.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/docs/current-architecture.md)
+- [AGENTS.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/AGENTS.md)
+
+## Current Product State
+
+Working well:
+- Glance mode is a real daily-use feature
+- Chat mode works end-to-end with OpenAI-backed STT + assistant responses
+- Navigate mode works with Google Maps notification-driven BMP cards
+- Quick mode switching works from app UI and persistent notification
+- Right-hold QuickNote POC exists for idle-only mode switching
+- Per-leg BLE health and reconnect logic exists
+
+Working, but still needs real-world observation:
+- Navigate left/right BMP synchronisation under stress
+- Capture mode stop/save reliability on device
+- Live-score idle fallback in Glance
+
+## Current Priority Areas
+
+1. Live-score idle fallback
+- Current blocker is payload quality, not queue leakage
+- On this phone, Samsung AOD sports wrappers are visible
+- Important discovered signal:
+  - `android.ongoingActivityNoti.secondaryInfo = ambientData:sportsScore:...`
+- A narrow classifier upgrade was just added so Samsung AOD sports wrappers can populate the live-score slot
+- Expectation:
+  - the idle live-score surface may only show thin text like `Premier League`
+  - do not invent score text that does not exist
+
+2. Navigate BMP reliability
+- True 1bpp BMP generation is confirmed
+- Real issue is per-leg transport integrity during bulk BMP send
+- Split-eye divergence happens when one leg commits a frame and the other fails CRC
+- Navigate scheduler already keeps:
+  - one frame in flight per leg
+  - one latest pending frame per leg
+  - stale pending frames overwritten
+- A recovery pass was added:
+  - per-leg Navigate transport degraded state
+  - out-of-sync detection
+  - targeted resync to failed leg
+  - modest per-leg pacing/coalescing
+- This still needs more device validation
+
+3. Notification quality
+- Notification policy now supports:
+  - `blocked`
+  - `suppressed`
+  - `protected`
+  - `normal`
+  - `liveScore`
+- Ongoing notifications are generally not ordinary Glance items
+- YouTube / media protection is behaving correctly in recent logs
+- Notification Filters UI exists for package suppression
+
+## Recent Confirmed Findings
+
+Live score:
+- `com.samsung.android.app.aodservice` is definitely observed
+- In probe logs it exposed:
+  - `title=Premier League`
+  - `channelId=google_sports_nowbar_ongoing_channel`
+  - `android.ongoingActivityNoti.secondaryInfo=ambientData:sportsScore:/g/...`
+- No separate rich source notification with team names / score text has been confirmed yet
+
+YouTube / media:
+- `com.google.android.youtube` is a real package variant on this phone
+- Media notifications can be `MediaStyle` with `category=transport`
+- Recent policy logs showed these classifying as `protected`, not `normal`
+
+Navigate:
+- Logs captured real per-leg CRC failures and native write anomalies like `writeResult=201`
+- Current diagnosis is transport-level BMP commit failure on one leg, not bitmap format error
+
+## Useful Log Filters
+
+Navigate BMP transport:
+
+```powershell
+adb logcat -d | Select-String "NavigateBmpTrace|NavigateBmpTraceNative"
+```
+
+Navigate bitmap generation check:
+
+```powershell
+adb logcat -d | Select-String "Navigate BMP: render complete"
+```
+
+Notification classification and routing:
+
+```powershell
+adb logcat -d | Select-String "NotificationPolicy:"
+```
+
+Live-score native source discovery:
+
+```powershell
+adb shell setprop log.tag.LiveScoreNotificationDump DEBUG
+adb logcat -d -s LiveScoreNotificationDump
+```
+
+Google Maps payload dump:
+
+```powershell
+adb shell setprop log.tag.MapsNotificationDump DEBUG
+adb logcat -d -s MapsNotificationDump
+```
+
+## Current Guardrails
+
+Do not casually change:
+- trusted gesture meanings in `AGENTS.md`
+- Chat mode backend shape unless the task is Chat-specific
+- general BLE framing / pairing flow
+- Java/Kotlin target versions unless there is an explicit Android toolchain pass
+
+Prefer narrow changes in:
+- `lib/services/notification_policy.dart`
+- `lib/services/glance_service.dart`
+- `lib/services/navigate_service.dart`
+- `lib/services/features_services.dart`
+- `lib/controllers/bmp_update_manager.dart`
+
+## What To Tell A Fresh Session
+
+Good first prompt pattern:
+- say which single area is being worked on now
+- mention whether the issue is:
+  - notification policy
+  - live-score idle fallback
+  - Navigate BMP transport
+  - Capture validation
+- point the agent to:
+  - `AGENTS.md`
+  - `README.md`
+  - `docs/current-behaviour.md`
+  - `docs/current-architecture.md`
+  - this file
+
+## Files Most Likely Relevant Next
+
+- [lib/services/notification_policy.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_policy.dart)
+- [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart)
+- [lib/services/companion_controller.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/companion_controller.dart)
+- [lib/services/navigate_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/navigate_service.dart)
+- [lib/services/features_services.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/features_services.dart)
+- [lib/controllers/bmp_update_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/controllers/bmp_update_manager.dart)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)

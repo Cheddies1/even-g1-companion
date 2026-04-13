@@ -107,6 +107,7 @@ class BleMethodChannel(
             "openNotificationAccessSettings" -> openNotificationAccessSettings(call, result)
             "startCompanionService" -> startCompanionService(call, result)
             "updateCompanionMode" -> updateCompanionMode(call, result)
+            "reconnectGlassesLeg" -> reconnectGlassesLeg(call, result)
             "startGlassesCapture" -> startGlassesCapture(call, result)
             "stopGlassesCapture" -> stopGlassesCapture(call, result)
             "stopGlassesCaptureToTemp" -> stopGlassesCaptureToTemp(call, result)
@@ -175,6 +176,15 @@ class BleMethodChannel(
         result.success(true)
     }
 
+    fun reconnectGlassesLeg(call: MethodCall, result: MethodChannel.Result) {
+        val lr = (call.arguments as? Map<*, *>)?.get("lr") as? String ?: ""
+        if (lr != "L" && lr != "R") {
+            result.error("InvalidArguments", "Expected lr=L or lr=R", null)
+            return
+        }
+        result.success(BleManager.instance.reconnectLeg(lr))
+    }
+
     fun startGlassesCapture(call: MethodCall, result: MethodChannel.Result) {
         result.success(GlassesCaptureRecorder.start())
     }
@@ -201,6 +211,9 @@ class BleMethodChannel(
     fun flutterGlassesConnecting(deviceInfo: Map<String, Any>) = methodChannel.invokeMethod("glassesConnecting", deviceInfo)
 
     fun flutterGlassesDisconnected(deviceInfo: Map<String, Any>) = methodChannel.invokeMethod("glassesDisconnected", deviceInfo)
+
+    fun flutterGlassesConnectionStateChanged(deviceInfo: Map<String, Any>) =
+        methodChannel.invokeMethod("glassesConnectionStateChanged", deviceInfo)
 
     fun flutterCompanionModeSwitchRequested(modeLabel: String) =
         methodChannel.invokeMethod("companionModeSwitchRequested", mapOf("modeLabel" to modeLabel))

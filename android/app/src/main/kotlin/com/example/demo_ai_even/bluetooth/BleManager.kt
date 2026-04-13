@@ -26,6 +26,7 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 @SuppressLint("MissingPermission")
 class BleManager private constructor() {
@@ -51,6 +52,7 @@ class BleManager private constructor() {
     //  Save device address
     private val bleDevices: MutableList<BleDevice> = mutableListOf()
     private var connectedDevice: BlePairDevice? = null
+    private val reconnectInFlight: MutableMap<String, Boolean> = ConcurrentHashMap()
 
     /// Scan Config
     //  - Setting: Low latency
@@ -183,6 +185,38 @@ class BleManager private constructor() {
         result.success("Disconnected all devices.")
     }
 
+    fun reconnectLeg(lr: String): Boolean {
+        val side = if (lr == "L") "left" else "right"
+        if (reconnectInFlight[lr] == true) {
+            Log.i(LOG_TAG, "Reconnect already in flight for $side leg")
+            return false
+        }
+        val device = connectedDevice?.let {
+            if (lr == "L") it.leftDevice else it.rightDevice
+        } ?: return false
+        val activity = weakActivity.get() ?: return false
+
+        reconnectInFlight[lr] = true
+        mainScope.launch {
+            try {
+                Log.i(LOG_TAG, "Reconnect requested for $side leg: ${device.name}")
+                device.gatt?.disconnect()
+                device.gatt?.close()
+                device.gatt = null
+                device.writeCharacteristic = null
+                device.isConnect = false
+                notifyConnectionState("reconnecting")
+                bluetoothAdapter.getRemoteDevice(device.address)
+                    .connectGatt(activity, false, bleGattCallBack())
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "Reconnect request failed for $side leg", e)
+            } finally {
+                reconnectInFlight.remove(lr)
+            }
+        }
+        return true
+    }
+
     /**
      *
      */
@@ -237,6 +271,7 @@ class BleManager private constructor() {
                 "Gatt connection state change: device=${gatt?.device?.name} address=${gatt?.device?.address} status=$status state=$stateLabel"
             )
             if (newState == BluetoothGatt.STATE_CONNECTED) {
+                notifyConnectionState("connecting")
                 gatt?.discoverServices()
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 connectedDevice?.let {
@@ -249,6 +284,7 @@ class BleManager private constructor() {
                         it.update(isRightConnected = false)
                         Log.i(LOG_TAG, "Right leg disconnected: ${gatt?.device?.name}")
                     }
+                    notifyConnectionState("disconnected")
                     Unit
                 }
             }
@@ -331,6 +367,7 @@ class BleManager private constructor() {
                             BleChannelHelper.bleMC.flutterGlassesConnected(it.toConnectedJson())
                         }
                     }
+                    notifyConnectionState(if (it.isBothConnected()) "connected" else "connecting")
                 }
             }
         }
@@ -395,6 +432,16 @@ class BleManager private constructor() {
         }
         if (sendRight || isBothSend) {
             connectedDevice?.rightDevice?.sendData(data)
+        }
+    }
+
+    private fun notifyConnectionState(status: String) {
+        connectedDevice?.let {
+            weakActivity.get()?.runOnUiThread {
+                BleChannelHelper.bleMC.flutterGlassesConnectionStateChanged(
+                    it.toConnectionStateJson(status)
+                )
+            }
         }
     }
 

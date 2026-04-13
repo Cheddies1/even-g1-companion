@@ -345,7 +345,11 @@ Important caveat:
 - runtime behavior and isolated logs are more trustworthy than the current label
   names
 
-There is currently no QuickNote-specific implementation in the app codebase.
+There is now a narrow QuickNote-related POC in the app codebase:
+- idle-only mode switching based on right-leg `R21`
+- current gate: `len == 42`
+- current debounce: `1500ms`
+- it does not depend on `F5`
 
 ## Custom Dashboard Notes
 

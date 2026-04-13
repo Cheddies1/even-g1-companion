@@ -21,6 +21,7 @@ The app currently supports a mode-based companion model:
 Quick mode switching is available through:
 - actions on the persistent Android notification
 - the app UI mode selector
+- a narrow idle-only right-hold QuickNote POC
 
 ### Glance
 Glance is the most complete mode today.
@@ -30,6 +31,7 @@ It provides:
 - lightweight text rendering to the glasses
 - proactive notification auto-pop into the glasses
 - deliberate notification recall/cycling with head tilt
+- lightweight Glance assistant ask/answer shortcut while idle
 - double-tap close
 
 Typical display format:
@@ -43,7 +45,30 @@ Running 5 late
 
 Glance notification policy:
 - the companion app's own notifications are blocked from Glance
-- YouTube and Google Maps notifications are protected, so they can be shown but are not dismissed by Glance gestures
+- normal notifications can appear in the Glance queue and be dismissed deliberately
+- protected notifications can appear in the Glance queue but are never dismissed by Glance gestures
+- suppressed notifications stay out of the Glance queue entirely
+- ongoing notifications are generally suppressed from ordinary Glance display
+- YouTube notifications are protected
+- pinned live scores are treated separately as an idle Glance surface, not as queue items
+
+Glance live score idle display:
+- when Glance mode is idle and a pinned live score exists, the score can be shown as the idle display
+- tilt up clears that idle live-score surface and enters normal Glance recall/cycling
+- if a normal notification arrives, it takes over as usual
+- when Glance becomes idle again, the live score returns automatically if it still exists
+
+Glance filtering:
+- notifications that are effectively just `Open on phone` / `Open your phone for details` are suppressed
+- user-suppressed noisy packages stay out of the Glance queue
+- the home screen now includes a `Notification Filters` section for package-level suppression
+
+Glance assistant:
+- while in Glance mode and idle, left-hold triggers a lightweight assistant interaction
+- it reuses the same OpenAI-backed transcription and assistant backend path as Chat mode
+- it does not switch into Chat mode
+- it does not create or persist a Chat log entry
+- follow-up asks reuse a short-lived in-memory mini-session that expires after a few minutes of inactivity
 
 ### Capture
 Capture mode is intended for practical meeting / voice capture from the glasses mic.
@@ -70,6 +95,8 @@ This is now implemented as a Navigate-only visual card path:
 - startup / waiting states stay text-rendered
 - real Google Maps nav cards use the Maps-provided maneuver icon bitmap
 - distance, road/context text, and route metadata are composed into a custom BMP card
+- only genuine turn-by-turn Google Maps notifications are eligible input
+- non-navigation Google Maps prompts such as review/handoff style notifications are filtered out
 
 Navigate is working, but still needs longer real-world walking validation for timing and stability.
 
@@ -100,6 +127,11 @@ Available paths:
   - `Navigate`
   - `Chat`
 - app UI mode selector
+- idle-only right-hold QuickNote POC:
+  - right-leg `R21` only
+  - current stable packet shape `len == 42`
+  - only when the glasses display is idle
+  - `1500ms` debounce
 
 Glasses rule:
 - if something is actively shown on the glasses, double tap closes it
@@ -111,12 +143,21 @@ Quick switching is passive:
 - it does not auto-start listening
 - it does not auto-open navigation content
 - it does not force a Glance render
+- the right-hold POC does not depend on `F5` events
 
 Mode-entry displays:
 - `Capture` shows `*` when idle and ready
 - `Chat` shows `Chat ready` / `Tilt up to talk`
 - `Navigate` shows `Open Google Maps` / `to start navigation` until a live navigation instruction is available
 - `Glance` remains notification-driven and does not show a separate idle title card
+
+Glance assistant display flow:
+- firmware shows the listening overlay during left-hold
+- after release, the app can show:
+  - a short transcript preview
+  - `Thinking...`
+  - the assistant response
+- the response then clears after a short timeout
 
 Response shaping:
 - Chat responses are explicitly shaped for smart glasses
@@ -138,7 +179,9 @@ Currently trusted:
 Important:
 - single taps are **not** treated as a reliable core input in this app
 - this repo does **not** assume `0xF5 0x01` is a trustworthy single-tap event for production behavior
-- right-hold QuickNote exists in firmware, but is not part of the current app feature set
+- right-hold QuickNote is firmware-native
+- the app now contains a narrow idle-only mode-switch POC based on right-leg `R21`
+- that POC does not treat `F5` as a trusted QuickNote signal
 
 ## Technical Shape
 
@@ -194,6 +237,26 @@ Current known-good Android toolchain baseline:
 - AGP `8.6.1`
 - Gradle wrapper `8.7`
 - Kotlin Gradle plugin `2.1.10`
+
+## Connection Reliability
+
+The companion app now tracks transport health per leg rather than treating "some connection exists" as fully healthy.
+
+Current model:
+- left and right legs are tracked separately
+- each leg has:
+  - connected / degraded / disconnected state
+  - last successful heartbeat
+  - last successful acknowledged command
+- heartbeat `0x25` is sent per leg on a timer
+- repeated missed heartbeats or request timeouts degrade that leg
+- degraded legs trigger bounded reconnect attempts
+- when a leg recovers, the app resends the current active content to help left/right displays converge again
+
+Practical outcome:
+- one-leg degradation no longer looks the same as a fully healthy connection
+- text and BMP sends can continue on the healthy leg while recovery is in progress
+- recovery tries to restore both lenses to the same current content, especially for active navigation cards
 
 ## Permissions / Setup
 

@@ -13,6 +13,7 @@ It is intentionally separate from:
 - default and most mature mode
 - Android notifications can auto-pop into the glasses
 - tilt-up recalls or advances recent notifications
+- left-hold while idle triggers a lightweight assistant shortcut
 - double tap closes the current visible item
 
 ### Capture
@@ -32,6 +33,7 @@ It is intentionally separate from:
 ### Quick mode switching
 - available from the persistent Android notification
 - available from the app UI mode selector
+- available as a narrow idle-only right-hold POC via right-leg `R21`
 
 ## Glance mode
 
@@ -56,6 +58,10 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 - proactive auto-pop does not dismiss the phone notification
 - deliberate tilt-up shows the most recent notification
 - repeated tilt-up cycles through the feed
+- when idle and a pinned live score exists, Glance can show that score as the idle surface
+- tilt-up from the idle live-score surface clears it and enters normal recall/cycling
+- if a normal notification arrives while the idle live score is showing, the normal notification takes over
+- when Glance returns to true idle and the live score still exists, the score reappears automatically
 - when cycling deliberately:
   - normal notifications are dismissed on the phone
   - normal notifications are also removed from the local app queue
@@ -63,9 +69,31 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 - `F5 00` closes the active Glance item
 - timeout clears the active display after a short interval
 
+### Glance assistant
+
+- only available while current mode is `Glance`
+- only triggers when Glance is idle / forward-facing
+- does not trigger while a Glance notification is visible
+- does not switch into Chat mode
+- uses the firmware-native listening overlay during left-hold
+- on release, the app:
+  - finalizes the temp WAV
+  - transcribes speech via the configured OpenAI transcription API
+  - shows a short transcript preview
+  - shows `Thinking...`
+  - renders the assistant response
+  - clears the response after a short timeout
+
+### Glance assistant context model
+
+- the first Glance assistant ask starts an ephemeral in-memory mini-session
+- follow-up asks within a short inactivity window reuse that same context
+- the current expiry is about 4 minutes of inactivity
+- this context is separate from full Chat mode
+- it is not stored in the persistent Chat log
+
 ### Current caveats
 
-- some apps still expose poor notification text, so `Open your phone for details` can still appear
 - heavy notification churn can still stress left/right synchronization
 - new notifications are now queued if one is already visible, rather than interrupting the current display
 
@@ -77,19 +105,36 @@ At notification-ingestion time, noisy system notifications are filtered out, inc
 
 ### Current notification policy
 
-Glance applies three notification classes:
-- `blocked`: never shown in Glance
-- `protected`: shown in Glance but never dismissed by Glance gestures
+Glance now applies five notification classes:
+- `blocked`: never shown
+- `suppressed`: not shown in the ordinary Glance queue
+- `protected`: shown in the queue but never dismissed by Glance gestures
 - `normal`: shown and dismissible
+- `liveScore`: separate pinned live-score slot, not a normal queue item
 
-Current package rules:
+Current handling:
 - blocked:
-  - `com.example.demo_ai_even`
+  - companion app notifications
 - protected:
-  - `com.google.android.apps.youtube`
-  - `com.google.android.apps.maps`
+  - YouTube notifications
+- suppressed:
+  - most ongoing notifications
+  - low-value `Open on phone` / `Open your phone for details` style handoff notifications
+  - user-suppressed packages such as SmartThings / Samsung Camera when toggled off
+- liveScore:
+  - pinned ongoing sports-style score notifications that match the current live-score classifier
 
-This means YouTube and Google Maps can appear in Glance, but deliberate Glance cycling will not dismiss them on the phone.
+Current safety rules:
+- protected notifications are never dismissed by Glance gestures
+- ongoing notifications are never dismissed by Glance gestures
+- live score notifications are never dismissed by Glance gestures
+
+### Current package suppression controls
+
+- the app home screen now includes a `Notification Filters` section
+- it shows recently seen packages
+- packages can be toggled suppressed / unsuppressed there
+- built-in noisy-package suppression seeds currently include SmartThings and Samsung Camera
 
 ## Capture mode
 
@@ -136,6 +181,7 @@ Navigate is intentionally lean and notification-driven.
 
 - the notification ingestion path is already available
 - Maps notification fields are parsed
+- only real turn-by-turn Google Maps notifications are now eligible input
 - startup and waiting states stay text-rendered
 - idle state shows `Open Google Maps` / `to start navigation`
 - real navigation instructions use a custom BMP card with the Maps-provided maneuver icon and text fields
@@ -256,8 +302,10 @@ Quick mode switching is now part of normal companion behavior.
 ### App and glasses behavior
 
 - app UI mode buttons switch mode immediately through the same central controller path as notification actions
+- idle right-hold can cycle mode when a right-leg `R21` packet with the current stable `len == 42` shape is observed
 - double tap still closes the current feature when something is active on the glasses
 - if the glasses display is idle, double tap is now a no-op
+- if the glasses display is active, the right-hold POC does nothing
 
 ### Passive switching rules
 
@@ -266,8 +314,17 @@ Quick mode switches are passive:
 - they do not auto-start Chat listening
 - they do not auto-open a live Navigate instruction card
 - they do not force a Glance notification render
+- the right-hold POC does not depend on `F5` companion events
 
 Leaving a mode through quick switching follows the same cleanup rules as normal mode changes, including Chat session reset.
+
+### Right-hold POC limits
+
+- this is a proof of concept, not yet a fully trusted primary control
+- it is gated on right-leg `R21` only
+- it currently requires the observed stable `len == 42` packet shape
+- repeated `R21` triggers are ignored for `1500ms`
+- it is intentionally idle-only to avoid colliding with active display content or firmware QuickNote UI
 
 ## Logging
 
@@ -289,6 +346,20 @@ adb logcat -s MapsNotificationDump
 ```
 
 This keeps normal daily-use builds quieter while preserving a path for targeted investigation.
+
+## Connection and transport reliability
+
+Current runtime behavior:
+- left and right legs are monitored separately
+- heartbeat success is tracked per leg
+- repeated heartbeat/request failures can mark one leg degraded without declaring the whole session dead
+- degraded legs can trigger bounded reconnect attempts
+- when transport recovers, the app resends the current active content to help both lenses converge again
+
+Practical effect:
+- one eye can remain usable while the other is recovering
+- Navigate BMP divergence should self-correct more often after recovery
+- a restart/reconnect should no longer be the only way to recover from every partial transport problem
 
 ## Background behaviour
 

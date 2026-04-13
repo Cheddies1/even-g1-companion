@@ -8,9 +8,7 @@ import 'package:demo_ai_even/utils/utils.dart';
 
 class Proto {
   static String lR() {
-    // todo
-    if (BleManager.isBothConnected()) return "R";
-    //if (BleManager.isConnectedR()) return "R";
+    if (BleManager.get().isLegAvailable("R")) return "R";
     return "L";
   }
 
@@ -53,63 +51,53 @@ class Proto {
     AppLog.debug(
         '${DateTime.now()} proto--sendEvenAIData---text---$text---_evenaiSeq----$_evenaiSeq---newScreen---$newScreen---pos---$pos---current_page_num--$current_page_num---max_page_num--$max_page_num--dataList----$dataList---');
 
-    bool isSuccess = await BleManager.requestList(dataList,
-        lr: "L", timeoutMs: timeoutMs ?? 2000);
+    final isSuccess = await BleManager.requestList(
+      dataList,
+      timeoutMs: timeoutMs ?? 2000,
+    );
 
     AppLog.debug(
         '${DateTime.now()} sendEvenAIData-----isSuccess-----$isSuccess-------');
     if (!isSuccess) {
-      AppLog.error("${DateTime.now()} sendEvenAIData failed  L ");
+      AppLog.error("${DateTime.now()} sendEvenAIData failed");
       return false;
-    } else {
-      isSuccess = await BleManager.requestList(dataList,
-          lr: "R", timeoutMs: timeoutMs ?? 2000);
-
-      if (!isSuccess) {
-        AppLog.error("${DateTime.now()} sendEvenAIData failed  R ");
-        return false;
-      }
-      return true;
     }
+    return true;
   }
 
   static int _beatHeartSeq = 0;
-  static Future<bool> sendHeartBeat() async {
-    var length = 6;
-    var data = Uint8List.fromList([
+  static Uint8List _nextHeartBeatPacket() {
+    final length = 6;
+    final seq = _beatHeartSeq % 0xff;
+    final data = Uint8List.fromList([
       0x25,
       length & 0xff,
       (length >> 8) & 0xff,
-      _beatHeartSeq % 0xff,
+      seq,
       0x04,
-      _beatHeartSeq % 0xff //0xff,
+      seq,
     ]);
     _beatHeartSeq++;
+    return data;
+  }
 
-    AppLog.debug('${DateTime.now()} sendHeartBeat--------data---$data--');
-    var ret = await BleManager.request(data, lr: "L", timeoutMs: 1500);
-
-    AppLog.debug('${DateTime.now()} sendHeartBeat----L----ret---${ret.data}--');
+  static Future<bool> sendHeartBeatToLeg(String lr) async {
+    final data = _nextHeartBeatPacket();
+    AppLog.debug('${DateTime.now()} sendHeartBeat[$lr]--------data---$data--');
+    final ret = await BleManager.request(data, lr: lr, timeoutMs: 1500);
     if (ret.isTimeout) {
-      AppLog.debug('${DateTime.now()} sendHeartBeat----L----time out--');
-      return false;
-    } else if (ret.data[0].toInt() == 0x25 &&
-        ret.data.length > 5 &&
-        ret.data[4].toInt() == 0x04) {
-      var retR = await BleManager.request(data, lr: "R", timeoutMs: 1500);
-      AppLog.debug('${DateTime.now()} sendHeartBeat----R----retR---${retR.data}--');
-      if (retR.isTimeout) {
-        return false;
-      } else if (retR.data[0].toInt() == 0x25 &&
-          retR.data.length > 5 &&
-          retR.data[4].toInt() == 0x04) {
-        return true;
-      } else {
-        return false;
-      }
-    } else {
+      AppLog.debug('${DateTime.now()} sendHeartBeat[$lr]----time out--');
       return false;
     }
+    return ret.data[0].toInt() == 0x25 &&
+        ret.data.length > 5 &&
+        ret.data[4].toInt() == 0x04;
+  }
+
+  static Future<bool> sendHeartBeat() async {
+    final successL = await sendHeartBeatToLeg("L");
+    final successR = await sendHeartBeatToLeg("R");
+    return successL && successR;
   }
 
   static Future<String> getLegSn(String lr) async {

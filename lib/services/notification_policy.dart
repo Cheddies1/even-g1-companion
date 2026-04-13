@@ -1,9 +1,12 @@
 import 'package:demo_ai_even/models/companion_notification.dart';
+import 'package:demo_ai_even/services/notification_settings_store.dart';
 
 enum NotificationDisposition {
   blocked,
+  suppressed,
   protected,
   normal,
+  liveScore,
 }
 
 class NotificationPolicy {
@@ -15,6 +18,7 @@ class NotificationPolicy {
 
   static const Set<String> _protectedPackages = {
     'com.google.android.apps.youtube',
+    'com.google.android.youtube',
     'com.google.android.apps.maps',
   };
 
@@ -23,6 +27,24 @@ class NotificationPolicy {
     if (_blockedPackages.contains(packageName)) {
       return NotificationDisposition.blocked;
     }
+    if (_isPinnedLiveScore(notification)) {
+      return NotificationDisposition.liveScore;
+    }
+    if (notification.isSamsungAodMirror) {
+      return NotificationDisposition.suppressed;
+    }
+    if (NotificationSettingsStore.get.isPackageSuppressed(packageName)) {
+      return NotificationDisposition.suppressed;
+    }
+    if (_shouldSuppressOpenOnPhone(notification)) {
+      return NotificationDisposition.suppressed;
+    }
+    if (_isProtectedMediaNotification(notification)) {
+      return NotificationDisposition.protected;
+    }
+    if (notification.isOngoing) {
+      return NotificationDisposition.suppressed;
+    }
     if (_protectedPackages.contains(packageName)) {
       return NotificationDisposition.protected;
     }
@@ -30,10 +52,142 @@ class NotificationPolicy {
   }
 
   static bool shouldBlockFromGlance(CompanionNotification notification) {
-    return classify(notification) == NotificationDisposition.blocked;
+    final disposition = classify(notification);
+    return disposition == NotificationDisposition.blocked ||
+        disposition == NotificationDisposition.suppressed;
+  }
+
+  static bool isLiveScore(CompanionNotification notification) {
+    return classify(notification) == NotificationDisposition.liveScore;
+  }
+
+  static bool shouldProbeLiveScore(CompanionNotification notification) {
+    if (notification.isSamsungAodMirror) {
+      return true;
+    }
+    final combined = _normalize(
+      [
+        notification.title,
+        notification.text,
+        notification.bigText,
+        notification.subText,
+        notification.summaryText,
+        notification.message,
+      ].join(' '),
+    );
+    return RegExp(r'\b\d+\s*[-:]\s*\d+\b').hasMatch(combined) ||
+        RegExp(r'\b(six nations|premier league|wsl|champions league|live|final|half|quarter|inning|period)\b')
+            .hasMatch(combined);
   }
 
   static bool canDismissFromGlance(CompanionNotification notification) {
     return classify(notification) == NotificationDisposition.normal;
+  }
+
+  static bool isDismissibleInGlance(CompanionNotification notification) {
+    return classify(notification) == NotificationDisposition.normal;
+  }
+
+  static CompanionNotification preferLiveScoreSource(
+    CompanionNotification current,
+    CompanionNotification candidate,
+  ) {
+    if (current.isSamsungAodMirror && !candidate.isSamsungAodMirror) {
+      return candidate;
+    }
+    if (!current.isSamsungAodMirror && candidate.isSamsungAodMirror) {
+      return current;
+    }
+    return candidate.postedAt.isAfter(current.postedAt) ? candidate : current;
+  }
+
+  static bool _shouldSuppressOpenOnPhone(CompanionNotification notification) {
+    final combined = _normalize(
+      [
+        notification.title,
+        notification.text,
+        notification.bigText,
+        notification.message,
+      ].join(' '),
+    );
+    if (combined.isEmpty) {
+      return false;
+    }
+    if (combined == 'open on phone' ||
+        combined == 'open your phone for details' ||
+        combined.endsWith(' open on phone') ||
+        combined.contains(' tap to open on phone')) {
+      return true;
+    }
+    final informativeFields = <String>[
+      notification.navPrimaryInfo,
+      notification.navSecondaryInfo,
+      notification.subText,
+    ].map(_normalize).where((value) => value.isNotEmpty).toList();
+    return informativeFields.isEmpty &&
+        (combined.contains('open on phone') ||
+            combined.contains('open your phone for details'));
+  }
+
+  static bool _isPinnedLiveScore(CompanionNotification notification) {
+    if (_isSamsungAodSportsWrapper(notification)) {
+      return true;
+    }
+    final combined = _normalize(
+      [
+        notification.title,
+        notification.text,
+        notification.bigText,
+        notification.subText,
+        notification.summaryText,
+        notification.message,
+      ].join(' '),
+    );
+    final hasScorePattern = RegExp(r'\b\d+\s*[-:]\s*\d+\b').hasMatch(combined);
+    final hasSportsSignal = RegExp(
+      r'\b(live|final|half|quarter|q[1-4]|inning|innings|period|ft|ht)\b',
+    ).hasMatch(combined);
+    final hasCompetitionSignal = RegExp(
+      r'\b(six nations|premier league|wsl|champions league|fa cup|world cup|league)\b',
+    ).hasMatch(combined);
+    if (!(hasScorePattern && (hasSportsSignal || hasCompetitionSignal))) {
+      return false;
+    }
+    if (notification.isOngoing) {
+      return true;
+    }
+    if (notification.isSamsungAodMirror) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool _isSamsungAodSportsWrapper(CompanionNotification notification) {
+    if (!notification.isSamsungAodMirror) {
+      return false;
+    }
+    final channelId = _normalize(notification.channelId);
+    final liveScoreHint = _normalize(notification.liveScoreHint);
+    return channelId.contains('google_sports_nowbar_ongoing_channel') ||
+        liveScoreHint.contains('ambientdata:sportsscore:');
+  }
+
+  static bool _isProtectedMediaNotification(CompanionNotification notification) {
+    final category = _normalize(notification.category);
+    final channelId = _normalize(notification.channelId);
+    if (notification.isYouTubeLike) {
+      return true;
+    }
+    if (!notification.isMediaStyle) {
+      return false;
+    }
+    return category == 'transport' ||
+        channelId.contains('media') ||
+        channelId.contains('playback') ||
+        channelId.contains('transport');
+  }
+
+  static String _normalize(String value) {
+    return value.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
   }
 }

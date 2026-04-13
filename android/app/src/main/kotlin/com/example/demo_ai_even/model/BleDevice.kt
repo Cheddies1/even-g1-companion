@@ -36,10 +36,27 @@ data class BleDevice(
         }
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt!!.writeCharacteristic(writeCharacteristic!!, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                true
+                val result = gatt!!.writeCharacteristic(
+                    writeCharacteristic!!,
+                    data,
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                )
+                if (data.isNotEmpty() && (data[0].toInt() == 0x15 || data[0].toInt() == 0x20 || data[0].toInt() == 0x16)) {
+                    Log.i(
+                        BleManager.LOG_TAG,
+                        "NavigateBmpTraceNative: device=$name cmd=0x${data[0].toInt().toString(16)} len=${data.size} writeResult=$result"
+                    )
+                }
+                result == BluetoothGatt.GATT_SUCCESS
             } else {
-                gatt!!.writeCharacteristic(writeCharacteristic)
+                val result = gatt!!.writeCharacteristic(writeCharacteristic)
+                if (data.isNotEmpty() && (data[0].toInt() == 0x15 || data[0].toInt() == 0x20 || data[0].toInt() == 0x16)) {
+                    Log.i(
+                        BleManager.LOG_TAG,
+                        "NavigateBmpTraceNative: device=$name cmd=0x${data[0].toInt().toString(16)} len=${data.size} writeResult=$result"
+                    )
+                }
+                result
             }
         } catch (e: Exception) {
             Log.e(BleManager.LOG_TAG, "$name: send $data error = $e")

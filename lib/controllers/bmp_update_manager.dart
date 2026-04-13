@@ -3,13 +3,15 @@ import 'dart:typed_data';
 
 import 'package:crclib/catalog.dart';
 import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/utils/utils.dart';
 
 class BmpUpdateManager {
   
   static bool isTransfering = false;
 
-  Future<bool> updateBmp(String lr, Uint8List image, {int? seq}) async {
+  Future<BmpTransferResult> updateBmp(String lr, Uint8List image, {int? seq}) async {
+    var writeWarnings = 0;
 
     // check if has error sending package
     bool isOldSendPackError(int? currentSeq) {
@@ -28,21 +30,32 @@ class BmpUpdateManager {
       multiPacks.add(singlePack);
     }
 
-    print("BmpUpdate -> updateBmp: start sending ${multiPacks.length} packs");
+    AppLog.info(
+      '${DateTime.now()} NavigateBmpTrace: leg=$lr stage=packets totalPacks=${multiPacks.length} bytes=${image.length}',
+    );
 
     for (int index = 0; index < multiPacks.length; index++) { 
-      if (isOldSendPackError(seq)) return false;
+      if (isOldSendPackError(seq)) {
+        return const BmpTransferResult(
+          success: false,
+          failureStage: BmpFailureStage.packetWrite,
+        );
+      }
       if (seq != null && index < seq) continue;
 
       
       final pack = multiPacks[index];  
       // address in glasses [0x00, 0x1c, 0x00, 0x00] , taken in the first package
       Uint8List data = index == 0 ? Utils.addPrefixToUint8List([0x15, index & 0xff, 0x00, 0x1c, 0x00, 0x00],  pack) : Utils.addPrefixToUint8List([0x15, index & 0xff], pack);
-      print("${DateTime.now()} updateBmp----data---*${data.length}---*$data----------");
-
-      await BleManager.sendData(
+      final sendOk = await BleManager.sendData(
           data,
           lr: lr);
+      if (sendOk != true) {
+        AppLog.error(
+          '${DateTime.now()} NavigateBmpTrace: leg=$lr stage=writeWarning index=$index cmd=0x15 sendOk=$sendOk',
+        );
+        writeWarnings++;
+      }
 
       if (Platform.isIOS) {
         await Future.delayed(Duration(milliseconds: 8)); // 4 6 10 14  30
@@ -54,15 +67,23 @@ class BmpUpdateManager {
       if (offset > image.length - packLen) {
         offset = image.length - pack.length;
       }
-      _onProgressCall(lr, offset, index, image.length);
+      _onProgressCall(lr, offset, index, image.length, multiPacks.length);
     }
     // await Future.delayed(Duration(seconds: 2)); // todo
-    if (isOldSendPackError(seq)) return false;
+    if (isOldSendPackError(seq)) {
+      return BmpTransferResult(
+        success: false,
+        failureStage: BmpFailureStage.packetWrite,
+        writeWarnings: writeWarnings,
+      );
+    }
 
     const maxRetryTime = 10;
     int currentRetryTime = 0;
     Future<bool> finishUpdate() async {
-      print("${DateTime.now()} finishUpdate----currentRetryTime-----$currentRetryTime-----maxRetryTime-----$maxRetryTime--");
+      AppLog.info(
+        '${DateTime.now()} NavigateBmpTrace: leg=$lr stage=finishCommand attempt=${currentRetryTime + 1}/$maxRetryTime',
+      );
       if (currentRetryTime >= maxRetryTime) {
         return false;
       }
@@ -73,7 +94,9 @@ class BmpUpdateManager {
         lr: lr,
         timeoutMs: 3000,
       );
-      print("${DateTime.now()} finishUpdate---lr---$lr--ret----${ret.data}-----");
+      AppLog.info(
+        '${DateTime.now()} NavigateBmpTrace: leg=$lr stage=finishReply timeout=${ret.isTimeout} data=${ret.data.hexString}',
+      );
       if (ret.isTimeout) {
         currentRetryTime++;
         await Future.delayed(Duration(seconds: 1));
@@ -82,17 +105,17 @@ class BmpUpdateManager {
       return ret.data[1].toInt() == 0xc9;
     }
 
-    print("${DateTime.now()} updateBmp-------------over------");
-    
     var isSuccess = await finishUpdate();
 
-    print("${DateTime.now()} finishUpdate--isSuccess----*$isSuccess-");
+    AppLog.info(
+      '${DateTime.now()} NavigateBmpTrace: leg=$lr stage=finishResult success=$isSuccess',
+    );
     if (!isSuccess) {
-      print("finishUpdate result error lr: $lr");
-      
-      return false;
-    } else {
-      print("finishUpdate result success lr: $lr");
+      return BmpTransferResult(
+        success: false,
+        failureStage: BmpFailureStage.finish,
+        writeWarnings: writeWarnings,
+      );
     }
 
     // take address in the first package
@@ -110,19 +133,34 @@ class BmpUpdateManager {
         Utils.addPrefixToUint8List([0x16], crc),
         lr: lr);
 
-    print("${DateTime.now()} Crc32Xz---lr---$lr---ret--------${ret.data}------crc----$crc--");
+    AppLog.info(
+      '${DateTime.now()} NavigateBmpTrace: leg=$lr stage=crcReply data=${ret.data.hexString} crc=${crc.hexString}',
+    );
 
     if (ret.data.length > 4 && ret.data[5] != 0xc9) {
-      print("CRC checks failed...");
-      return false;
+      AppLog.error('${DateTime.now()} NavigateBmpTrace: leg=$lr stage=crcResult success=false');
+      return BmpTransferResult(
+        success: false,
+        failureStage: BmpFailureStage.crc,
+        writeWarnings: writeWarnings,
+      );
     }
 
-    return true;
+    AppLog.info('${DateTime.now()} NavigateBmpTrace: leg=$lr stage=crcResult success=true');
+    return BmpTransferResult(
+      success: true,
+      writeWarnings: writeWarnings,
+    );
   }
 
-  void _onProgressCall(String lr, int offset, int index, int total) {
+  void _onProgressCall(String lr, int offset, int index, int total, int totalPacks) {
+    if (index != 0 && index != totalPacks ~/ 2 && index != totalPacks - 1) {
+      return;
+    }
     double progress = (offset / total) * 100;
-    print("${DateTime.now()} BmpUpdate -> Progress: $lr ${progress.toStringAsFixed(2)}%, index: $index");
+    AppLog.info(
+      '${DateTime.now()} NavigateBmpTrace: leg=$lr stage=progress index=$index totalPacks=$totalPacks progress=${progress.toStringAsFixed(2)}',
+    );
   }
 
 
@@ -134,4 +172,22 @@ class BmpUpdateManager {
     newImage.setRange(addressBytes.length, newImage.length, image);
     return newImage;
   }
+}
+
+enum BmpFailureStage {
+  packetWrite,
+  finish,
+  crc,
+}
+
+class BmpTransferResult {
+  const BmpTransferResult({
+    required this.success,
+    this.failureStage,
+    this.writeWarnings = 0,
+  });
+
+  final bool success;
+  final BmpFailureStage? failureStage;
+  final int writeWarnings;
 }

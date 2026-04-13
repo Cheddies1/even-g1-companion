@@ -8,6 +8,7 @@ import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
 import 'package:demo_ai_even/services/navigate_service.dart';
+import 'package:demo_ai_even/services/notification_settings_store.dart';
 import 'package:demo_ai_even/views/chat_transcript_page.dart';
 import 'package:demo_ai_even/views/features_page.dart';
 import 'package:flutter/material.dart';
@@ -42,7 +43,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     CompanionController.get.addListener(_refreshPage);
     ChatHistoryStore.get.addListener(_refreshPage);
+    NotificationSettingsStore.get.addListener(_refreshPage);
     ChatHistoryStore.get.init();
+    NotificationSettingsStore.get.init();
   }
 
   @override
@@ -401,6 +404,65 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildNotificationFiltersSection() {
+    final packages = NotificationSettingsStore.get.recentPackages;
+    return _buildSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Notification Filters',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Suppress noisy packages from Glance. Ongoing notifications are protected automatically.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF9AB7C8),
+                ),
+          ),
+          const SizedBox(height: 12),
+          if (packages.isEmpty)
+            Text(
+              'Recently seen apps will appear here.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF9AB7C8),
+                  ),
+            )
+          else
+            ...packages.take(10).map(
+              (entry) => SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: entry.suppressed,
+                activeColor: const Color(0xFF4A8D72),
+                title: Text(
+                  entry.displayName.isNotEmpty
+                      ? entry.displayName
+                      : entry.packageName,
+                ),
+                subtitle: Text(
+                  entry.packageName,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF7C8C99),
+                      ),
+                ),
+                secondary: entry.isBuiltInCandidate
+                    ? const Icon(Icons.tune, size: 18)
+                    : null,
+                onChanged: (value) async {
+                  await NotificationSettingsStore.get.setPackageSuppressed(
+                    entry.packageName,
+                    value,
+                  );
+                  await CompanionController.get.refreshCompanionState();
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -442,6 +504,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           const SizedBox(height: 16),
           _buildChatLogSection(),
           const SizedBox(height: 16),
+          _buildNotificationFiltersSection(),
+          const SizedBox(height: 16),
           _buildPermissionCard(),
           const SizedBox(height: 16),
           _buildScanSection(),
@@ -458,6 +522,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     scanTimer?.cancel();
     CompanionController.get.removeListener(_refreshPage);
     ChatHistoryStore.get.removeListener(_refreshPage);
+    NotificationSettingsStore.get.removeListener(_refreshPage);
     super.dispose();
   }
 }

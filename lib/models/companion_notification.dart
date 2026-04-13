@@ -3,6 +3,13 @@ class CompanionNotification {
     required this.key,
     required this.packageName,
     required this.source,
+    required this.category,
+    required this.channelId,
+    required this.tag,
+    required this.isOngoing,
+    required this.isMediaStyle,
+    required this.template,
+    required this.summaryText,
     required this.title,
     required this.text,
     required this.bigText,
@@ -11,6 +18,7 @@ class CompanionNotification {
     required this.navPrimaryInfo,
     required this.navSecondaryInfo,
     required this.navChipExpandedText,
+    required this.liveScoreHint,
     required this.navIconPngBase64,
     required this.navIconSource,
     required this.postedAt,
@@ -19,6 +27,13 @@ class CompanionNotification {
   final String key;
   final String packageName;
   final String source;
+  final String category;
+  final String channelId;
+  final String tag;
+  final bool isOngoing;
+  final bool isMediaStyle;
+  final String template;
+  final String summaryText;
   final String title;
   final String text;
   final String bigText;
@@ -27,6 +42,7 @@ class CompanionNotification {
   final String navPrimaryInfo;
   final String navSecondaryInfo;
   final String navChipExpandedText;
+  final String liveScoreHint;
   final String navIconPngBase64;
   final String navIconSource;
   final DateTime postedAt;
@@ -35,11 +51,37 @@ class CompanionNotification {
       packageName.contains('com.google.android.apps.maps') ||
       source.toLowerCase().contains('maps');
 
+  bool get isSamsungAodMirror =>
+      const {
+        'com.samsung.android.aodservice',
+        'com.samsung.android.app.aodservice',
+      }.contains(packageName.trim().toLowerCase());
+
+  bool get isYouTubeLike =>
+      const {
+        'com.google.android.apps.youtube',
+        'com.google.android.youtube',
+      }.contains(packageName.trim().toLowerCase());
+
+  bool get hasNavigationPayload =>
+      navPrimaryInfo.isNotEmpty ||
+      navSecondaryInfo.isNotEmpty ||
+      navChipExpandedText.isNotEmpty ||
+      navIconPngBase64.isNotEmpty ||
+      navIconSource.isNotEmpty;
+
   factory CompanionNotification.fromMap(Map<dynamic, dynamic> raw) {
     return CompanionNotification(
       key: (raw['key'] as String?) ?? '',
       packageName: (raw['packageName'] as String?) ?? '',
       source: ((raw['source'] as String?) ?? 'Notification').trim(),
+      category: ((raw['category'] as String?) ?? '').trim(),
+      channelId: ((raw['channelId'] as String?) ?? '').trim(),
+      tag: ((raw['tag'] as String?) ?? '').trim(),
+      isOngoing: (raw['isOngoing'] as bool?) ?? false,
+      isMediaStyle: (raw['isMediaStyle'] as bool?) ?? false,
+      template: ((raw['template'] as String?) ?? '').trim(),
+      summaryText: ((raw['summaryText'] as String?) ?? '').trim(),
       title: ((raw['title'] as String?) ?? '').trim(),
       text: ((raw['text'] as String?) ?? '').trim(),
       bigText: ((raw['bigText'] as String?) ?? '').trim(),
@@ -50,6 +92,7 @@ class CompanionNotification {
       navSecondaryInfo: ((raw['navSecondaryInfo'] as String?) ?? '').trim(),
       navChipExpandedText: ((raw['navChipExpandedText'] as String?) ?? '')
           .trim(),
+      liveScoreHint: ((raw['liveScoreHint'] as String?) ?? '').trim(),
       navIconPngBase64: ((raw['navIconPngBase64'] as String?) ?? '').trim(),
       navIconSource: ((raw['navIconSource'] as String?) ?? '').trim(),
       postedAt: DateTime.fromMillisecondsSinceEpoch(

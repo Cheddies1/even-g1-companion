@@ -25,8 +25,15 @@ class NavigateService {
   bool get isVisible => _isVisible;
   bool get isShowingDetail => false;
 
+  bool acceptsNotification(CompanionNotification notification) {
+    return _isEligibleNavigationNotification(notification);
+  }
+
   Future<void> ingestNotification(CompanionNotification notification) async {
-    if (!notification.isGoogleMaps) {
+    if (!_isEligibleNavigationNotification(notification)) {
+      AppLog.info(
+        '${DateTime.now()} Navigate: ignored notification key=${notification.key} package=${notification.packageName} category=${notification.category} ongoing=${notification.isOngoing} channel=${notification.channelId}',
+      );
       return;
     }
     _latestInstruction = notification;
@@ -74,9 +81,8 @@ class NavigateService {
     if (latest == null || !latest.isGoogleMaps) {
       return false;
     }
-    final samePackage = packageName.contains('com.google.android.apps.maps');
     final sameKey = latest.key == key;
-    if (!samePackage && !sameKey) {
+    if (!sameKey) {
       return false;
     }
     _latestInstruction = null;
@@ -175,6 +181,63 @@ class NavigateService {
     if (combined.contains('start navigation') ||
         combined.contains('starting navigation') ||
         combined == 'google maps') {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool _isEligibleNavigationNotification(CompanionNotification notification) {
+    if (!notification.isGoogleMaps) {
+      return false;
+    }
+
+    if (!notification.hasNavigationPayload) {
+      return false;
+    }
+
+    final category = notification.category.toLowerCase();
+    final channelId = notification.channelId.toLowerCase();
+    final tag = notification.tag.toLowerCase();
+    final combined = _clean(
+      [
+        notification.title,
+        notification.text,
+        notification.bigText,
+        notification.subText,
+        notification.message,
+        notification.navPrimaryInfo,
+        notification.navSecondaryInfo,
+        notification.navChipExpandedText,
+      ].join(' '),
+    ).toLowerCase();
+
+    final hasStrongNavFields =
+        notification.navPrimaryInfo.isNotEmpty &&
+        (notification.navSecondaryInfo.isNotEmpty ||
+            notification.navIconPngBase64.isNotEmpty ||
+            notification.navChipExpandedText.isNotEmpty);
+    final hasOngoingSignal =
+        notification.isOngoing ||
+        category == 'navigation' ||
+        category == 'transport' ||
+        channelId.contains('navigation') ||
+        tag.contains('navigation');
+
+    if (!hasStrongNavFields) {
+      return false;
+    }
+
+    if (!hasOngoingSignal) {
+      return false;
+    }
+
+    if (combined.contains('review') ||
+        combined.contains('rate this place') ||
+        combined.contains('open your phone for details') ||
+        combined.contains('saved place') ||
+        combined.contains('want to review') ||
+        combined.contains('add a photo')) {
       return false;
     }
 

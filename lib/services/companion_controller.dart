@@ -6,38 +6,55 @@ import 'package:demo_ai_even/models/companion_notification.dart';
 import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/capture_service.dart';
 import 'package:demo_ai_even/services/chat_service.dart';
+import 'package:demo_ai_even/services/features_services.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
+import 'package:demo_ai_even/services/glance_assistant_service.dart';
 import 'package:demo_ai_even/services/navigate_service.dart';
 import 'package:demo_ai_even/services/notification_policy.dart';
+import 'package:demo_ai_even/services/notification_settings_store.dart';
+import 'package:demo_ai_even/services/text_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class CompanionController extends ChangeNotifier {
   CompanionController._();
+  static const _postConnectVoiceGuard = Duration(seconds: 2);
+  static const _tiltUpIntentDelay = Duration(milliseconds: 500);
 
   static CompanionController? _instance;
   static CompanionController get get => _instance ??= CompanionController._();
 
   static const _eventNotifications = 'eventNotifications';
-  final EventChannel _notificationChannel = const EventChannel(_eventNotifications);
+  final EventChannel _notificationChannel =
+      const EventChannel(_eventNotifications);
   bool _lastReportedHasActiveDisplay = false;
+  int? _lastRightHoldModeSwitchMs;
 
   bool _initialized = false;
   StreamSubscription<dynamic>? _notificationSubscription;
   AppMode _activeMode = AppMode.glance;
   String _statusMessage = 'Ready';
   bool _notificationAccessEnabled = false;
+  DateTime? _ignoreVoiceGesturesUntil;
+  Timer? _pendingTiltUpIntentTimer;
+  AppMode? _pendingTiltUpIntentMode;
+  String? _pendingTiltUpIntentAction;
 
   AppMode get activeMode => _activeMode;
   String get statusMessage => _statusMessage;
   bool get notificationAccessEnabled => _notificationAccessEnabled;
+  String get activeDisplayOwnerLabel => _activeDisplayOwner;
   bool get hasActiveDisplay =>
+      GlanceAssistantService.get.isDisplayVisible ||
       GlanceService.get.isVisible ||
       CaptureService.get.isDisplayVisible ||
       NavigateService.get.isVisible ||
       ChatService.get.isDisplayVisible;
 
   String get _activeDisplayOwner {
+    if (GlanceAssistantService.get.isDisplayVisible) {
+      return 'GlanceAssistant';
+    }
     if (GlanceService.get.isVisible) {
       return 'Glance';
     }
@@ -65,6 +82,7 @@ class CompanionController extends ChangeNotifier {
       _logDisplayStateIfChanged('BleStatusChanged');
       notifyListeners();
     };
+    await NotificationSettingsStore.get.init();
     await _refreshNotificationAccess();
     await _hydrateNotifications();
     _notificationSubscription = _notificationChannel
@@ -78,6 +96,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> disposeController() async {
+    _cancelPendingTiltUpIntent(reason: 'dispose');
     await _notificationSubscription?.cancel();
   }
 
@@ -102,6 +121,7 @@ class CompanionController extends ChangeNotifier {
     }
 
     final fromMode = _activeMode;
+    _cancelPendingTiltUpIntent(reason: 'mode-switch');
     await _closeActiveView(sendExit: false);
 
     _activeMode = mode;
@@ -180,9 +200,72 @@ class CompanionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void noteTransportConnected({required String source}) {
+    _ignoreVoiceGesturesUntil = DateTime.now().add(_postConnectVoiceGuard);
+    AppLog.debug(
+      '${DateTime.now()} Transport: voice gesture guard armed -> source=$source until=$_ignoreVoiceGesturesUntil',
+    );
+  }
+
+  Future<void> handleTransportRecovered({
+    required String source,
+  }) async {
+    AppLog.info(
+      '${DateTime.now()} Transport: recovery resync begin -> source=$source mode=${_activeMode.label} owner=$_activeDisplayOwner',
+    );
+
+    if (NavigateService.get.isVisible) {
+      await NavigateService.get.refreshVisibleView();
+      return;
+    }
+
+    if (await TextService.get.resendLastText()) {
+      return;
+    }
+
+    await FeaturesServices().resendLastBmpData();
+  }
+
+  Future<void> handleRightHoldModeSwitchProbe() async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final lastSwitchMs = _lastRightHoldModeSwitchMs;
+    final debounceMs = lastSwitchMs == null ? null : nowMs - lastSwitchMs;
+
+    if (hasActiveDisplay) {
+      AppLog.debug(
+        '${DateTime.now()} RightHoldModeSwitch: ignored reason=active-display mode=${_activeMode.label} owner=$_activeDisplayOwner',
+      );
+      return;
+    }
+
+    if (debounceMs != null && debounceMs < 1500) {
+      AppLog.debug(
+        '${DateTime.now()} RightHoldModeSwitch: debounced mode=${_activeMode.label} deltaMs=$debounceMs',
+      );
+      return;
+    }
+
+    final nextMode = _activeMode.nextMode;
+    _lastRightHoldModeSwitchMs = nowMs;
+    AppLog.debug(
+      '${DateTime.now()} RightHoldModeSwitch: triggered from=${_activeMode.label} to=${nextMode.label}',
+    );
+    await setMode(
+      nextMode,
+      source: 'RightHoldR21',
+      passive: true,
+    );
+  }
+
   Future<void> _handleGlanceGesture(int eventId) async {
     switch (eventId) {
       case 0:
+        _cancelPendingTiltUpIntent(reason: 'glance-close');
+        if (GlanceAssistantService.get.isDisplayVisible) {
+          await GlanceAssistantService.get.close();
+          _statusMessage = 'Assistant closed';
+          break;
+        }
         await GlanceService.get.close();
         AppLog.debug(
           '${DateTime.now()} DisplayState: source=GestureClose service=Glance currentMode=${_activeMode.label}',
@@ -190,42 +273,103 @@ class CompanionController extends ChangeNotifier {
         _statusMessage = 'Glance closed';
         break;
       case 2:
-        await GlanceService.get.showLatestOrAdvance();
-        _statusMessage = 'Glance updated';
+        final shouldGate = !GlanceService.get.isInActiveRecall;
+        await _runTiltUpIntent(
+          mode: AppMode.glance,
+          action: shouldGate ? 'glance-enter-recall' : 'glance-advance',
+          shouldGate: shouldGate,
+          onConfirm: () async {
+            await GlanceService.get.showLatestOrAdvance();
+            _statusMessage = 'Glance updated';
+          },
+        );
         break;
       case 3:
+        if (_cancelPendingTiltUpIntent(
+          reason: 'glance-return-to-centre',
+          mode: AppMode.glance,
+        )) {
+          _statusMessage = 'Glance intent cancelled';
+          break;
+        }
         GlanceService.get.startLookDownTimeout();
         _statusMessage = 'Glance waiting';
         break;
+      case 17:
+        if (_shouldIgnoreVoiceGesture()) {
+          _statusMessage = 'Glance ready';
+          break;
+        }
+        print('${DateTime.now()} GlanceAssistant: F5 17 routed in Glance mode');
+        if (hasActiveDisplay) {
+          print(
+            '${DateTime.now()} GlanceAssistant: start blocked -> activeDisplay owner=$_activeDisplayOwner',
+          );
+          _statusMessage = 'Glance busy';
+          break;
+        }
+        _statusMessage = await GlanceAssistantService.get.startListening();
+        break;
+      case 18:
+        if (_shouldIgnoreVoiceGesture()) {
+          _statusMessage = 'Glance ready';
+          break;
+        }
+        print('${DateTime.now()} GlanceAssistant: F5 18 routed in Glance mode');
+        _statusMessage =
+            await GlanceAssistantService.get.stopListeningAndSubmit();
+        break;
     }
+  }
+
+  bool _shouldIgnoreVoiceGesture() {
+    final ignoreUntil = _ignoreVoiceGesturesUntil;
+    if (ignoreUntil == null) {
+      return false;
+    }
+    return DateTime.now().isBefore(ignoreUntil);
   }
 
   Future<void> _handleCaptureGesture(int eventId) async {
     switch (eventId) {
       case 0:
+        _cancelPendingTiltUpIntent(reason: 'capture-close');
         if (CaptureService.get.isRecording) {
           final fileName = await CaptureService.get.stopAndSave();
           AppLog.debug(
             '${DateTime.now()} DisplayState: source=GestureClose service=Capture currentMode=${_activeMode.label}',
           );
-          _statusMessage = fileName == null
-              ? 'Capture stopped'
-              : 'Saved $fileName';
+          _statusMessage =
+              fileName == null ? 'Capture stopped' : 'Saved $fileName';
         }
         break;
       case 2:
-        if (CaptureService.get.isRecording) {
-          final fileName = await CaptureService.get.stopAndSave();
-          _statusMessage = fileName == null
-              ? 'Capture stopped'
-              : 'Saved $fileName';
-        } else {
-          final started = await CaptureService.get.startRecording();
-          _statusMessage =
-              started ? 'Recording from glasses mic' : 'Capture start failed';
-        }
+        final isRecording = CaptureService.get.isRecording;
+        await _runTiltUpIntent(
+          mode: AppMode.capture,
+          action: isRecording ? 'capture-stop' : 'capture-start',
+          shouldGate: true,
+          onConfirm: () async {
+            if (CaptureService.get.isRecording) {
+              final fileName = await CaptureService.get.stopAndSave();
+              _statusMessage =
+                  fileName == null ? 'Capture stopped' : 'Saved $fileName';
+            } else {
+              final started = await CaptureService.get.startRecording();
+              _statusMessage = started
+                  ? 'Recording from glasses mic'
+                  : 'Capture start failed';
+            }
+          },
+        );
         break;
       case 3:
+        if (_cancelPendingTiltUpIntent(
+          reason: 'capture-return-to-centre',
+          mode: AppMode.capture,
+        )) {
+          _statusMessage = 'Capture intent cancelled';
+        }
         break;
     }
   }
@@ -260,13 +404,13 @@ class CompanionController extends ChangeNotifier {
   Future<void> _handleChatGesture(int eventId) async {
     switch (eventId) {
       case 0:
+        _cancelPendingTiltUpIntent(reason: 'chat-close');
         if (ChatService.get.shouldIgnoreCloseGesture()) {
           AppLog.debug(
             '${DateTime.now()} DisplayState: source=GestureCloseIgnored service=Chat currentMode=${_activeMode.label}',
           );
-          _statusMessage = ChatService.get.isThinking
-              ? 'Chat working'
-              : 'Chat submitting';
+          _statusMessage =
+              ChatService.get.isThinking ? 'Chat working' : 'Chat submitting';
           break;
         }
         await ChatService.get.resetSession();
@@ -276,17 +420,101 @@ class CompanionController extends ChangeNotifier {
         _statusMessage = 'Chat closed';
         break;
       case 2:
-        _statusMessage = await ChatService.get.startListening();
+        await _runTiltUpIntent(
+          mode: AppMode.chat,
+          action: 'chat-start-listening',
+          shouldGate: true,
+          onConfirm: () async {
+            _statusMessage = await ChatService.get.startListening();
+          },
+        );
         break;
       case 3:
+        if (_cancelPendingTiltUpIntent(
+          reason: 'chat-return-to-centre',
+          mode: AppMode.chat,
+        )) {
+          _statusMessage = 'Chat intent cancelled';
+          break;
+        }
         _statusMessage = await ChatService.get.stopListeningAndSubmit();
         break;
     }
   }
 
+  Future<void> _runTiltUpIntent({
+    required AppMode mode,
+    required String action,
+    required bool shouldGate,
+    required Future<void> Function() onConfirm,
+  }) async {
+    if (!shouldGate) {
+      _cancelPendingTiltUpIntent(reason: 'immediate-$action');
+      await onConfirm();
+      return;
+    }
+
+    _cancelPendingTiltUpIntent(reason: 'replace-$action');
+    _pendingTiltUpIntentMode = mode;
+    _pendingTiltUpIntentAction = action;
+    AppLog.debug(
+      '${DateTime.now()} TiltIntent: pending mode=${mode.label} action=$action delayMs=${_tiltUpIntentDelay.inMilliseconds}',
+    );
+
+    _pendingTiltUpIntentTimer = Timer(_tiltUpIntentDelay, () async {
+      final pendingMode = _pendingTiltUpIntentMode;
+      final pendingAction = _pendingTiltUpIntentAction;
+      _pendingTiltUpIntentTimer = null;
+      _pendingTiltUpIntentMode = null;
+      _pendingTiltUpIntentAction = null;
+      if (_activeMode != mode) {
+        AppLog.debug(
+          '${DateTime.now()} TiltIntent: dropped mode=${mode.label} action=$action reason=mode-changed currentMode=${_activeMode.label}',
+        );
+        return;
+      }
+      AppLog.debug(
+        '${DateTime.now()} TiltIntent: confirmed mode=${pendingMode?.label ?? mode.label} action=${pendingAction ?? action}',
+      );
+      await onConfirm();
+      _logDisplayStateIfChanged('TiltIntent.confirmed.$action');
+      notifyListeners();
+    });
+  }
+
+  bool _cancelPendingTiltUpIntent({
+    required String reason,
+    AppMode? mode,
+  }) {
+    final timer = _pendingTiltUpIntentTimer;
+    final pendingMode = _pendingTiltUpIntentMode;
+    final pendingAction = _pendingTiltUpIntentAction;
+    if (timer == null) {
+      return false;
+    }
+    if (mode != null && pendingMode != mode) {
+      return false;
+    }
+    timer.cancel();
+    _pendingTiltUpIntentTimer = null;
+    _pendingTiltUpIntentMode = null;
+    _pendingTiltUpIntentAction = null;
+    AppLog.debug(
+      '${DateTime.now()} TiltIntent: cancelled mode=${pendingMode?.label ?? 'unknown'} action=${pendingAction ?? 'unknown'} reason=$reason',
+    );
+    return true;
+  }
+
   Future<void> _closeActiveView({required bool sendExit}) async {
     switch (_activeMode) {
       case AppMode.glance:
+        if (GlanceAssistantService.get.isDisplayVisible ||
+            GlanceAssistantService.get.hasEphemeralContext) {
+          AppLog.debug(
+            '${DateTime.now()} DisplayState: source=ModeSwitchClose service=GlanceAssistant currentMode=${_activeMode.label}',
+          );
+          await GlanceAssistantService.get.reset();
+        }
         if (GlanceService.get.isVisible) {
           AppLog.debug(
             '${DateTime.now()} DisplayState: source=ModeSwitchClose service=Glance currentMode=${_activeMode.label}',
@@ -342,6 +570,7 @@ class CompanionController extends ChangeNotifier {
 
     switch (mode) {
       case AppMode.glance:
+        await GlanceService.get.showIdleSurfaceIfAvailable();
         return;
       case AppMode.capture:
         if (!CaptureService.get.isRecording) {
@@ -388,9 +617,20 @@ class CompanionController extends ChangeNotifier {
     }
 
     final notification = CompanionNotification.fromMap(rawEvent);
-    await NavigateService.get.ingestNotification(notification);
+    await NotificationSettingsStore.get.noteNotification(notification);
+    final classification = NotificationPolicy.classify(notification);
+    _logNotificationPolicy(
+      notification,
+      classification: classification,
+      routing: 'candidate',
+    );
+    final navigateEligible =
+        NavigateService.get.acceptsNotification(notification);
+    if (navigateEligible) {
+      await NavigateService.get.ingestNotification(notification);
+    }
 
-    if (_activeMode == AppMode.navigate && notification.isGoogleMaps) {
+    if (_activeMode == AppMode.navigate && navigateEligible) {
       await NavigateService.get.refreshVisibleView();
       if (!NavigateService.get.isVisible) {
         await NavigateService.get.showLatest();
@@ -400,9 +640,27 @@ class CompanionController extends ChangeNotifier {
       return;
     }
 
-    if (NotificationPolicy.shouldBlockFromGlance(notification)) {
-      AppLog.debug(
-        '${DateTime.now()} Companion: blocked notification skipped for Glance -> ${notification.packageName}',
+    if (classification == NotificationDisposition.liveScore) {
+      await GlanceService.get.upsertLiveScore(
+        notification,
+        autoPop: _activeMode == AppMode.glance,
+      );
+      _logNotificationPolicy(
+        notification,
+        classification: classification,
+        routing: 'added-to-live-score-slot',
+      );
+      _statusMessage = 'Live score updated';
+      notifyListeners();
+      return;
+    }
+
+    if (classification == NotificationDisposition.blocked ||
+        classification == NotificationDisposition.suppressed) {
+      _logNotificationPolicy(
+        notification,
+        classification: classification,
+        routing: 'ignored',
       );
       return;
     }
@@ -412,6 +670,13 @@ class CompanionController extends ChangeNotifier {
     await GlanceService.get.ingestNotification(
       notification,
       autoPop: shouldAutoPopGlance,
+    );
+    _logNotificationPolicy(
+      notification,
+      classification: classification,
+      routing: classification == NotificationDisposition.protected
+          ? 'protected-only'
+          : 'added-to-normal-queue',
     );
     if (shouldAutoPopGlance) {
       _statusMessage = 'New notification shown in Glance';
@@ -428,13 +693,44 @@ class CompanionController extends ChangeNotifier {
               ?.whereType<Map>()
               .map(CompanionNotification.fromMap)
               .where((notification) {
-                return !NotificationPolicy.shouldBlockFromGlance(notification);
-              })
-              .toList() ??
+            return !NotificationPolicy.shouldBlockFromGlance(notification) &&
+                !NotificationPolicy.isLiveScore(notification);
+          }).toList() ??
           const <CompanionNotification>[];
+      CompanionNotification? liveScore;
+      if (rawNotifications != null) {
+        for (final raw in rawNotifications.whereType<Map>()) {
+          final notification = CompanionNotification.fromMap(raw);
+          final classification = NotificationPolicy.classify(notification);
+          _logNotificationPolicy(
+            notification,
+            classification: classification,
+            routing: 'hydrate-candidate',
+          );
+          if (classification == NotificationDisposition.liveScore) {
+            final previous = liveScore;
+            liveScore = liveScore == null
+                ? notification
+                : NotificationPolicy.preferLiveScoreSource(
+                    liveScore,
+                    notification,
+                  );
+            _logNotificationPolicy(
+              notification,
+              classification: classification,
+              routing: previous == liveScore
+                  ? 'deduped'
+                  : 'added-to-live-score-slot',
+            );
+          }
+        }
+      }
       GlanceService.get.hydrateNotifications(notifications);
+      GlanceService.get.hydrateLiveScore(liveScore);
       for (final notification in notifications) {
-        await NavigateService.get.ingestNotification(notification);
+        if (NavigateService.get.acceptsNotification(notification)) {
+          await NavigateService.get.ingestNotification(notification);
+        }
       }
     } catch (e) {
       print('${DateTime.now()} Companion: hydrate notifications failed -> $e');
@@ -448,8 +744,19 @@ class CompanionController extends ChangeNotifier {
       );
       _notificationAccessEnabled = enabled ?? false;
     } catch (e) {
-      print('${DateTime.now()} Companion: notification access check failed -> $e');
+      print(
+          '${DateTime.now()} Companion: notification access check failed -> $e');
     }
+  }
+
+  void _logNotificationPolicy(
+    CompanionNotification notification, {
+    required NotificationDisposition classification,
+    required String routing,
+  }) {
+    AppLog.info(
+      '${DateTime.now()} NotificationPolicy: package=${notification.packageName} key=${notification.key} title="${notification.title}" text="${notification.text}" subText="${notification.subText}" summaryText="${notification.summaryText}" category=${notification.category} ongoing=${notification.isOngoing} media=${notification.isMediaStyle} template="${notification.template}" liveScoreHint="${notification.liveScoreHint}" classification=${classification.name} routing=$routing canDismiss=${NotificationPolicy.isDismissibleInGlance(notification)}',
+    );
   }
 
   Future<void> _startBackgroundFoundation() async {
@@ -462,13 +769,15 @@ class CompanionController extends ChangeNotifier {
         '${DateTime.now()} Companion: foreground service started -> ${_activeMode.label}',
       );
     } catch (e) {
-      print('${DateTime.now()} Companion: failed to start foreground service -> $e');
+      print(
+          '${DateTime.now()} Companion: failed to start foreground service -> $e');
     }
   }
 
   Future<void> _handleNotificationRemoved(Map rawEvent) async {
     final key = (rawEvent['key'] as String?) ?? '';
     final packageName = (rawEvent['packageName'] as String?) ?? '';
+    await GlanceService.get.removeNotificationByKey(key);
     final cleared = await NavigateService.get.clearIfMatches(
       key: key,
       packageName: packageName,

@@ -20,6 +20,10 @@ object GlassesCaptureRecorder {
     private const val SAMPLE_RATE = 16000
     private const val CHANNEL_COUNT = 1
     private const val BITS_PER_SAMPLE = 16
+    private const val CAPTURE_STARTUP_TRIM_MS = 200
+    private const val BYTES_PER_SAMPLE_FRAME = CHANNEL_COUNT * BITS_PER_SAMPLE / 8
+    private const val CAPTURE_STARTUP_TRIM_BYTES =
+        SAMPLE_RATE * BYTES_PER_SAMPLE_FRAME * CAPTURE_STARTUP_TRIM_MS / 1000
 
     private lateinit var appContext: Context
     private var pcmTempFile: File? = null
@@ -38,9 +42,11 @@ object GlassesCaptureRecorder {
     @Synchronized
     fun start(): Boolean {
         if (::appContext.isInitialized.not()) {
+            android.util.Log.i("GlanceAssistant", "Recorder start failed: appContext not initialized")
             return false
         }
         if (isRecording) {
+            android.util.Log.i("GlanceAssistant", "Recorder start ignored: already recording")
             return true
         }
 
@@ -50,6 +56,7 @@ object GlassesCaptureRecorder {
         recordingStartedAtMs = System.currentTimeMillis()
         pcmBytesWritten = 0L
         isRecording = true
+        android.util.Log.i("GlanceAssistant", "Recorder started")
         return true
     }
 
@@ -58,6 +65,9 @@ object GlassesCaptureRecorder {
         if (!isRecording) {
             return
         }
+        if (pcmBytesWritten == 0L) {
+            android.util.Log.i("GlanceAssistant", "PCM stream started: first chunk bytes=${pcmData.size}")
+        }
         pcmStream?.write(pcmData)
         pcmBytesWritten += pcmData.size.toLong()
     }
@@ -65,6 +75,7 @@ object GlassesCaptureRecorder {
     @Synchronized
     fun stopAndSave(): Map<String, Any> {
         if (!isRecording) {
+            android.util.Log.i("GlanceAssistant", "Recorder stopAndSave ignored: not recording")
             return mapOf("success" to false)
         }
 
@@ -101,6 +112,7 @@ object GlassesCaptureRecorder {
     @Synchronized
     fun stopToTemp(): Map<String, Any> {
         if (!isRecording) {
+            android.util.Log.i("GlanceAssistant", "Recorder stopToTemp ignored: not recording")
             return mapOf("success" to false)
         }
 
@@ -131,6 +143,7 @@ object GlassesCaptureRecorder {
                 "durationMs" to (System.currentTimeMillis() - recordingStartedAtMs),
             )
         } catch (e: Exception) {
+            android.util.Log.w("GlanceAssistant", "Recorder stopToTemp failed", e)
             wavFile.delete()
             pcmFile.delete()
             pcmTempFile = null
@@ -144,6 +157,7 @@ object GlassesCaptureRecorder {
     @Synchronized
     fun cancel() {
         isRecording = false
+        android.util.Log.i("GlanceAssistant", "Recorder cancelled")
         pcmStream?.flush()
         pcmStream?.close()
         pcmStream = null
@@ -170,7 +184,11 @@ object GlassesCaptureRecorder {
 
         return try {
             resolver.openOutputStream(uri)?.use { output ->
-                writeWaveFile(pcmFile, output)
+                writeWaveFile(
+                    pcmFile = pcmFile,
+                    output = output,
+                    skipBytes = CAPTURE_STARTUP_TRIM_BYTES.toLong(),
+                )
             } ?: throw IOException("Failed to open MediaStore output stream")
 
             values.clear()
@@ -183,10 +201,23 @@ object GlassesCaptureRecorder {
         }
     }
 
-    private fun writeWaveFile(pcmFile: File, output: OutputStream) {
-        val totalAudioLen = pcmFile.length()
+    private fun writeWaveFile(
+        pcmFile: File,
+        output: OutputStream,
+        skipBytes: Long = 0L,
+    ) {
+        val availableAudioLen = pcmFile.length()
+        val safeSkipBytes = skipBytes
+            .coerceAtLeast(0L)
+            .coerceAtMost(availableAudioLen)
+            .let { it - (it % BYTES_PER_SAMPLE_FRAME) }
+        val totalAudioLen = availableAudioLen - safeSkipBytes
+
         output.write(buildWaveHeader(totalAudioLen))
         FileInputStream(pcmFile).use { input ->
+            if (safeSkipBytes > 0L) {
+                input.skipNBytes(safeSkipBytes)
+            }
             input.copyTo(output)
         }
 

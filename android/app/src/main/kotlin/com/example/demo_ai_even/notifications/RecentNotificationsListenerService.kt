@@ -24,6 +24,9 @@ class RecentNotificationsListenerService : NotificationListenerService() {
     private val debugTag = "MapsNotificationDump"
     private val isMapsDebugEnabled: Boolean
         get() = Log.isLoggable(debugTag, Log.DEBUG)
+    private val liveScoreDebugTag = "LiveScoreNotificationDump"
+    private val isLiveScoreDebugEnabled: Boolean
+        get() = Log.isLoggable(liveScoreDebugTag, Log.DEBUG)
 
     companion object {
         @Volatile
@@ -71,6 +74,11 @@ class RecentNotificationsListenerService : NotificationListenerService() {
                 ?.filter { it.packageName == "com.google.android.apps.maps" }
                 ?.forEach(::logNavigationNotification)
         }
+        if (isLiveScoreDebugEnabled) {
+            activeNotifications
+                ?.filter(::shouldLogLiveScoreNotification)
+                ?.forEach(::logLiveScoreNotification)
+        }
         val entries = activeNotifications
             ?.mapNotNull { sbn -> sbn.toDashboardNotification() }
             .orEmpty()
@@ -79,6 +87,7 @@ class RecentNotificationsListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         logNavigationNotification(sbn)
+        logLiveScoreNotification(sbn)
         sbn.toDashboardNotification()?.let {
             NotificationFeedStore.upsertEntry(it)
             BleChannelHelper.notificationEvent(
@@ -87,6 +96,13 @@ class RecentNotificationsListenerService : NotificationListenerService() {
                     "key" to it.key,
                     "packageName" to it.packageName,
                     "source" to it.source,
+                    "category" to it.category,
+                    "channelId" to it.channelId,
+                    "tag" to it.tag,
+                    "isOngoing" to it.isOngoing,
+                    "isMediaStyle" to it.isMediaStyle,
+                    "template" to it.template,
+                    "summaryText" to it.summaryText,
                     "title" to it.title,
                     "text" to it.text,
                     "bigText" to it.bigText,
@@ -95,6 +111,7 @@ class RecentNotificationsListenerService : NotificationListenerService() {
                     "navPrimaryInfo" to it.navPrimaryInfo,
                     "navSecondaryInfo" to it.navSecondaryInfo,
                     "navChipExpandedText" to it.navChipExpandedText,
+                    "liveScoreHint" to it.liveScoreHint,
                     "navIconPngBase64" to it.navIconPngBase64,
                     "navIconSource" to it.navIconSource,
                     "postedAt" to it.postedAt,
@@ -151,6 +168,70 @@ class RecentNotificationsListenerService : NotificationListenerService() {
         Log.d(debugTag, payload.toString())
     }
 
+    private fun shouldLogLiveScoreNotification(sbn: StatusBarNotification): Boolean {
+        if (!isLiveScoreDebugEnabled) {
+            return false
+        }
+        val packageName = sbn.packageName.lowercase(Locale.ROOT)
+        val extras = sbn.notification.extras ?: Bundle.EMPTY
+        val combined = listOf(
+            extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
+            extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(),
+            extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty(),
+            extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty(),
+            extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty(),
+        ).joinToString(" ").lowercase(Locale.ROOT)
+
+        if (packageName == "com.samsung.android.app.aodservice" ||
+            packageName == "com.samsung.android.aodservice") {
+            return true
+        }
+        if (packageName == "com.android.systemui") {
+            return combined.contains("sports") || combined.contains("league") || combined.contains("score")
+        }
+        if (packageName.startsWith("com.google.android")) {
+            return combined.contains("sports") ||
+                combined.contains("league") ||
+                combined.contains("score") ||
+                combined.contains("premier") ||
+                combined.contains("football")
+        }
+        return false
+    }
+
+    private fun logLiveScoreNotification(sbn: StatusBarNotification) {
+        if (!shouldLogLiveScoreNotification(sbn)) {
+            return
+        }
+
+        val notification = sbn.notification
+        val extras = notification.extras ?: Bundle.EMPTY
+        val payload = linkedMapOf<String, Any?>(
+            "package" to sbn.packageName,
+            "key" to sbn.key,
+            "postTime" to sbn.postTime,
+            "category" to notification.category,
+            "channelId" to notification.channelId,
+            "tag" to sbn.tag,
+            "isOngoing" to sbn.isOngoing,
+            "title" to extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+            "text" to extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+            "bigText" to extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
+            "subText" to extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
+            "summaryText" to extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString(),
+            "template" to extras.getString(Notification.EXTRA_TEMPLATE),
+            "extrasKeys" to extras.keySet().sorted(),
+            "ongoingActivity.primaryInfo" to extras.getCharSequence("android.ongoingActivityNoti.primaryInfo")?.toString(),
+            "ongoingActivity.secondaryInfo" to extras.getCharSequence("android.ongoingActivityNoti.secondaryInfo")?.toString(),
+            "ongoingActivity.chipExpandedText" to extras.getCharSequence("android.ongoingActivityNoti.chipExpandedText")?.toString(),
+            "ongoingActivity.chipIcon" to (extras.get("android.ongoingActivityNoti.chipIcon") != null),
+            "ongoingActivity.nowbarIcon" to (extras.get("android.ongoingActivityNoti.nowbarIcon") != null),
+            "ongoingActivity.secondIcon" to (extras.get("android.ongoingActivityNoti.secondIcon") != null),
+            "extras" to summarizeBundle(extras),
+        )
+        Log.d(liveScoreDebugTag, payload.toString())
+    }
+
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         NotificationFeedStore.remove(sbn.key)
         BleChannelHelper.notificationEvent(
@@ -168,6 +249,11 @@ class RecentNotificationsListenerService : NotificationListenerService() {
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
+        val summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()?.trim().orEmpty()
+        val template = extras.getString(Notification.EXTRA_TEMPLATE).orEmpty()
+        val isMediaStyle = template.contains("MediaStyle") ||
+            extras.get(Notification.EXTRA_MEDIA_SESSION) != null ||
+            notification.category == Notification.CATEGORY_TRANSPORT
         val appLabel = resolveAppLabel(packageName)
         val navPrimaryInfo = extras.getCharSequence("android.ongoingActivityNoti.primaryInfo")
             ?.toString()
@@ -178,6 +264,10 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             ?.trim()
             .orEmpty()
         val navChipExpandedText = extras.getCharSequence("android.ongoingActivityNoti.chipExpandedText")
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        val liveScoreHint = extras.getCharSequence("android.ongoingActivityNoti.secondaryInfo")
             ?.toString()
             ?.trim()
             .orEmpty()
@@ -208,6 +298,13 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             key = key,
             packageName = packageName,
             source = source.ifBlank { "Notification" },
+            category = notification.category.orEmpty(),
+            channelId = notification.channelId.orEmpty(),
+            tag = tag.orEmpty(),
+            isOngoing = isOngoing,
+            isMediaStyle = isMediaStyle,
+            template = template,
+            summaryText = summaryText,
             title = title,
             text = text,
             bigText = bigText,
@@ -216,6 +313,7 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             navPrimaryInfo = navPrimaryInfo,
             navSecondaryInfo = navSecondaryInfo,
             navChipExpandedText = navChipExpandedText,
+            liveScoreHint = liveScoreHint,
             navIconPngBase64 = navIconPngBase64,
             navIconSource = navIconSource,
             postedAt = postTime,
