@@ -21,6 +21,7 @@ data class BlePairDevice(
     fun toConnectedJson(): Map<String, Any> = mapOf(
         "leftDeviceName" to (leftDevice?.name ?: ""),
         "rightDeviceName" to (rightDevice?.name ?: ""),
+        "channelNumber" to (leftDevice?.channelNumber ?: ""),
         "leftConnected" to (leftDevice?.isConnect == true),
         "rightConnected" to (rightDevice?.isConnect == true),
         "status" to "connected"
@@ -29,6 +30,7 @@ data class BlePairDevice(
     fun toConnectionStateJson(status: String): Map<String, Any> = mapOf(
         "leftDeviceName" to (leftDevice?.name ?: ""),
         "rightDeviceName" to (rightDevice?.name ?: ""),
+        "channelNumber" to (leftDevice?.channelNumber ?: ""),
         "leftConnected" to (leftDevice?.isConnect == true),
         "rightConnected" to (rightDevice?.isConnect == true),
         "status" to status,

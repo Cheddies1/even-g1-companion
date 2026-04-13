@@ -57,6 +57,7 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 - new notifications can auto-pop into the glasses
 - proactive auto-pop does not dismiss the phone notification
 - deliberate tilt-up shows the most recent notification
+- the first tilt-up from true idle into Glance recall is intent-gated for `500ms`
 - repeated tilt-up cycles through the feed
 - when idle and a pinned live score exists, Glance can show that score as the idle surface
 - tilt-up from the idle live-score surface clears it and enters normal recall/cycling
@@ -131,7 +132,7 @@ Current safety rules:
 
 ### Current package suppression controls
 
-- the app home screen now includes a `Notification Filters` section
+- the Settings screen includes a `Notification Filters` section
 - it shows recently seen packages
 - packages can be toggled suppressed / unsuppressed there
 - built-in noisy-package suppression seeds currently include SmartThings and Samsung Camera
@@ -142,8 +143,8 @@ Capture is the most important practical mode after Glance, but it is not yet ful
 
 ### Intended behavior
 
-- idle + tilt-up -> start recording
-- recording + tilt-up -> stop and save
+- idle + tilt-up -> start recording after a short `500ms` intent gate
+- recording + tilt-up -> stop and save after the same `500ms` intent gate
 - recording + double tap -> stop and save
 - idle + double tap -> no-op
 - idle display shows `*`
@@ -199,7 +200,7 @@ Chat mode is now a working v1 feature.
 
 - entering Chat mode creates a fresh in-memory session
 - idle state shows `Chat ready` / `Tilt up to talk`
-- tilt up starts listening from the glasses mic
+- tilt up starts listening from the glasses mic after a short `500ms` intent gate
 - tilt down stops capture and submits what was said
 - a short transcript preview may be shown
 - `Thinking...` is shown while waiting for the backend
@@ -226,9 +227,25 @@ Chat mode is now a working v1 feature.
 
 ### Current configuration
 
-Chat mode requires an OpenAI API key at build/run time.
+Chat mode now prefers a runtime OpenAI-compatible configuration saved inside the app.
 
-Known-good examples:
+Current practical flow:
+- install one APK
+- open `Settings > API / Assistant`
+- save an API key locally on device
+- optionally save base URL, chat model, and transcription model overrides
+
+Persistence:
+- the API key is stored locally in secure storage
+- the optional non-secret overrides are stored locally in app preferences
+- both persist across restarts and normal upgrades
+
+Fallback behaviour:
+- runtime values override build-time defaults
+- blank runtime fields fall back to `dart-define` values if they exist
+- if no valid API key exists anywhere, Chat and the Glance assistant fail with the same `API key issue` style messaging as before
+
+Known-good fallback examples:
 
 ```powershell
 flutter run --dart-define="OPENAI_API_KEY=sk-..."
@@ -347,6 +364,9 @@ adb logcat -s MapsNotificationDump
 
 This keeps normal daily-use builds quieter while preserving a path for targeted investigation.
 
+Tilt-intent debug logging:
+- the controller emits narrow debug-level `TiltIntent` logs for pending, confirmed, cancelled, and cleanup cases around the `500ms` gate
+
 ## Connection and transport reliability
 
 Current runtime behavior:
@@ -360,6 +380,20 @@ Practical effect:
 - one eye can remain usable while the other is recovering
 - Navigate BMP divergence should self-correct more often after recovery
 - a restart/reconnect should no longer be the only way to recover from every partial transport problem
+
+## Home screen
+
+Current behavior:
+- the connection area stays prominent at the top during startup, scanning, disconnected, or degraded states
+- once both legs are healthy, that area compresses into a smaller status card
+- the compact state still shows:
+  - connection state
+  - left/right compact status
+  - current mode
+  - health summary
+  - last saved capture when present
+- a `Force Reconnect` action remains available in the connection area
+- occasional setup items now live under `Settings` rather than staying on the main screen
 
 ## Background behaviour
 

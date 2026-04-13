@@ -1,43 +1,18 @@
 import 'dart:io';
 
+import 'package:demo_ai_even/services/assistant_backend_config.dart';
 import 'package:dio/dio.dart';
 
 class OpenAiTranscriptionService {
   OpenAiTranscriptionService({
     Dio? dio,
-  }) : _dio = dio ??
-            Dio(
-              BaseOptions(
-                baseUrl: _baseUrl,
-                connectTimeout: const Duration(seconds: 20),
-                receiveTimeout: const Duration(seconds: 45),
-                sendTimeout: const Duration(seconds: 45),
-                headers: {
-                  'Authorization': 'Bearer $_apiKey',
-                },
-              ),
-            );
+  }) : _dio = dio;
 
-  static const _baseUrl = String.fromEnvironment(
-    'CHAT_API_BASE_URL',
-    defaultValue: 'https://api.openai.com/v1',
-  );
-  static const _apiKey = String.fromEnvironment('OPENAI_API_KEY');
-  static const _model = String.fromEnvironment(
-    'CHAT_TRANSCRIPTION_MODEL',
-    defaultValue: 'gpt-4o-mini-transcribe',
-  );
-  static const _language = String.fromEnvironment(
-    'CHAT_TRANSCRIPTION_LANGUAGE',
-    defaultValue: 'en',
-  );
-
-  final Dio _dio;
-
-  static bool get isConfigured => _apiKey.isNotEmpty;
+  final Dio? _dio;
 
   Future<String> transcribe(String filePath) async {
-    if (!isConfigured) {
+    final config = AssistantBackendConfig.resolve();
+    if (!config.isConfigured) {
       throw const ChatTranscriptionException(
         'Missing OPENAI_API_KEY for speech transcription',
         kind: ChatTranscriptionErrorKind.auth,
@@ -54,8 +29,8 @@ class OpenAiTranscriptionService {
 
     try {
       final formData = FormData.fromMap({
-        'model': _model,
-        'language': _language,
+        'model': config.transcriptionModel,
+        'language': config.language,
         'response_format': 'json',
         'file': await MultipartFile.fromFile(
           file.path,
@@ -64,7 +39,7 @@ class OpenAiTranscriptionService {
               : file.uri.pathSegments.last,
         ),
       });
-      final response = await _dio.post(
+      final response = await _clientFor(config).post(
         '/audio/transcriptions',
         data: formData,
       );
@@ -104,6 +79,21 @@ class OpenAiTranscriptionService {
         kind: ChatTranscriptionErrorKind.generic,
       );
     }
+  }
+
+  Dio _clientFor(AssistantBackendConfig config) {
+    return _dio ??
+        Dio(
+          BaseOptions(
+            baseUrl: config.baseUrl,
+            connectTimeout: const Duration(seconds: 20),
+            receiveTimeout: const Duration(seconds: 45),
+            sendTimeout: const Duration(seconds: 45),
+            headers: {
+              'Authorization': 'Bearer ${config.apiKey}',
+            },
+          ),
+        );
   }
 }
 

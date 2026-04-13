@@ -61,7 +61,7 @@ Glance live score idle display:
 Glance filtering:
 - notifications that are effectively just `Open on phone` / `Open your phone for details` are suppressed
 - user-suppressed noisy packages stay out of the Glance queue
-- the home screen now includes a `Notification Filters` section for package-level suppression
+- package-level suppression now lives in `Settings > Notification Filters`
 
 Glance assistant:
 - while in Glance mode and idle, left-hold triggers a lightweight assistant interaction
@@ -209,7 +209,9 @@ Important Flutter files:
 - [lib/services/chat_backend.dart](lib/services/chat_backend.dart)
 - [lib/services/openai_chat_backend.dart](lib/services/openai_chat_backend.dart)
 - [lib/services/openai_transcription_service.dart](lib/services/openai_transcription_service.dart)
+- [lib/services/app_settings_store.dart](lib/services/app_settings_store.dart)
 - [lib/views/home_page.dart](lib/views/home_page.dart)
+- [lib/views/settings_page.dart](lib/views/settings_page.dart)
 
 Important Android/native files:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
@@ -288,7 +290,23 @@ Required for:
 Current v1 backend:
 - OpenAI API
 
-Required build-time define:
+Recommended setup:
+- install one APK
+- open `Settings > API / Assistant`
+- save your API key once
+- optionally save a base URL override and model overrides
+
+Persistence:
+- the API key is stored locally in secure storage
+- the optional base URL and model overrides are stored locally in app preferences
+- those settings persist across app restarts and normal upgrades
+
+Runtime precedence:
+- saved runtime settings override build-time values
+- blank runtime fields fall back to `dart-define` values when present
+- if no API key exists anywhere, Chat and the Glance assistant fail cleanly with the existing `API key issue` style behaviour
+
+Optional build-time fallback:
 
 ```powershell
 --dart-define="OPENAI_API_KEY=sk-..."
@@ -341,6 +359,8 @@ Run in development with Chat mode enabled:
 flutter run --dart-define="OPENAI_API_KEY=sk-..."
 ```
 
+This is now optional if you plan to enter the key in the app later.
+
 Build a debug APK:
 
 ```powershell
@@ -352,6 +372,8 @@ Build a release APK with Chat mode enabled:
 ```powershell
 flutter build apk --release --dart-define="OPENAI_API_KEY=sk-..."
 ```
+
+This is now optional if you prefer runtime setup after install.
 
 Known-good local validation commands:
 

@@ -7,10 +7,9 @@ import 'package:demo_ai_even/services/capture_service.dart';
 import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
-import 'package:demo_ai_even/services/navigate_service.dart';
-import 'package:demo_ai_even/services/notification_settings_store.dart';
 import 'package:demo_ai_even/views/chat_transcript_page.dart';
 import 'package:demo_ai_even/views/features_page.dart';
+import 'package:demo_ai_even/views/settings_page.dart';
 import 'package:flutter/material.dart';
 
 class HomePage extends StatefulWidget {
@@ -37,15 +36,47 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return 'Disconnected';
   }
 
+  bool get _isHealthyConnected {
+    final ble = BleManager.get();
+    return ble.legState('L').isHealthy && ble.legState('R').isHealthy;
+  }
+
+  bool get _showCompactConnection => _isHealthyConnected && !isScanning;
+
+  String _healthSummary() {
+    final ble = BleManager.get();
+    final left = ble.legState('L');
+    final right = ble.legState('R');
+    if (left.isHealthy && right.isHealthy) {
+      return 'Healthy';
+    }
+    if (!left.connected && !right.connected) {
+      return 'Disconnected';
+    }
+    if (left.connected || right.connected) {
+      return 'Degraded';
+    }
+    return 'Connecting';
+  }
+
+  String _legSummary(String lr) {
+    final state = BleManager.get().legState(lr);
+    final name = state.deviceName.isEmpty ? lr : state.deviceName;
+    final status = switch (state.status) {
+      LegHealthStatus.disconnected => 'disconnected',
+      LegHealthStatus.degraded => 'degraded',
+      LegHealthStatus.healthy => 'healthy',
+    };
+    return '$name • $status';
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     CompanionController.get.addListener(_refreshPage);
     ChatHistoryStore.get.addListener(_refreshPage);
-    NotificationSettingsStore.get.addListener(_refreshPage);
     ChatHistoryStore.get.init();
-    NotificationSettingsStore.get.init();
   }
 
   @override
@@ -78,6 +109,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() => isScanning = false);
   }
 
+  Future<void> _forceReconnect() async {
+    setState(() => isScanning = false);
+    await BleManager.get().forceReconnect();
+    _refreshPage();
+  }
+
   Widget _buildModeButton(AppMode mode, {bool enabled = true}) {
     final isSelected = CompanionController.get.activeMode == mode;
     return Expanded(
@@ -93,9 +130,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               isSelected ? const Color(0xFF2F5B4A) : const Color(0xFF141A20),
           foregroundColor: Colors.white,
           side: BorderSide(
-            color: isSelected
-                ? const Color(0xFF4A8D72)
-                : const Color(0xFF28313A),
+            color:
+                isSelected ? const Color(0xFF4A8D72) : const Color(0xFF28313A),
           ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
@@ -123,168 +159,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildStatusCard() {
-    final capture = CaptureService.get;
-    final chat = ChatService.get;
-    final controller = CompanionController.get;
-    final navigate = NavigateService.get;
-    final theme = Theme.of(context);
-    return _buildSectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Even Companion',
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildMetric('Connection', _uiConnectionState()),
-                    const SizedBox(height: 10),
-                    _buildMetric(
-                      'Device',
-                      BleManager.get().getConnectionStatus(),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildMetric('Mode', controller.activeMode.label),
-                    const SizedBox(height: 10),
-                    _buildMetric('Status', controller.statusMessage),
-                    const SizedBox(height: 10),
-                    _buildMetric(
-                      'Notifications',
-                      '${GlanceService.get.notificationCount}',
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (navigate.hasInstruction ||
-              capture.isRecording ||
-              capture.lastSavedFileName != null ||
-              (controller.activeMode == AppMode.chat && chat.isListening) ||
-              (controller.activeMode == AppMode.chat && chat.isThinking))
-            const SizedBox(height: 14),
-          if (navigate.hasInstruction)
-            Text(
-              'Navigate: ${navigate.latestInstruction?.message ?? ''}',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF9AB7C8),
-              ),
-            ),
-          if (capture.isRecording)
-            const Text(
-              'Capture: Recording from glasses mic',
-              style: TextStyle(color: Color(0xFFE37D7D)),
-            )
-          else if (capture.lastSavedFileName != null)
-            Text(
-              'Last saved: ${capture.lastSavedFileName}',
-              style: theme.textTheme.bodyMedium,
-            ),
-          if (controller.activeMode == AppMode.chat && chat.isListening)
-            const Text(
-              'Chat: Listening from glasses mic',
-              style: TextStyle(color: Color(0xFFE37D7D)),
-            ),
-          if (controller.activeMode == AppMode.chat && chat.isThinking)
-            Text(
-              'Chat: Waiting for assistant',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF9AB7C8),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPermissionCard() {
-    final controller = CompanionController.get;
-    final compact = controller.notificationAccessEnabled;
-    return _buildSectionCard(
-      padding: EdgeInsets.all(compact ? 14 : 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Permissions',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            controller.notificationAccessEnabled
-                ? 'Notification access enabled'
-                : 'Notification access required for Glance and Navigate',
-          ),
-          const SizedBox(height: 10),
-          FilledButton.tonal(
-            onPressed: controller.openNotificationAccessSettings,
-            child: Text(
-              controller.notificationAccessEnabled
-                  ? 'Open Notification Access'
-                  : 'Enable Notification Access',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScanSection() {
-    final paired = BleManager.get().getPairedGlasses();
-    return _buildSectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Glasses',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: BleManager.get().isConnected || isScanning ? null : _startScan,
-            child: Text(isScanning ? 'Scanning...' : 'Scan / Reconnect'),
-          ),
-          const SizedBox(height: 12),
-          if (paired.isEmpty)
-            const Text('No paired glasses discovered yet.')
-          else
-            ...paired.map(
-              (glasses) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: OutlinedButton(
-                  onPressed: () async {
-                    final channelNumber = glasses['channelNumber']!;
-                    await BleManager.get().connectToGlasses('Pair_$channelNumber');
-                    _refreshPage();
-                  },
-                  child: Text(
-                    'Pair ${glasses['channelNumber']}  ${glasses['leftDeviceName']} / ${glasses['rightDeviceName']}',
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildMetric(String label, String value) {
     final theme = Theme.of(context);
     return Column(
@@ -305,6 +179,203 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildStatusPills() {
+    final controller = CompanionController.get;
+    final capture = CaptureService.get;
+    final chat = ChatService.get;
+    final pills = <String>[
+      'Mode: ${controller.activeMode.label}',
+      'Health: ${_healthSummary()}',
+      'Notifications: ${GlanceService.get.notificationCount}',
+    ];
+    if (capture.lastSavedFileName != null) {
+      pills.add('Last saved: ${capture.lastSavedFileName}');
+    }
+    if (capture.isRecording) {
+      pills.add('Capture recording');
+    }
+    if (controller.activeMode == AppMode.chat && chat.isListening) {
+      pills.add('Chat listening');
+    }
+    if (controller.activeMode == AppMode.chat && chat.isThinking) {
+      pills.add('Chat thinking');
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: pills
+          .map(
+            (label) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF141A20),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: const Color(0xFF28313A)),
+              ),
+              child: Text(label),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Widget _buildConnectionCard() {
+    final capture = CaptureService.get;
+    final chat = ChatService.get;
+    final controller = CompanionController.get;
+    final paired = BleManager.get().getPairedGlasses();
+    final theme = Theme.of(context);
+
+    final showDetailText = !_showCompactConnection ||
+        capture.isRecording ||
+        capture.lastSavedFileName != null ||
+        (controller.activeMode == AppMode.chat && chat.isListening) ||
+        (controller.activeMode == AppMode.chat && chat.isThinking);
+
+    return _buildSectionCard(
+      padding: EdgeInsets.all(_showCompactConnection ? 14 : 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Even Companion',
+                      style: (_showCompactConnection
+                              ? theme.textTheme.titleMedium
+                              : theme.textTheme.titleLarge)
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _showCompactConnection
+                          ? '${_uiConnectionState()} • ${_healthSummary()}'
+                          : _uiConnectionState(),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: _showCompactConnection
+                            ? const Color(0xFF9AB7C8)
+                            : const Color(0xFFE7EEF4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Settings',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const SettingsPage(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.settings),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_showCompactConnection) ...[
+            _buildStatusPills(),
+            const SizedBox(height: 12),
+            Text(
+              '${_legSummary('L')}\n${_legSummary('R')}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF9AB7C8),
+              ),
+            ),
+            if (showDetailText) ...[
+              const SizedBox(height: 10),
+              Text(
+                controller.statusMessage,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+          ] else ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildMetric('Left', _legSummary('L')),
+                      const SizedBox(height: 10),
+                      _buildMetric('Right', _legSummary('R')),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildMetric('Mode', controller.activeMode.label),
+                      const SizedBox(height: 10),
+                      _buildMetric('Health', _healthSummary()),
+                      const SizedBox(height: 10),
+                      _buildMetric('Status', controller.statusMessage),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildStatusPills(),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton(
+                onPressed: isScanning || BleManager.get().isConnected
+                    ? null
+                    : _startScan,
+                child: Text(isScanning ? 'Scanning...' : 'Scan / Reconnect'),
+              ),
+              FilledButton.tonal(
+                onPressed: _forceReconnect,
+                child: const Text('Force Reconnect'),
+              ),
+              if (isScanning)
+                TextButton(
+                  onPressed: _stopScan,
+                  child: const Text('Stop Scan'),
+                ),
+            ],
+          ),
+          if (!_showCompactConnection) ...[
+            const SizedBox(height: 12),
+            if (paired.isEmpty)
+              const Text('No paired glasses discovered yet.')
+            else
+              ...paired.map(
+                (glasses) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: OutlinedButton(
+                    onPressed: () async {
+                      final channelNumber = glasses['channelNumber']!;
+                      await BleManager.get()
+                          .connectToGlasses('Pair_$channelNumber');
+                      _refreshPage();
+                    },
+                    child: Text(
+                      'Pair ${glasses['channelNumber']}  ${glasses['leftDeviceName']} / ${glasses['rightDeviceName']}',
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -366,10 +437,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             session.previewText!,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style:
-                                Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: const Color(0xFF9AB7C8),
-                                    ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: const Color(0xFF9AB7C8),
+                                ),
                           ),
                         ],
                       ],
@@ -404,65 +477,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildNotificationFiltersSection() {
-    final packages = NotificationSettingsStore.get.recentPackages;
-    return _buildSectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Notification Filters',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Suppress noisy packages from Glance. Ongoing notifications are protected automatically.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: const Color(0xFF9AB7C8),
-                ),
-          ),
-          const SizedBox(height: 12),
-          if (packages.isEmpty)
-            Text(
-              'Recently seen apps will appear here.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF9AB7C8),
-                  ),
-            )
-          else
-            ...packages.take(10).map(
-              (entry) => SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: entry.suppressed,
-                activeColor: const Color(0xFF4A8D72),
-                title: Text(
-                  entry.displayName.isNotEmpty
-                      ? entry.displayName
-                      : entry.packageName,
-                ),
-                subtitle: Text(
-                  entry.packageName,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF7C8C99),
-                      ),
-                ),
-                secondary: entry.isBuiltInCandidate
-                    ? const Icon(Icons.tune, size: 18)
-                    : null,
-                onChanged: (value) async {
-                  await NotificationSettingsStore.get.setPackageSuppressed(
-                    entry.packageName,
-                    value,
-                  );
-                  await CompanionController.get.refreshCompanionState();
-                },
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -472,7 +486,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _buildStatusCard(),
+          _buildConnectionCard(),
           const SizedBox(height: 16),
           _buildSectionCard(
             child: Column(
@@ -504,12 +518,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           const SizedBox(height: 16),
           _buildChatLogSection(),
           const SizedBox(height: 16),
-          _buildNotificationFiltersSection(),
-          const SizedBox(height: 16),
-          _buildPermissionCard(),
-          const SizedBox(height: 16),
-          _buildScanSection(),
-          const SizedBox(height: 16),
           _buildLegacySection(),
         ],
       ),
@@ -522,7 +530,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     scanTimer?.cancel();
     CompanionController.get.removeListener(_refreshPage);
     ChatHistoryStore.get.removeListener(_refreshPage);
-    NotificationSettingsStore.get.removeListener(_refreshPage);
     super.dispose();
   }
 }

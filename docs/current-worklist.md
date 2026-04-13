@@ -60,6 +60,7 @@ Working, but still needs real-world observation:
 - Ongoing notifications are generally not ordinary Glance items
 - YouTube / media protection is behaving correctly in recent logs
 - Notification Filters UI exists for package suppression
+- Runtime Settings UI now owns API key, backend overrides, notification filters, and permission shortcuts
 
 ## Recent Confirmed Findings
 

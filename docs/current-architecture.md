@@ -111,6 +111,7 @@ Owns:
 - [lib/services/chat_backend.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_backend.dart)
 - [lib/services/openai_chat_backend.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/openai_chat_backend.dart)
 - [lib/services/openai_transcription_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/openai_transcription_service.dart)
+- [lib/services/app_settings_store.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/app_settings_store.dart)
 
 Owns:
 - Chat mode session lifecycle
@@ -123,6 +124,8 @@ Owns:
 Current backend seam:
 - `ChatService` depends on the `ChatBackend` abstraction, not a controller-level hardcoded backend
 - the current v1 implementation uses an OpenAI-compatible backend and OpenAI transcription API
+- runtime backend settings are resolved through `AppSettingsStore` first, then `dart-define` fallbacks
+- the API key is stored locally in secure storage; non-secret overrides use app preferences
 - the backend can be replaced later without rewriting mode ownership
 
 ## Quick mode switching
@@ -260,6 +263,21 @@ QuickNote note:
 - the right-hold mode-switch POC does not depend on `F5`
 - it is intentionally based on right-leg `R21` only because `F5` proved too overloaded for QuickNote modeling
 
+Tilt-up intent gating:
+- `CompanionController` applies a shared `500ms` tilt-up intent gate for a small subset of `F5 02` actions
+- the gate exists to filter quick incidental look-ups before committing to a mode action
+- current gated paths are:
+  - first deliberate Glance entry from idle into recall
+  - Capture start and stop
+  - Chat start listening
+- current non-gated paths are:
+  - Glance while already in active recall/cycling
+  - Navigate
+  - Chat stop/submit on `F5 03`
+- return-to-centre on `F5 03` cancels any still-pending gated tilt-up intent
+- the helper and narrow `TiltIntent` debug logging live in [lib/services/companion_controller.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/companion_controller.dart)
+- [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart) exposes a small state getter so idle Glance entry can be distinguished from active recall
+
 ## Notification ingestion
 
 Native Android listener:
@@ -354,16 +372,21 @@ This keeps Capture and Chat on the same proven recorder foundation while allowin
 Current phone control surface:
 - [lib/main.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/main.dart)
 - [lib/views/home_page.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/views/home_page.dart)
+- [lib/views/settings_page.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/views/settings_page.dart)
 
 The UI is intentionally simple:
-- connection status
+- a prominent connection/status area that collapses once both legs are healthy
 - mode selector
-- permission/setup affordances
-- scan/reconnect
-- small debug/status section
+- chat log
+- settings entry for occasional setup tasks
 - legacy/demo area separated from the main UX
 
-Chat mode is intentionally wired into the same simple mode selector. There is no settings UI for backend configuration in this phase; Chat backend configuration is done at build time with `dart-define`.
+Settings now own:
+- OpenAI-compatible API key and backend overrides
+- notification filter management
+- permission/setup affordances
+
+The home screen stays focused on day-to-day companion control. Runtime backend configuration now comes from the Settings screen, with `dart-define` retained only as fallback/default input.
 
 ## Logging posture
 

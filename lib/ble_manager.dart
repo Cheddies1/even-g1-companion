@@ -90,7 +90,7 @@ class BleManager {
   static const methodSend = "send";
   static const _eventBleReceive = "eventBleReceive";
   static const _channel = MethodChannel('method.bluetooth');
-  
+
   final eventBleReceive = const EventChannel(_eventBleReceive)
       .receiveBroadcastStream(_eventBleReceive)
       .map((ret) => BleReceive.fromMap(ret));
@@ -102,19 +102,22 @@ class BleManager {
   int? _lastCmd22EventMs;
   int? _lastRightCmd21EventMs;
   bool _resyncInFlight = false;
-  final Map<String, LegConnectionState> _legStates = <String, LegConnectionState>{
+  final Map<String, LegConnectionState> _legStates =
+      <String, LegConnectionState>{
     'L': const LegConnectionState(lr: 'L'),
     'R': const LegConnectionState(lr: 'R'),
   };
   static const _maxReconnectAttempts = 3;
   static const _heartbeatDegradeThreshold = 2;
   static const _heartbeatWarningAge = Duration(seconds: 20);
-  
+
   final List<Map<String, String>> pairedGlasses = [];
   bool isConnected = false;
   String connectionStatus = 'Not connected';
+  String? _lastConnectedChannelNumber;
 
   LegConnectionState legState(String lr) => _legStates[lr]!;
+  String? get lastConnectedChannelNumber => _lastConnectedChannelNumber;
 
   void _init() {}
 
@@ -144,12 +147,16 @@ class BleManager {
 
   Future<void> connectToGlasses(String deviceName) async {
     try {
+      if (deviceName.startsWith('Pair_')) {
+        _lastConnectedChannelNumber = deviceName.substring('Pair_'.length);
+      }
       final reconnectAttempt =
           connectionStatus != 'Not connected' || pairedGlasses.isNotEmpty;
       print(
         "${DateTime.now()} BLE UI: connect requested for $deviceName, reconnectAttempt=$reconnectAttempt",
       );
-      await _channel.invokeMethod('connectToGlasses', {'deviceName': deviceName});
+      await _channel
+          .invokeMethod('connectToGlasses', {'deviceName': deviceName});
       connectionStatus = 'Connecting...';
     } catch (e) {
       print('Error connecting to device: $e');
@@ -229,7 +236,7 @@ class BleManager {
     print("${DateTime.now()} BLE UI: connecting");
     connectionStatus = 'Connecting...';
 
-      onStatusChanged?.call();
+    onStatusChanged?.call();
   }
 
   void _onGlassesDisconnected() {
@@ -288,7 +295,8 @@ class BleManager {
       "${DateTime.now()} BLE UI: pair discovered -> channel=${deviceInfo['channelNumber']}, left=${deviceInfo['leftDeviceName']}, right=${deviceInfo['rightDeviceName']}",
     );
     final String channelNumber = deviceInfo['channelNumber']!;
-    final isAlreadyPaired = pairedGlasses.any((glasses) => glasses['channelNumber'] == channelNumber);
+    final isAlreadyPaired = pairedGlasses
+        .any((glasses) => glasses['channelNumber'] == channelNumber);
 
     if (!isAlreadyPaired) {
       pairedGlasses.add(deviceInfo);
@@ -344,7 +352,7 @@ class BleManager {
         eventLabel: eventLabel,
         payload: payload,
       );
-      
+
       switch (notifyIndex) {
         case 0:
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
@@ -365,19 +373,23 @@ class BleManager {
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
           break;
         case 17:
-          print('${DateTime.now()} GlanceAssistant: F5 17 received from ${res.lr}');
+          print(
+              '${DateTime.now()} GlanceAssistant: F5 17 received from ${res.lr}');
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
           break;
         case 18:
-          print('${DateTime.now()} GlanceAssistant: F5 18 received from ${res.lr}');
+          print(
+              '${DateTime.now()} GlanceAssistant: F5 18 received from ${res.lr}');
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
           break;
         case 23: //BleEvent.evenaiStart:
-          print('${DateTime.now()} GlanceAssistant: F5 23 legacy EvenAI start received from ${res.lr}');
+          print(
+              '${DateTime.now()} GlanceAssistant: F5 23 legacy EvenAI start received from ${res.lr}');
           CompanionController.get.handleGlassesGesture(17, res.lr);
           break;
         case 24: //BleEvent.evenaiRecordOver:
-          print('${DateTime.now()} GlanceAssistant: F5 24 legacy EvenAI stop received from ${res.lr}');
+          print(
+              '${DateTime.now()} GlanceAssistant: F5 24 legacy EvenAI stop received from ${res.lr}');
           CompanionController.get.handleGlassesGesture(18, res.lr);
           break;
         default:
@@ -385,13 +397,12 @@ class BleManager {
       }
       return;
     }
-      _reqListen.remove(cmd)?.complete(res);
-      _reqTimeout.remove(cmd)?.cancel();
-      if (_nextReceive != null) {
-        _nextReceive?.complete(res);
-        _nextReceive = null;
-      }
-
+    _reqListen.remove(cmd)?.complete(res);
+    _reqTimeout.remove(cmd)?.cancel();
+    if (_nextReceive != null) {
+      _nextReceive?.complete(res);
+      _nextReceive = null;
+    }
   }
 
   String _describeF5Event(int notifyIndex, BleReceive res) {
@@ -485,9 +496,8 @@ class BleManager {
   }
 
   String _groupHexBytes(Uint8List data, int groupSize) {
-    final bytes = data
-        .map((value) => value.toRadixString(16).padLeft(2, '0'))
-        .toList();
+    final bytes =
+        data.map((value) => value.toRadixString(16).padLeft(2, '0')).toList();
     final groups = <String>[];
 
     for (var i = 0; i < bytes.length; i += groupSize) {
@@ -506,6 +516,23 @@ class BleManager {
     return pairedGlasses;
   }
 
+  Future<void> forceReconnect() async {
+    String? channelNumber = _lastConnectedChannelNumber;
+    if (channelNumber == null || channelNumber.isEmpty) {
+      for (final entry in pairedGlasses) {
+        final candidate = (entry['channelNumber'] ?? '').trim();
+        if (candidate.isNotEmpty) {
+          channelNumber = candidate;
+          break;
+        }
+      }
+    }
+    if (channelNumber == null || channelNumber.isEmpty) {
+      await startScan();
+      return;
+    }
+    await connectToGlasses('Pair_$channelNumber');
+  }
 
   static final _reqListen = <String, Completer<BleReceive>>{};
   static final _reqTimeout = <String, Timer>{};
@@ -514,13 +541,13 @@ class BleManager {
   static _checkTimeout(String cmd, int timeoutMs, Uint8List data, String lr) {
     _reqTimeout.remove(cmd);
     var cb = _reqListen.remove(cmd);
-    AppLog.debug('${DateTime.now()} _checkTimeout-----timeoutMs----$timeoutMs-----cb----$cb-----');
+    AppLog.debug(
+        '${DateTime.now()} _checkTimeout-----timeoutMs----$timeoutMs-----cb----$cb-----');
     if (cb != null) {
       var res = BleReceive();
       res.isTimeout = true;
       //var showData = data.length > 50 ? data.sublist(0, 50) : data;
-      print(
-          "send Timeout $cmd of $timeoutMs");
+      print("send Timeout $cmd of $timeoutMs");
       cb.complete(res);
     }
 
@@ -542,8 +569,7 @@ class BleManager {
     final lastRightCmd21EventMs = _lastRightCmd21EventMs;
     final nearRight21 = lastRightCmd21EventMs != null &&
         (nowMs - lastRightCmd21EventMs).abs() <= 3000;
-    final isInterestingF5 =
-        notifyIndex == 0 ||
+    final isInterestingF5 = notifyIndex == 0 ||
         notifyIndex == 17 ||
         notifyIndex == 18 ||
         notifyIndex == 23 ||
@@ -554,15 +580,17 @@ class BleManager {
     }
 
     final probeContext = _probeContext();
-    final deltaFromRight21 =
-        lastRightCmd21EventMs == null ? 'n/a' : '${nowMs - lastRightCmd21EventMs}';
+    final deltaFromRight21 = lastRightCmd21EventMs == null
+        ? 'n/a'
+        : '${nowMs - lastRightCmd21EventMs}';
 
     print(
       '${DateTime.now()} RightHoldProbe: lr=${res.lr} f5=$notifyIndex label=$eventLabel len=${res.data.length} raw=${res.data.hexString} payload=[$payload] nearRight21=$nearRight21 deltaFromRight21Ms=$deltaFromRight21 mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
     );
   }
 
-  ({String modeLabel, bool hasActiveDisplay, String activeDisplayOwner}) _probeContext() {
+  ({String modeLabel, bool hasActiveDisplay, String activeDisplayOwner})
+      _probeContext() {
     final controller = CompanionController.get;
     return (
       modeLabel: controller.activeMode.label,
@@ -592,8 +620,7 @@ class BleManager {
     }
     ret = BleReceive();
     ret.isTimeout = true;
-    print(
-        "requestRetry $lr timeout of $timeoutMs");
+    print("requestRetry $lr timeout of $timeoutMs");
     return ret;
   }
 
@@ -606,7 +633,8 @@ class BleManager {
     final manager = BleManager.get();
     final targetLegs = manager._targetLegsForBroadcast();
     if (targetLegs.isEmpty) {
-      AppLog.error('${DateTime.now()} Transport: sendBoth skipped -> no available legs');
+      AppLog.error(
+          '${DateTime.now()} Transport: sendBoth skipped -> no available legs');
       return false;
     }
 
@@ -634,7 +662,6 @@ class BleManager {
 
   static Future sendData(Uint8List data,
       {String? lr, Map<String, dynamic>? other, int secondDelay = 100}) async {
-
     var params = <String, dynamic>{
       'data': data,
     };
@@ -649,7 +676,8 @@ class BleManager {
     } else {
       final targetLegs = BleManager.get()._targetLegsForBroadcast();
       if (targetLegs.isEmpty) {
-        AppLog.error('${DateTime.now()} Transport: sendData skipped -> no available legs');
+        AppLog.error(
+            '${DateTime.now()} Transport: sendData skipped -> no available legs');
         return false;
       }
       for (var i = 0; i < targetLegs.length; i++) {
@@ -668,7 +696,6 @@ class BleManager {
       Map<String, dynamic>? other,
       int timeoutMs = 1000, //500,
       bool useNext = false}) async {
-
     var lr0 = lr ?? Proto.lR();
     var completer = Completer<BleReceive>();
     String cmd = "$lr0${data[0].toRadixString(16).padLeft(2, '0')}";
@@ -721,14 +748,16 @@ class BleManager {
     String? lr,
     int? timeoutMs,
   }) async {
-    print("requestList---sendList---${sendList.first}----lr---$lr----timeoutMs----$timeoutMs-");
+    print(
+        "requestList---sendList---${sendList.first}----lr---$lr----timeoutMs----$timeoutMs-");
 
     if (lr != null) {
       return await _requestList(sendList, lr, timeoutMs: timeoutMs);
     } else {
       final targetLegs = BleManager.get()._targetLegsForBroadcast();
       if (targetLegs.isEmpty) {
-        AppLog.error('${DateTime.now()} Transport: requestList skipped -> no available legs');
+        AppLog.error(
+            '${DateTime.now()} Transport: requestList skipped -> no available legs');
         return false;
       }
       var rets = await Future.wait(
@@ -770,7 +799,8 @@ class BleManager {
   bool isLegAvailable(String lr) => legState(lr).isAvailable;
 
   List<String> _targetLegsForBroadcast() {
-    final healthyLegs = ['L', 'R'].where((lr) => legState(lr).isHealthy).toList();
+    final healthyLegs =
+        ['L', 'R'].where((lr) => legState(lr).isHealthy).toList();
     if (healthyLegs.isNotEmpty) {
       return healthyLegs;
     }
@@ -778,10 +808,19 @@ class BleManager {
   }
 
   void _applyConnectionPayload(Map<String, dynamic> payload) {
-    final leftName = payload['leftDeviceName'] as String? ?? legState('L').deviceName;
-    final rightName = payload['rightDeviceName'] as String? ?? legState('R').deviceName;
-    final leftConnected = payload['leftConnected'] as bool? ?? legState('L').connected;
-    final rightConnected = payload['rightConnected'] as bool? ?? legState('R').connected;
+    final channelNumber = (payload['channelNumber'] as String?)?.trim() ??
+        _lastConnectedChannelNumber;
+    if (channelNumber != null && channelNumber.isNotEmpty) {
+      _lastConnectedChannelNumber = channelNumber;
+    }
+    final leftName =
+        payload['leftDeviceName'] as String? ?? legState('L').deviceName;
+    final rightName =
+        payload['rightDeviceName'] as String? ?? legState('R').deviceName;
+    final leftConnected =
+        payload['leftConnected'] as bool? ?? legState('L').connected;
+    final rightConnected =
+        payload['rightConnected'] as bool? ?? legState('R').connected;
 
     _updateLegState(
       'L',
@@ -824,7 +863,8 @@ class BleManager {
 
   void _recordLegAck(String lr, {required int cmd}) {
     final state = legState(lr);
-    final recovered = state.connected && state.status != LegHealthStatus.healthy;
+    final recovered =
+        state.connected && state.status != LegHealthStatus.healthy;
     _updateLegState(
       lr,
       state.copyWith(
@@ -845,7 +885,8 @@ class BleManager {
 
   void _recordHeartbeatSuccess(String lr) {
     final state = legState(lr);
-    final recovered = state.connected && state.status != LegHealthStatus.healthy;
+    final recovered =
+        state.connected && state.status != LegHealthStatus.healthy;
     _updateLegState(
       lr,
       state.copyWith(
@@ -884,7 +925,8 @@ class BleManager {
       source: 'HeartbeatFailure:$reason',
     );
     if (nextStatus == LegHealthStatus.degraded) {
-      AppLog.info('${DateTime.now()} Transport: degraded leg detected -> $lr failures=$failures');
+      AppLog.info(
+          '${DateTime.now()} Transport: degraded leg detected -> $lr failures=$failures');
     }
   }
 
@@ -906,7 +948,8 @@ class BleManager {
         continue;
       }
       final lastSignal = state.lastHeartbeatAt ?? state.lastAckAt;
-      if (lastSignal == null || now.difference(lastSignal) > _heartbeatWarningAge) {
+      if (lastSignal == null ||
+          now.difference(lastSignal) > _heartbeatWarningAge) {
         _recordHeartbeatFailure(lr, reason: 'stale');
       }
       final refreshed = legState(lr);
@@ -932,7 +975,8 @@ class BleManager {
       ),
       source: 'ReconnectAttempt',
     );
-    AppLog.info('${DateTime.now()} Transport: reconnect attempt -> lr=$lr attempt=$attempt');
+    AppLog.info(
+        '${DateTime.now()} Transport: reconnect attempt -> lr=$lr attempt=$attempt');
     final accepted = await BleManager.invokeMethod<bool>(
           'reconnectGlassesLeg',
           {'lr': lr},
@@ -944,7 +988,8 @@ class BleManager {
         legState(lr).copyWith(reconnectInFlight: false),
         source: 'ReconnectRejected',
       );
-      AppLog.error('${DateTime.now()} Transport: reconnect request rejected -> lr=$lr');
+      AppLog.error(
+          '${DateTime.now()} Transport: reconnect request rejected -> lr=$lr');
     }
   }
 
@@ -954,7 +999,8 @@ class BleManager {
     }
     _resyncInFlight = true;
     try {
-      AppLog.info('${DateTime.now()} Transport: resync requested -> source=$source');
+      AppLog.info(
+          '${DateTime.now()} Transport: resync requested -> source=$source');
       await CompanionController.get.handleTransportRecovered(source: source);
     } finally {
       _resyncInFlight = false;
@@ -970,7 +1016,8 @@ class BleManager {
     _legStates[lr] = nextState;
     connectionStatus = _buildConnectionStatus();
     isConnected = legState('L').connected || legState('R').connected;
-    if (previous.connected != nextState.connected || previous.status != nextState.status) {
+    if (previous.connected != nextState.connected ||
+        previous.status != nextState.status) {
       final statusLabel = switch (nextState.status) {
         LegHealthStatus.disconnected => 'disconnected',
         LegHealthStatus.degraded => 'degraded',
@@ -1002,7 +1049,6 @@ class BleManager {
     }
     return 'Connected:\n${describe('L', left)}\n${describe('R', right)}';
   }
-
 }
 
 extension Uint8ListEx on Uint8List {
