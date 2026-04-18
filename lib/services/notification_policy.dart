@@ -26,8 +26,8 @@ class NotificationPolicy {
     if (_blockedPackages.contains(packageName)) {
       return NotificationDisposition.blocked;
     }
-    if (_isLegacyPinnedLiveScoreNotification(notification)) {
-      return NotificationDisposition.suppressed;
+    if (_isProtectedPinnedLiveScoreNotification(notification)) {
+      return NotificationDisposition.protected;
     }
     if (notification.isSamsungAodMirror) {
       return NotificationDisposition.suppressed;
@@ -54,26 +54,6 @@ class NotificationPolicy {
     final disposition = classify(notification);
     return disposition == NotificationDisposition.blocked ||
         disposition == NotificationDisposition.suppressed;
-  }
-
-  static bool shouldProbeLiveScore(CompanionNotification notification) {
-    if (notification.isSamsungAodMirror) {
-      return true;
-    }
-    final combined = _normalize(
-      [
-        notification.title,
-        notification.text,
-        notification.bigText,
-        notification.subText,
-        notification.summaryText,
-        notification.message,
-      ].join(' '),
-    );
-    return RegExp(r'\b\d+\s*[-:]\s*\d+\b').hasMatch(combined) ||
-        RegExp(
-          r'\b(six nations|premier league|wsl|champions league|live|final|half|quarter|inning|period)\b',
-        ).hasMatch(combined);
   }
 
   static bool canDismissFromGlance(CompanionNotification notification) {
@@ -112,7 +92,7 @@ class NotificationPolicy {
             combined.contains('open your phone for details'));
   }
 
-  static bool _isLegacyPinnedLiveScoreNotification(
+  static bool _isProtectedPinnedLiveScoreNotification(
     CompanionNotification notification,
   ) {
     if (_isSamsungAodSportsWrapper(notification)) {

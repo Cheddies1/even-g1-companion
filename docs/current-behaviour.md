@@ -59,10 +59,6 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 - deliberate tilt-up shows the most recent notification
 - the first tilt-up from true idle into Glance recall is intent-gated for `500ms`
 - repeated tilt-up cycles through the feed
-- when idle and a pinned live score exists, Glance can show that score as the idle surface
-- tilt-up from the idle live-score surface clears it and enters normal recall/cycling
-- if a normal notification arrives while the idle live score is showing, the normal notification takes over
-- when Glance returns to true idle and the live score still exists, the score reappears automatically
 - when cycling deliberately:
   - normal notifications are dismissed on the phone
   - normal notifications are also removed from the local app queue
@@ -111,24 +107,21 @@ Glance now applies five notification classes:
 - `suppressed`: not shown in the ordinary Glance queue
 - `protected`: shown in the queue but never dismissed by Glance gestures
 - `normal`: shown and dismissible
-- `liveScore`: separate pinned live-score slot, not a normal queue item
 
 Current handling:
 - blocked:
   - companion app notifications
 - protected:
   - YouTube notifications
+  - pinned/live score notifications that match the sports wrapper or score heuristic
 - suppressed:
   - most ongoing notifications
   - low-value `Open on phone` / `Open your phone for details` style handoff notifications
   - user-suppressed packages such as SmartThings / Samsung Camera when toggled off
-- liveScore:
-  - pinned ongoing sports-style score notifications that match the current live-score classifier
 
 Current safety rules:
 - protected notifications are never dismissed by Glance gestures
 - ongoing notifications are never dismissed by Glance gestures
-- live score notifications are never dismissed by Glance gestures
 
 ### Current package suppression controls
 

@@ -50,13 +50,7 @@ Glance notification policy:
 - suppressed notifications stay out of the Glance queue entirely
 - ongoing notifications are generally suppressed from ordinary Glance display
 - YouTube notifications are protected
-- pinned live scores are treated separately as an idle Glance surface, not as queue items
-
-Glance live score idle display:
-- when Glance mode is idle and a pinned live score exists, the score can be shown as the idle display
-- tilt up clears that idle live-score surface and enters normal Glance recall/cycling
-- if a normal notification arrives, it takes over as usual
-- when Glance becomes idle again, the live score returns automatically if it still exists
+- pinned live score notifications are protected, so they stay visible in the normal Glance flow but are never dismissed by Glance gestures
 
 Glance filtering:
 - notifications that are effectively just `Open on phone` / `Open your phone for details` are suppressed

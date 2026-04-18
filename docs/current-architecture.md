@@ -81,7 +81,6 @@ Current active-display sources:
 
 Owns:
 - recent notification feed
-- separate live-score idle fallback slot
 - text rendering for Glance items
 - auto-pop / deliberate recall timing
 - phone-side dismissal of deliberately viewed notifications
@@ -303,22 +302,17 @@ Notification policy:
 - [lib/services/notification_settings_store.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_settings_store.dart)
 
 Current responsibility:
-- central classification of notifications as `blocked`, `suppressed`, `protected`, `normal`, or `liveScore`
-- one place for package-based Glance suppression, live-score classification, and dismissal protection rules
+- central classification of notifications as `blocked`, `suppressed`, `protected`, or `normal`
+- one place for package-based Glance suppression and dismissal protection rules
 - persistence of user-managed suppressed package preferences
 
 Current built-in rules:
 - block the companion app's own notifications from entering Glance
 - protect YouTube notifications from Glance-driven dismissal side effects
+- protect pinned/live score notifications so they remain visible but non-dismissible
 - suppress most ongoing notifications from the ordinary Glance queue
 - suppress low-value `Open on phone` style handoff notifications
 - seed user-manageable noisy-package suppression for SmartThings / Samsung Camera style churn
-
-Live score handling:
-- pinned live scores are represented separately from the normal Glance queue
-- they are prepared and now used as an idle fallback display surface in Glance mode
-- active queue content always wins over the idle live-score surface
-- when Glance returns to true idle, the live score can reappear automatically if it still exists
 
 ## Background / permanent companion foundation
 

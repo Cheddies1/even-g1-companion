@@ -21,21 +21,11 @@ Working well:
 Working, but still needs real-world observation:
 - Navigate left/right BMP synchronisation under stress
 - Capture mode stop/save reliability on device
-- Live-score idle fallback in Glance
+- Protected notification handling for special ongoing items on Samsung/Android variants
 
 ## Current Priority Areas
 
-1. Live-score idle fallback
-- Current blocker is payload quality, not queue leakage
-- On this phone, Samsung AOD sports wrappers are visible
-- Important discovered signal:
-  - `android.ongoingActivityNoti.secondaryInfo = ambientData:sportsScore:...`
-- A narrow classifier upgrade was just added so Samsung AOD sports wrappers can populate the live-score slot
-- Expectation:
-  - the idle live-score surface may only show thin text like `Premier League`
-  - do not invent score text that does not exist
-
-2. Navigate BMP reliability
+1. Navigate BMP reliability
 - True 1bpp BMP generation is confirmed
 - Real issue is per-leg transport integrity during bulk BMP send
 - Split-eye divergence happens when one leg commits a frame and the other fails CRC
@@ -50,27 +40,28 @@ Working, but still needs real-world observation:
   - modest per-leg pacing/coalescing
 - This still needs more device validation
 
-3. Notification quality
+2. Notification quality
 - Notification policy now supports:
   - `blocked`
   - `suppressed`
   - `protected`
   - `normal`
-  - `liveScore`
 - Ongoing notifications are generally not ordinary Glance items
 - YouTube / media protection is behaving correctly in recent logs
+- pinned/live score notifications now flow through the ordinary Glance queue as `protected`
 - Notification Filters UI exists for package suppression
 - Runtime Settings UI now owns API key, backend overrides, notification filters, and permission shortcuts
 
 ## Recent Confirmed Findings
 
-Live score:
+Pinned score:
 - `com.samsung.android.app.aodservice` is definitely observed
 - In probe logs it exposed:
   - `title=Premier League`
   - `channelId=google_sports_nowbar_ongoing_channel`
   - `android.ongoingActivityNoti.secondaryInfo=ambientData:sportsScore:/g/...`
 - No separate rich source notification with team names / score text has been confirmed yet
+- App-owned live-score work has been parked and removed
 
 YouTube / media:
 - `com.google.android.youtube` is a real package variant on this phone
@@ -101,13 +92,6 @@ Notification classification and routing:
 adb logcat -d | Select-String "NotificationPolicy:"
 ```
 
-Live-score native source discovery:
-
-```powershell
-adb shell setprop log.tag.LiveScoreNotificationDump DEBUG
-adb logcat -d -s LiveScoreNotificationDump
-```
-
 Google Maps payload dump:
 
 ```powershell
@@ -136,7 +120,6 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - notification policy
-  - live-score idle fallback
   - Navigate BMP transport
   - Capture validation
 - point the agent to:

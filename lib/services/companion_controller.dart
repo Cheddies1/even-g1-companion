@@ -7,12 +7,11 @@ import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/capture_service.dart';
 import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/features_services.dart';
-import 'package:demo_ai_even/services/glance_service.dart';
 import 'package:demo_ai_even/services/glance_assistant_service.dart';
+import 'package:demo_ai_even/services/glance_service.dart';
 import 'package:demo_ai_even/services/navigate_service.dart';
 import 'package:demo_ai_even/services/notification_policy.dart';
 import 'package:demo_ai_even/services/notification_settings_store.dart';
-import 'package:demo_ai_even/services/scores_service.dart';
 import 'package:demo_ai_even/services/text_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -86,9 +85,6 @@ class CompanionController extends ChangeNotifier {
     await NotificationSettingsStore.get.init();
     await _refreshNotificationAccess();
     await _hydrateNotifications();
-    await ScoresService.get.init();
-    ScoresService.get.addListener(_handleScoresChanged);
-    await _handleScoresChanged();
     _notificationSubscription = _notificationChannel
         .receiveBroadcastStream(_eventNotifications)
         .listen(_handleNotificationEvent, onError: (Object error) {
@@ -102,7 +98,6 @@ class CompanionController extends ChangeNotifier {
   Future<void> disposeController() async {
     _cancelPendingTiltUpIntent(reason: 'dispose');
     await _notificationSubscription?.cancel();
-    ScoresService.get.removeListener(_handleScoresChanged);
   }
 
   Future<void> refreshCompanionState() async {
@@ -575,7 +570,6 @@ class CompanionController extends ChangeNotifier {
 
     switch (mode) {
       case AppMode.glance:
-        await GlanceService.get.showIdleSurfaceIfAvailable();
         return;
       case AppMode.capture:
         if (!CaptureService.get.isRecording) {
@@ -605,17 +599,6 @@ class CompanionController extends ChangeNotifier {
       '${DateTime.now()} DisplayState: source=$source old=$_lastReportedHasActiveDisplay new=$current owner=$_activeDisplayOwner mode=${_activeMode.label}',
     );
     _lastReportedHasActiveDisplay = current;
-  }
-
-  Future<void> _handleScoresChanged() async {
-    await GlanceService.get.setIdleScoreCards(
-      ScoresService.get.idleCards,
-      autoPop: _activeMode == AppMode.glance,
-    );
-    if (_activeMode == AppMode.glance && ScoresService.get.idleCards.isNotEmpty) {
-      _statusMessage = 'Idle scores ready';
-    }
-    notifyListeners();
   }
 
   Future<void> _handleNotificationEvent(dynamic rawEvent) async {

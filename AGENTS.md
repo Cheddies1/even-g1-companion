@@ -52,6 +52,7 @@ Important:
 - prefer narrow changes over broad rewrites
 - keep text rendering as the primary UX path
 - treat the Android notification listener and foreground service as core app foundations
+- Glance has no special live-score idle surface; pinned/live score notifications stay in the normal protected notification flow
 
 
 ## Read first

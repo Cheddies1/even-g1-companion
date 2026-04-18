@@ -13,9 +13,9 @@ import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
-import android.util.Base64
 import com.example.demo_ai_even.bluetooth.BleChannelHelper
 import java.io.ByteArrayOutputStream
 import java.util.Locale
@@ -24,9 +24,6 @@ class RecentNotificationsListenerService : NotificationListenerService() {
     private val debugTag = "MapsNotificationDump"
     private val isMapsDebugEnabled: Boolean
         get() = Log.isLoggable(debugTag, Log.DEBUG)
-    private val liveScoreDebugTag = "LiveScoreNotificationDump"
-    private val isLiveScoreDebugEnabled: Boolean
-        get() = Log.isLoggable(liveScoreDebugTag, Log.DEBUG)
 
     companion object {
         @Volatile
@@ -74,11 +71,6 @@ class RecentNotificationsListenerService : NotificationListenerService() {
                 ?.filter { it.packageName == "com.google.android.apps.maps" }
                 ?.forEach(::logNavigationNotification)
         }
-        if (isLiveScoreDebugEnabled) {
-            activeNotifications
-                ?.filter(::shouldLogLiveScoreNotification)
-                ?.forEach(::logLiveScoreNotification)
-        }
         val entries = activeNotifications
             ?.mapNotNull { sbn -> sbn.toDashboardNotification() }
             .orEmpty()
@@ -87,7 +79,6 @@ class RecentNotificationsListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         logNavigationNotification(sbn)
-        logLiveScoreNotification(sbn)
         sbn.toDashboardNotification()?.let {
             NotificationFeedStore.upsertEntry(it)
             BleChannelHelper.notificationEvent(
@@ -166,70 +157,6 @@ class RecentNotificationsListenerService : NotificationListenerService() {
         )
 
         Log.d(debugTag, payload.toString())
-    }
-
-    private fun shouldLogLiveScoreNotification(sbn: StatusBarNotification): Boolean {
-        if (!isLiveScoreDebugEnabled) {
-            return false
-        }
-        val packageName = sbn.packageName.lowercase(Locale.ROOT)
-        val extras = sbn.notification.extras ?: Bundle.EMPTY
-        val combined = listOf(
-            extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
-            extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(),
-            extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty(),
-            extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty(),
-            extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty(),
-        ).joinToString(" ").lowercase(Locale.ROOT)
-
-        if (packageName == "com.samsung.android.app.aodservice" ||
-            packageName == "com.samsung.android.aodservice") {
-            return true
-        }
-        if (packageName == "com.android.systemui") {
-            return combined.contains("sports") || combined.contains("league") || combined.contains("score")
-        }
-        if (packageName.startsWith("com.google.android")) {
-            return combined.contains("sports") ||
-                combined.contains("league") ||
-                combined.contains("score") ||
-                combined.contains("premier") ||
-                combined.contains("football")
-        }
-        return false
-    }
-
-    private fun logLiveScoreNotification(sbn: StatusBarNotification) {
-        if (!shouldLogLiveScoreNotification(sbn)) {
-            return
-        }
-
-        val notification = sbn.notification
-        val extras = notification.extras ?: Bundle.EMPTY
-        val payload = linkedMapOf<String, Any?>(
-            "package" to sbn.packageName,
-            "key" to sbn.key,
-            "postTime" to sbn.postTime,
-            "category" to notification.category,
-            "channelId" to notification.channelId,
-            "tag" to sbn.tag,
-            "isOngoing" to sbn.isOngoing,
-            "title" to extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
-            "text" to extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
-            "bigText" to extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
-            "subText" to extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
-            "summaryText" to extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString(),
-            "template" to extras.getString(Notification.EXTRA_TEMPLATE),
-            "extrasKeys" to extras.keySet().sorted(),
-            "ongoingActivity.primaryInfo" to extras.getCharSequence("android.ongoingActivityNoti.primaryInfo")?.toString(),
-            "ongoingActivity.secondaryInfo" to extras.getCharSequence("android.ongoingActivityNoti.secondaryInfo")?.toString(),
-            "ongoingActivity.chipExpandedText" to extras.getCharSequence("android.ongoingActivityNoti.chipExpandedText")?.toString(),
-            "ongoingActivity.chipIcon" to (extras.get("android.ongoingActivityNoti.chipIcon") != null),
-            "ongoingActivity.nowbarIcon" to (extras.get("android.ongoingActivityNoti.nowbarIcon") != null),
-            "ongoingActivity.secondIcon" to (extras.get("android.ongoingActivityNoti.secondIcon") != null),
-            "extras" to summarizeBundle(extras),
-        )
-        Log.d(liveScoreDebugTag, payload.toString())
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
