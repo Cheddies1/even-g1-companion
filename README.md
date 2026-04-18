@@ -50,7 +50,7 @@ Glance notification policy:
 - suppressed notifications stay out of the Glance queue entirely
 - ongoing notifications are generally suppressed from ordinary Glance display
 - YouTube notifications are protected
-- pinned live score notifications are protected, so they stay visible in the normal Glance flow but are never dismissed by Glance gestures
+- pinned live score notifications are protected, so they stay visible in the normal Glance flow but are never dismissed by Glance gestures (no app-owned live-score subsystem exists)
 
 Glance filtering:
 - notifications that are effectively just `Open on phone` / `Open your phone for details` are suppressed

@@ -309,7 +309,7 @@ Current responsibility:
 Current built-in rules:
 - block the companion app's own notifications from entering Glance
 - protect YouTube notifications from Glance-driven dismissal side effects
-- protect pinned/live score notifications so they remain visible but non-dismissible
+- protect pinned/live score notifications (Google pinned live score and Samsung AOD sports wrapper) so they remain visible but non-dismissible
 - suppress most ongoing notifications from the ordinary Glance queue
 - suppress low-value `Open on phone` style handoff notifications
 - seed user-manageable noisy-package suppression for SmartThings / Samsung Camera style churn

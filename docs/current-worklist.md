@@ -60,8 +60,12 @@ Pinned score:
   - `title=Premier League`
   - `channelId=google_sports_nowbar_ongoing_channel`
   - `android.ongoingActivityNoti.secondaryInfo=ambientData:sportsScore:/g/...`
-- No separate rich source notification with team names / score text has been confirmed yet
-- App-owned live-score work has been parked and removed
+- `com.google.android.googlequicksearchbox` is also observed as a pinned live score source:
+  - `channelId=XBLEND_BUBBLE_PERSISTENT_NOTIFICATION`
+  - `text=Pinned live score`
+  - no usable team/score/status payload was exposed in notification extras
+- Live-score as an app-owned feature is parked as unviable for now
+- No pinned-score probe logging should remain in the codebase
 
 YouTube / media:
 - `com.google.android.youtube` is a real package variant on this phone

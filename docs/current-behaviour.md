@@ -113,7 +113,7 @@ Current handling:
   - companion app notifications
 - protected:
   - YouTube notifications
-  - pinned/live score notifications that match the sports wrapper or score heuristic
+  - pinned/live score notifications (Google app pinned live score and Samsung AOD sports wrapper)
 - suppressed:
   - most ongoing notifications
   - low-value `Open on phone` / `Open your phone for details` style handoff notifications

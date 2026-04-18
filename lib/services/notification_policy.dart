@@ -98,6 +98,21 @@ class NotificationPolicy {
     if (_isSamsungAodSportsWrapper(notification)) {
       return true;
     }
+
+    final packageName = _normalize(notification.packageName);
+    if (packageName != 'com.google.android.googlequicksearchbox') {
+      return false;
+    }
+
+    if (!notification.isOngoing) {
+      return false;
+    }
+
+    final channelId = _normalize(notification.channelId);
+    if (channelId.contains('xblend_bubble_persistent_notification')) {
+      return true;
+    }
+
     final combined = _normalize(
       [
         notification.title,
@@ -108,23 +123,7 @@ class NotificationPolicy {
         notification.message,
       ].join(' '),
     );
-    final hasScorePattern = RegExp(r'\b\d+\s*[-:]\s*\d+\b').hasMatch(combined);
-    final hasSportsSignal = RegExp(
-      r'\b(live|final|half|quarter|q[1-4]|inning|innings|period|ft|ht)\b',
-    ).hasMatch(combined);
-    final hasCompetitionSignal = RegExp(
-      r'\b(six nations|premier league|wsl|champions league|fa cup|world cup|league)\b',
-    ).hasMatch(combined);
-    if (!(hasScorePattern && (hasSportsSignal || hasCompetitionSignal))) {
-      return false;
-    }
-    if (notification.isOngoing) {
-      return true;
-    }
-    if (notification.isSamsungAodMirror) {
-      return true;
-    }
-    return false;
+    return combined.contains('pinned live score');
   }
 
   static bool _isSamsungAodSportsWrapper(CompanionNotification notification) {
