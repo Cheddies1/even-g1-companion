@@ -14,12 +14,8 @@ Active app modes:
 - `glance`
 - `capture`
 - `navigate`
-- `chat` (future seam only)
+- `chat`
 
-Current priority:
-- keep Glance stable and fast
-- finish practical Capture mode
-- keep Navigate lean and notification-driven
 
 ## Trusted behaviour
 Only build on event meanings we trust from live testing:
@@ -46,17 +42,17 @@ Important:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt)
 
+## Architectural guardrails
+- mode ownership must stay in CompanionController
+- do not route gesture behaviour directly inside feature services
+- prefer adding narrow hooks over duplicating control flow
+
 ## Constraints
 - preserve working BLE scan/connect/pairing and protocol framing
 - prefer narrow changes over broad rewrites
 - keep text rendering as the primary UX path
 - treat the Android notification listener and foreground service as core app foundations
 
-## Known open edges
-- Glance can still be stressed by heavy notification churn; left/right sync needs ongoing observation
-- Capture mode has a plausible WAV path, but stop semantics still need device validation
-- Navigate mode is still a narrow Google Maps notification interpretation
-- Chat mode is architected only, not implemented
 
 ## Read first
 - [README.md](README.md)

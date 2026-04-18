@@ -12,6 +12,7 @@ import 'package:demo_ai_even/services/glance_assistant_service.dart';
 import 'package:demo_ai_even/services/navigate_service.dart';
 import 'package:demo_ai_even/services/notification_policy.dart';
 import 'package:demo_ai_even/services/notification_settings_store.dart';
+import 'package:demo_ai_even/services/scores_service.dart';
 import 'package:demo_ai_even/services/text_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -85,6 +86,9 @@ class CompanionController extends ChangeNotifier {
     await NotificationSettingsStore.get.init();
     await _refreshNotificationAccess();
     await _hydrateNotifications();
+    await ScoresService.get.init();
+    ScoresService.get.addListener(_handleScoresChanged);
+    await _handleScoresChanged();
     _notificationSubscription = _notificationChannel
         .receiveBroadcastStream(_eventNotifications)
         .listen(_handleNotificationEvent, onError: (Object error) {
@@ -98,6 +102,7 @@ class CompanionController extends ChangeNotifier {
   Future<void> disposeController() async {
     _cancelPendingTiltUpIntent(reason: 'dispose');
     await _notificationSubscription?.cancel();
+    ScoresService.get.removeListener(_handleScoresChanged);
   }
 
   Future<void> refreshCompanionState() async {
@@ -602,6 +607,17 @@ class CompanionController extends ChangeNotifier {
     _lastReportedHasActiveDisplay = current;
   }
 
+  Future<void> _handleScoresChanged() async {
+    await GlanceService.get.setIdleScoreCards(
+      ScoresService.get.idleCards,
+      autoPop: _activeMode == AppMode.glance,
+    );
+    if (_activeMode == AppMode.glance && ScoresService.get.idleCards.isNotEmpty) {
+      _statusMessage = 'Idle scores ready';
+    }
+    notifyListeners();
+  }
+
   Future<void> _handleNotificationEvent(dynamic rawEvent) async {
     if (rawEvent is! Map) {
       return;
@@ -636,21 +652,6 @@ class CompanionController extends ChangeNotifier {
         await NavigateService.get.showLatest();
       }
       _statusMessage = 'Navigation updated';
-      notifyListeners();
-      return;
-    }
-
-    if (classification == NotificationDisposition.liveScore) {
-      await GlanceService.get.upsertLiveScore(
-        notification,
-        autoPop: _activeMode == AppMode.glance,
-      );
-      _logNotificationPolicy(
-        notification,
-        classification: classification,
-        routing: 'added-to-live-score-slot',
-      );
-      _statusMessage = 'Live score updated';
       notifyListeners();
       return;
     }
@@ -693,11 +694,9 @@ class CompanionController extends ChangeNotifier {
               ?.whereType<Map>()
               .map(CompanionNotification.fromMap)
               .where((notification) {
-            return !NotificationPolicy.shouldBlockFromGlance(notification) &&
-                !NotificationPolicy.isLiveScore(notification);
+            return !NotificationPolicy.shouldBlockFromGlance(notification);
           }).toList() ??
           const <CompanionNotification>[];
-      CompanionNotification? liveScore;
       if (rawNotifications != null) {
         for (final raw in rawNotifications.whereType<Map>()) {
           final notification = CompanionNotification.fromMap(raw);
@@ -707,26 +706,9 @@ class CompanionController extends ChangeNotifier {
             classification: classification,
             routing: 'hydrate-candidate',
           );
-          if (classification == NotificationDisposition.liveScore) {
-            final previous = liveScore;
-            liveScore = liveScore == null
-                ? notification
-                : NotificationPolicy.preferLiveScoreSource(
-                    liveScore,
-                    notification,
-                  );
-            _logNotificationPolicy(
-              notification,
-              classification: classification,
-              routing: previous == liveScore
-                  ? 'deduped'
-                  : 'added-to-live-score-slot',
-            );
-          }
         }
       }
       GlanceService.get.hydrateNotifications(notifications);
-      GlanceService.get.hydrateLiveScore(liveScore);
       for (final notification in notifications) {
         if (NavigateService.get.acceptsNotification(notification)) {
           await NavigateService.get.ingestNotification(notification);

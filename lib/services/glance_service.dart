@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/companion_notification.dart';
+import 'package:demo_ai_even/models/glance_idle_score_card.dart';
 import 'package:demo_ai_even/services/notification_policy.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
@@ -13,12 +14,15 @@ class GlanceService {
   static GlanceService get get => _instance ??= GlanceService._();
 
   static const _displayDuration = Duration(seconds: 5);
+  static const _idleScoreRotationDuration = Duration(seconds: 7);
   static const _maxNotifications = 20;
 
   final List<CompanionNotification> _notifications = [];
-  CompanionNotification? _liveScoreNotification;
+  final List<GlanceIdleScoreCard> _idleScoreCards = [];
   Timer? _clearTimer;
+  Timer? _idleScoreRotationTimer;
   int _currentIndex = 0;
+  int _idleScoreIndex = 0;
   bool _isVisible = false;
   bool _isShowingIdleLiveScore = false;
   bool _preferQueueView = false;
@@ -27,7 +31,6 @@ class GlanceService {
 
   bool get isVisible => _isVisible;
   int get notificationCount => _notifications.length;
-  CompanionNotification? get liveScoreNotification => _liveScoreNotification;
   bool get isShowingIdleLiveScore => _isShowingIdleLiveScore;
   bool get isInActiveRecall => _isVisible && !_isShowingIdleLiveScore;
 
@@ -48,8 +51,51 @@ class GlanceService {
     );
   }
 
-  void hydrateLiveScore(CompanionNotification? notification) {
-    _liveScoreNotification = notification;
+  Future<void> setIdleScoreCards(
+    List<GlanceIdleScoreCard> cards, {
+    bool autoPop = true,
+  }) async {
+    final currentId = _currentIdleScoreCard()?.id;
+    _idleScoreCards
+      ..clear()
+      ..addAll(cards);
+
+    if (_idleScoreCards.isEmpty) {
+      _idleScoreIndex = 0;
+      _idleScoreRotationTimer?.cancel();
+      _idleScoreRotationTimer = null;
+      if (_isShowingIdleLiveScore && _notifications.isEmpty) {
+        _isVisible = false;
+        _isShowingIdleLiveScore = false;
+        _preferQueueView = false;
+        await TextService.get.stopTextSendingByOS();
+        await Proto.exit();
+        print('${DateTime.now()} Glance: cleared idle score surface');
+      }
+      return;
+    }
+
+    if (currentId != null) {
+      final preservedIndex =
+          _idleScoreCards.indexWhere((card) => card.id == currentId);
+      _idleScoreIndex = preservedIndex >= 0 ? preservedIndex : 0;
+    } else if (_idleScoreIndex >= _idleScoreCards.length) {
+      _idleScoreIndex = 0;
+    }
+
+    print(
+      '${DateTime.now()} Glance: idle score cards updated -> count=${_idleScoreCards.length}',
+    );
+
+    if (autoPop && !_isVisible && _notifications.isEmpty) {
+      await showIdleSurfaceIfAvailable();
+      return;
+    }
+    if (_isShowingIdleLiveScore) {
+      await showIdleSurfaceIfAvailable();
+      return;
+    }
+    _syncIdleScoreRotation();
   }
 
   Future<void> ingestNotification(
@@ -79,41 +125,13 @@ class GlanceService {
     }
   }
 
-  Future<void> upsertLiveScore(
-    CompanionNotification notification, {
-    bool autoPop = true,
-  }) async {
-    final current = _liveScoreNotification;
-    if (current != null &&
-        _preferLiveScoreCandidate(current, notification) == current) {
-      print(
-        '${DateTime.now()} Glance: live score kept existing slot -> ${current.packageName}',
-      );
-      return;
-    }
-    _liveScoreNotification = notification;
-    print(
-      '${DateTime.now()} Glance: live score updated -> ${notification.source}',
-    );
-    if (autoPop && !_isVisible && _notifications.isEmpty) {
-      await showIdleSurfaceIfAvailable();
-      return;
-    }
-    if (_isShowingIdleLiveScore) {
-      await showIdleSurfaceIfAvailable();
-    }
-  }
-
   Future<void> removeNotificationByKey(String key) async {
     var shouldRefresh = false;
     final current = _currentNotification();
-    if (current?.key == key || _liveScoreNotification?.key == key) {
+    if (current?.key == key) {
       shouldRefresh = _isVisible;
     }
     _notifications.removeWhere((item) => item.key == key);
-    if (_liveScoreNotification?.key == key) {
-      _liveScoreNotification = null;
-    }
     if (_notifications.isEmpty) {
       _currentIndex = 0;
     } else if (_currentIndex >= _notifications.length) {
@@ -129,7 +147,7 @@ class GlanceService {
           _pendingDismissKey = null;
           await TextService.get.stopTextSendingByOS();
           await Proto.exit();
-          print('${DateTime.now()} Glance: cleared after live score removal');
+          print('${DateTime.now()} Glance: cleared after notification removal');
         }
       } else {
         await _enqueueRender(autoHide: false, markInteracted: false);
@@ -166,6 +184,8 @@ class GlanceService {
     final wasShowingIdleLiveScore = _isShowingIdleLiveScore;
     _clearTimer?.cancel();
     _clearTimer = null;
+    _idleScoreRotationTimer?.cancel();
+    _idleScoreRotationTimer = null;
     await _dismissPendingNotificationOnPhone();
     _isShowingIdleLiveScore = false;
     _preferQueueView = false;
@@ -179,7 +199,13 @@ class GlanceService {
   }
 
   Future<bool> showIdleSurfaceIfAvailable() async {
-    if (_liveScoreNotification == null || _notifications.isNotEmpty) {
+    if (_idleScoreCards.isEmpty || _notifications.isNotEmpty) {
+      _syncIdleScoreRotation();
+      return false;
+    }
+    final currentCard = _currentIdleScoreCard();
+    if (currentCard == null) {
+      _syncIdleScoreRotation();
       return false;
     }
     _clearTimer?.cancel();
@@ -188,8 +214,8 @@ class GlanceService {
     _isShowingIdleLiveScore = true;
     _pendingDismissKey = null;
     _preferQueueView = false;
-    await TextService.get
-        .startSendText(_buildLiveScoreText(_liveScoreNotification!));
+    await TextService.get.startSendText(currentCard.displayText);
+    _syncIdleScoreRotation();
     print('${DateTime.now()} Glance: render -> idle-live-score');
     return true;
   }
@@ -213,7 +239,7 @@ class GlanceService {
     _isVisible = true;
     _isShowingIdleLiveScore = _currentNotification() == null &&
         !_preferQueueView &&
-        _liveScoreNotification != null;
+        _currentIdleScoreCard() != null;
     await TextService.get.startSendText(text);
     if (markInteracted) {
       final current = _currentNotification();
@@ -230,6 +256,7 @@ class GlanceService {
       _clearTimer?.cancel();
       _clearTimer = null;
     }
+    _syncIdleScoreRotation();
     print(
       '${DateTime.now()} Glance: render -> index=$_currentIndex count=${_notifications.length}',
     );
@@ -240,25 +267,13 @@ class GlanceService {
     final minute = now.minute.toString().padLeft(2, '0');
     final current = _currentNotification();
     if (current == null) {
-      final liveScore = _liveScoreNotification;
+      final liveScore = _currentIdleScoreCard();
       if (liveScore != null && !_preferQueueView) {
-        return _buildLiveScoreText(liveScore);
+        return liveScore.displayText;
       }
       return '$hour:$minute\n--\nNo notifications';
     }
     return '$hour:$minute\n--\n${current.source}\n${current.message}';
-  }
-
-  String _buildLiveScoreText(CompanionNotification notification) {
-    final compact = notification.message.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return compact.isNotEmpty ? compact : notification.source;
-  }
-
-  CompanionNotification _preferLiveScoreCandidate(
-    CompanionNotification current,
-    CompanionNotification candidate,
-  ) {
-    return NotificationPolicy.preferLiveScoreSource(current, candidate);
   }
 
   CompanionNotification? _currentNotification() {
@@ -266,6 +281,16 @@ class GlanceService {
       return null;
     }
     return _notifications[_currentIndex];
+  }
+
+  GlanceIdleScoreCard? _currentIdleScoreCard() {
+    if (_idleScoreCards.isEmpty) {
+      return null;
+    }
+    if (_idleScoreIndex >= _idleScoreCards.length) {
+      _idleScoreIndex = 0;
+    }
+    return _idleScoreCards[_idleScoreIndex];
   }
 
   Future<void> _dismissPendingNotificationOnPhone() async {
@@ -320,5 +345,31 @@ class GlanceService {
     _clearTimer = Timer(_displayDuration, () {
       close();
     });
+  }
+
+  void _syncIdleScoreRotation() {
+    final shouldRotate = _isShowingIdleLiveScore &&
+        !_preferQueueView &&
+        _currentNotification() == null &&
+        _idleScoreCards.length > 1;
+    if (!shouldRotate) {
+      _idleScoreRotationTimer?.cancel();
+      _idleScoreRotationTimer = null;
+      return;
+    }
+    _idleScoreRotationTimer ??= Timer.periodic(
+      _idleScoreRotationDuration,
+      (_) async {
+        if (!_isShowingIdleLiveScore ||
+            _preferQueueView ||
+            _currentNotification() != null ||
+            _idleScoreCards.length <= 1) {
+          _syncIdleScoreRotation();
+          return;
+        }
+        _idleScoreIndex = (_idleScoreIndex + 1) % _idleScoreCards.length;
+        await showIdleSurfaceIfAvailable();
+      },
+    );
   }
 }

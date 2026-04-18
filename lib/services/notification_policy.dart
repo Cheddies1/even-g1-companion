@@ -6,7 +6,6 @@ enum NotificationDisposition {
   suppressed,
   protected,
   normal,
-  liveScore,
 }
 
 class NotificationPolicy {
@@ -27,8 +26,8 @@ class NotificationPolicy {
     if (_blockedPackages.contains(packageName)) {
       return NotificationDisposition.blocked;
     }
-    if (_isPinnedLiveScore(notification)) {
-      return NotificationDisposition.liveScore;
+    if (_isLegacyPinnedLiveScoreNotification(notification)) {
+      return NotificationDisposition.suppressed;
     }
     if (notification.isSamsungAodMirror) {
       return NotificationDisposition.suppressed;
@@ -57,10 +56,6 @@ class NotificationPolicy {
         disposition == NotificationDisposition.suppressed;
   }
 
-  static bool isLiveScore(CompanionNotification notification) {
-    return classify(notification) == NotificationDisposition.liveScore;
-  }
-
   static bool shouldProbeLiveScore(CompanionNotification notification) {
     if (notification.isSamsungAodMirror) {
       return true;
@@ -76,8 +71,9 @@ class NotificationPolicy {
       ].join(' '),
     );
     return RegExp(r'\b\d+\s*[-:]\s*\d+\b').hasMatch(combined) ||
-        RegExp(r'\b(six nations|premier league|wsl|champions league|live|final|half|quarter|inning|period)\b')
-            .hasMatch(combined);
+        RegExp(
+          r'\b(six nations|premier league|wsl|champions league|live|final|half|quarter|inning|period)\b',
+        ).hasMatch(combined);
   }
 
   static bool canDismissFromGlance(CompanionNotification notification) {
@@ -86,19 +82,6 @@ class NotificationPolicy {
 
   static bool isDismissibleInGlance(CompanionNotification notification) {
     return classify(notification) == NotificationDisposition.normal;
-  }
-
-  static CompanionNotification preferLiveScoreSource(
-    CompanionNotification current,
-    CompanionNotification candidate,
-  ) {
-    if (current.isSamsungAodMirror && !candidate.isSamsungAodMirror) {
-      return candidate;
-    }
-    if (!current.isSamsungAodMirror && candidate.isSamsungAodMirror) {
-      return current;
-    }
-    return candidate.postedAt.isAfter(current.postedAt) ? candidate : current;
   }
 
   static bool _shouldSuppressOpenOnPhone(CompanionNotification notification) {
@@ -129,7 +112,9 @@ class NotificationPolicy {
             combined.contains('open your phone for details'));
   }
 
-  static bool _isPinnedLiveScore(CompanionNotification notification) {
+  static bool _isLegacyPinnedLiveScoreNotification(
+    CompanionNotification notification,
+  ) {
     if (_isSamsungAodSportsWrapper(notification)) {
       return true;
     }

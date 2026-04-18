@@ -139,7 +139,7 @@ Current safety rules:
 
 ## Capture mode
 
-Capture is the most important practical mode after Glance, but it is not yet fully proven.
+Capture is practically usable and has survived at least one long real-world recording session, but stop/save semantics still need broader confidence.
 
 ### Intended behavior
 
@@ -148,7 +148,7 @@ Capture is the most important practical mode after Glance, but it is not yet ful
 - recording + double tap -> stop and save
 - idle + double tap -> no-op
 - idle display shows `*`
-- show a recording indicator while active
+- show a recording `REC` indicator while active
 - show a short save confirmation after recording completes
 
 ### Current technical status

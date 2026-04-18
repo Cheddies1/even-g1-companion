@@ -1,7 +1,10 @@
+import 'package:demo_ai_even/models/score_catalog.dart';
 import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/assistant_backend_config.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/notification_settings_store.dart';
+import 'package:demo_ai_even/services/score_settings_store.dart';
+import 'package:demo_ai_even/services/scores_service.dart';
 import 'package:flutter/material.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -30,6 +33,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _transcriptionModelController = TextEditingController();
     AppSettingsStore.get.addListener(_handleStoreChanged);
     NotificationSettingsStore.get.addListener(_handleStoreChanged);
+    ScoreSettingsStore.get.addListener(_handleStoreChanged);
+    ScoresService.get.addListener(_handleStoreChanged);
     CompanionController.get.addListener(_handleStoreChanged);
     _loadInitialValues();
   }
@@ -37,6 +42,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _loadInitialValues() async {
     await AppSettingsStore.get.init();
     await NotificationSettingsStore.get.init();
+    await ScoreSettingsStore.get.init();
+    await ScoresService.get.init();
     await CompanionController.get.refreshCompanionState();
     if (!mounted) {
       return;
@@ -292,6 +299,87 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildScoresSection() {
+    final settings = ScoreSettingsStore.get;
+    final lastRefresh = ScoresService.get.lastSuccessAt?.toLocal();
+    final lastRefreshLabel = lastRefresh == null
+        ? 'Not fetched yet'
+        : '${lastRefresh.hour.toString().padLeft(2, '0')}:${lastRefresh.minute.toString().padLeft(2, '0')}';
+    return _buildSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Scores',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'App-owned rugby scores for Glance idle. Live matches rotate automatically. If nothing is live, the next kickoff appears only within the last hour before start.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF9AB7C8),
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Last refresh: $lastRefreshLabel',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF7C8C99),
+                ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Competitions',
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 8),
+          ...ScoreCatalog.competitions.map(
+            (competition) => CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: settings.isCompetitionFollowed(competition.id),
+              title: Text(competition.displayName),
+              subtitle: Text(
+                competition.subtitle,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF7C8C99),
+                    ),
+              ),
+              onChanged: (value) async {
+                await ScoreSettingsStore.get.setCompetitionFollowed(
+                  competition.id,
+                  value ?? false,
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Teams',
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 8),
+          ...ScoreCatalog.teams.map(
+            (team) => CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: settings.isTeamFollowed(team.id),
+              title: Text(team.displayName),
+              onChanged: (value) async {
+                await ScoreSettingsStore.get.setTeamFollowed(
+                  team.id,
+                  value ?? false,
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPermissionsSection() {
     final controller = CompanionController.get;
     return _buildSectionCard(
@@ -338,6 +426,8 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 _buildApiSection(),
                 const SizedBox(height: 16),
+                _buildScoresSection(),
+                const SizedBox(height: 16),
                 _buildNotificationFiltersSection(),
                 const SizedBox(height: 16),
                 _buildPermissionsSection(),
@@ -350,6 +440,8 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     AppSettingsStore.get.removeListener(_handleStoreChanged);
     NotificationSettingsStore.get.removeListener(_handleStoreChanged);
+    ScoreSettingsStore.get.removeListener(_handleStoreChanged);
+    ScoresService.get.removeListener(_handleStoreChanged);
     CompanionController.get.removeListener(_handleStoreChanged);
     _apiKeyController.dispose();
     _baseUrlController.dispose();
