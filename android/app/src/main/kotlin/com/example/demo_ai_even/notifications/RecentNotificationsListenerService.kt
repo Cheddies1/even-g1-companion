@@ -366,6 +366,7 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             .filter { it.startsWith("android.ongoingActivityNoti.") }
             .associateWith { key -> summarizeValue(extras.get(key)) }
 
+        val explicitExtras = collectExplicitPinnedScoreExtras(extras)
         val scoreLikeExtras = collectScoreLikeExtras(extras)
 
         probeLog(
@@ -385,12 +386,41 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             }
         )
         probeLog("extrasKeys=$extrasKeys")
+        if (explicitExtras.isNotEmpty()) {
+            probeLog("explicitExtras=$explicitExtras")
+        }
         if (ongoingActivityFields.isNotEmpty()) {
             probeLog("ongoingActivityNoti=$ongoingActivityFields")
         }
         if (scoreLikeExtras.isNotEmpty()) {
             probeLog("scoreLikeExtras=$scoreLikeExtras")
         }
+    }
+
+    private fun collectExplicitPinnedScoreExtras(extras: Bundle): Map<String, Any?> {
+        val keysToProbe = listOf(
+            Notification.EXTRA_INFO_TEXT,
+            "android.shortCriticalText",
+            Notification.EXTRA_TEXT_LINES,
+            Notification.EXTRA_TITLE_BIG,
+            Notification.EXTRA_CONVERSATION_TITLE,
+            Notification.EXTRA_MESSAGES,
+            Notification.EXTRA_PEOPLE_LIST,
+            Notification.EXTRA_REMOTE_INPUT_HISTORY,
+            Notification.EXTRA_PROGRESS,
+            Notification.EXTRA_PROGRESS_MAX,
+            Notification.EXTRA_PROGRESS_INDETERMINATE,
+            Notification.EXTRA_SHOW_CHRONOMETER,
+            Notification.EXTRA_SHOW_WHEN,
+        )
+
+        val results = linkedMapOf<String, Any?>()
+        for (key in keysToProbe) {
+            if (extras.containsKey(key)) {
+                results[key] = summarizeValue(extras.get(key))
+            }
+        }
+        return results
     }
 
     private fun probeLog(message: String) {
