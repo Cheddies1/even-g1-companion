@@ -101,7 +101,9 @@ Areas where it aligns well:
 
 Areas where caution is still required:
 - single-tap assumptions
-- many battery/state labels
+- some battery/state labels (the Python SDK's `0x09` "Glasses fully charged"
+  and `0x0f` "Cradle fully charged" labels are stale: in current firmware
+  byte 2 carries an actual percentage rather than a binary "charged" flag)
 - lack of meaningful `R21` QuickNote modeling
 
 ## Legacy demo code interpretation
@@ -116,10 +118,18 @@ That material should be preserved as reference, but not treated as automatically
 ## What remains unknown
 
 Still not mapped confidently:
-- some background/state `F5` values such as `06`, `07`, `08`, `11`, `12`, `14`, `15`, `32`
+- some background/state `F5` values such as `11`, `14`, `15`, `32`
 - detailed meaning of `0x22` payload fields
-- whether any stable battery percentage/status API exists
 - exact firmware stop semantics for mic/capture in the current app path
+
+Recently resolved:
+- battery percentage and wear state are now mapped — see the "Battery and wear
+  state" sections in [even-g1-event-mapping.md](even-g1-event-mapping.md) and
+  [protocol-reference.md](protocol-reference.md). Source data, parser, and
+  analysis live in [/logs/bluetooth/](/c:/Users/EddieJohnson/projects/EvenDemoApp/logs/bluetooth/).
+- `F5 06`, `F5 07`, `F5 08`, `F5 0A`, `F5 0B`, `F5 0F`, `F5 12` are no longer
+  unknown: wear state, transitioning, cradle states, glasses %, case %, and
+  brightness echo respectively.
 
 ## Why this file exists
 

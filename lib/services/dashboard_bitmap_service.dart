@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/dashboard_service.dart';
 import 'package:demo_ai_even/services/features_services.dart';
 import 'package:flutter/material.dart';
@@ -48,8 +49,9 @@ class DashboardBitmapService {
     final cacheKey = _cacheKey(now, notification);
     final bmpBytes =
         _bmpCache[cacheKey] ?? await _buildBmpBytes(now: now, notification: notification);
-    print(
-      '${DateTime.now()} Dashboard BMP: render complete -> bytes=${bmpBytes.length}, source=${notification?.source ?? 'Notifications'}',
+    AppLog.debug(
+      '${DateTime.now()} render complete -> bytes=${bmpBytes.length}, source=${notification?.source ?? 'Notifications'}',
+      tag: 'DashboardBmp',
     );
     await FeaturesServices().sendBmpData(bmpBytes);
   }

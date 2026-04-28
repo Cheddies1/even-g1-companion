@@ -40,14 +40,17 @@ class CaptureService {
 
     final started = await BleManager.invokeMethod<bool>('startGlassesCapture');
     if (started != true) {
-      print('${DateTime.now()} Capture: failed to start native recorder');
+      AppLog.error(
+        '${DateTime.now()} failed to start native recorder',
+        tag: 'Capture',
+      );
       return false;
     }
 
     final (_, micStarted) = await Proto.micOn(lr: 'R');
     if (!micStarted) {
       await BleManager.invokeMethod('cancelGlassesCapture');
-      print('${DateTime.now()} Capture: mic start failed');
+      AppLog.error('${DateTime.now()} mic start failed', tag: 'Capture');
       return false;
     }
 
@@ -55,7 +58,7 @@ class CaptureService {
     markDisplayVisible(value: true, source: 'Capture.startRecording');
     _displayTimer?.cancel();
     await TextService.get.startSendText('REC');
-    print('${DateTime.now()} Capture: recording started');
+    AppLog.info('${DateTime.now()} recording started', tag: 'Capture');
     return true;
   }
 
@@ -66,7 +69,7 @@ class CaptureService {
     _displayTimer?.cancel();
     markDisplayVisible(value: true, source: 'Capture.showReadyIndicator');
     await TextService.get.startSendText('*');
-    print('${DateTime.now()} Capture: ready indicator shown');
+    AppLog.debug('${DateTime.now()} ready indicator shown', tag: 'Capture');
   }
 
   Future<String?> stopAndSave() async {
@@ -93,7 +96,10 @@ class CaptureService {
       await TextService.get.stopTextSendingByOS();
       await Proto.exit();
     });
-    print('${DateTime.now()} Capture: recording saved -> $fileName');
+    AppLog.info(
+      '${DateTime.now()} recording saved -> $fileName',
+      tag: 'Capture',
+    );
     return fileName;
   }
 
@@ -109,6 +115,6 @@ class CaptureService {
     await BleManager.invokeMethod('cancelGlassesCapture');
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
-    print('${DateTime.now()} Capture: recording cancelled');
+    AppLog.info('${DateTime.now()} recording cancelled', tag: 'Capture');
   }
 }

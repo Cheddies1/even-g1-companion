@@ -1,4 +1,5 @@
 
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:flutter/services.dart';
 
 
@@ -35,7 +36,7 @@ class Utils {
       final ByteData data = await rootBundle.load(imageUrl);
       return data.buffer.asUint8List();
     } catch (e) {
-      print("Error loading BMP file: $e");
+      AppLog.error('Error loading BMP file: $e', tag: 'Utils');
       return Uint8List(0);
     }
   }

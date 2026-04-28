@@ -55,7 +55,7 @@ class NavigateService {
     _renderDirty = false;
     _lastRenderUsedBitmap = false;
     await TextService.get.startSendText('Open Google Maps\nto start navigation');
-    print('${DateTime.now()} Navigate: render -> idle-prompt');
+    AppLog.debug('${DateTime.now()} render -> idle-prompt', tag: 'Navigate');
   }
 
   Future<void> showDetail() async {
@@ -87,7 +87,10 @@ class NavigateService {
     }
     _latestInstruction = null;
     await close();
-    print('${DateTime.now()} Navigate: cleared after notification removal');
+    AppLog.info(
+      '${DateTime.now()} cleared after notification removal',
+      tag: 'Navigate',
+    );
     return true;
   }
 
@@ -99,7 +102,7 @@ class NavigateService {
     _renderDirty = false;
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
-    print('${DateTime.now()} Navigate: closed');
+    AppLog.info('${DateTime.now()} closed', tag: 'Navigate');
   }
 
   Future<void> leaveMode() async {
@@ -145,14 +148,14 @@ class NavigateService {
       await TextService.get.stopTextSendingByOS();
       await NavigateBitmapService.get.renderAndSend(notification);
       _lastRenderUsedBitmap = true;
-      print('${DateTime.now()} Navigate: render -> bitmap-card');
+      AppLog.debug('${DateTime.now()} render -> bitmap-card', tag: 'Navigate');
       return;
     }
 
     final text = _buildTextFallback(notification);
     await TextService.get.startSendText(text);
     _lastRenderUsedBitmap = false;
-    print('${DateTime.now()} Navigate: render -> text-fallback');
+    AppLog.debug('${DateTime.now()} render -> text-fallback', tag: 'Navigate');
   }
 
   bool _shouldUseBitmap(CompanionNotification notification) {

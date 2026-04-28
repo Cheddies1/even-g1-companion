@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/controllers/evenai_model_controller.dart';
 import 'package:demo_ai_even/services/api_services_deepseek.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -72,7 +73,7 @@ class EvenAI {
       var txt = event["script"] as String;
       combinedText = txt;
     }, onError: (error) {
-      print("Error in event: $error");
+      AppLog.error('Error in event: $error', tag: 'EvenAI');
     });
   }
 
@@ -108,7 +109,10 @@ class EvenAI {
   void startRecordingTimer() {
     _recordingTimer = Timer(Duration(seconds: maxRecordingDuration), () {
       if (isReceivingAudio) {
-        print("${DateTime.now()} Even AI startRecordingTimer-----exit-----");
+        AppLog.debug(
+          '${DateTime.now()} startRecordingTimer -> exit',
+          tag: 'EvenAI',
+        );
         clear();
         //Proto.exit();
       } else {
@@ -120,7 +124,7 @@ class EvenAI {
 
   // 收到眼镜端Even AI录音结束指令
   Future<void> recordOverByOS() async {
-    print('${DateTime.now()} EvenAI -------recordOverByOS-------');
+    AppLog.debug('${DateTime.now()} recordOverByOS', tag: 'EvenAI');
 
     int currentTime = DateTime.now().millisecondsSinceEpoch;
     if (currentTime - _lastStopTime < stopTimeGap) {
@@ -135,7 +139,10 @@ class EvenAI {
     await BleManager.invokeMethod("stopEvenAI");
     await Future.delayed(Duration(seconds: 2)); // todo
 
-    print("recordOverByOS----startSendReply---pre------combinedText-------*$combinedText*---");
+    AppLog.debug(
+      'recordOverByOS startSendReply pre combinedText="$combinedText"',
+      tag: 'EvenAI',
+    );
 
     if (combinedText.isEmpty) {
       
@@ -148,7 +155,10 @@ class EvenAI {
     final apiService = ApiDeepSeekService();
     String answer = await apiService.sendChatRequest(combinedText);
   
-    print("recordOverByOS----startSendReply---combinedText-------*$combinedText*-----answer----$answer----");
+    AppLog.debug(
+      'recordOverByOS startSendReply combinedText="$combinedText" answer=$answer',
+      tag: 'EvenAI',
+    );
 
     updateDynamicText("$combinedText\n\n$answer");
     isEvenAISyncing.value = false;
@@ -157,7 +167,10 @@ class EvenAI {
   }
 
   void saveQuestionItem(String title, String content) {
-    print("saveQuestionItem----title----$title----content---$content-");
+    AppLog.debug(
+      'saveQuestionItem title=$title content=$content',
+      tag: 'EvenAI',
+    );
     final controller = Get.find<EvenaiModelController>();
     controller.addItem(title, content);
   }
@@ -437,8 +450,10 @@ class EvenAI {
 
   Future openEvenAIMic() async {
     final (micStartMs, isStartSucc) = await Proto.micOn(lr: "R"); 
-    print(
-        '${DateTime.now()} openEvenAIMic---isStartSucc----$isStartSucc----micStartMs---$micStartMs---');
+    AppLog.debug(
+      '${DateTime.now()} openEvenAIMic isStartSucc=$isStartSucc micStartMs=$micStartMs',
+      tag: 'EvenAI',
+    );
     
     if (!isStartSucc && isReceivingAudio && isRunning) {
       await Future.delayed(Duration(seconds: 1));
@@ -451,7 +466,10 @@ class EvenAI {
   Future<bool> sendEvenAIReply(
       String text, int type, int status, int pos) async {
     // todo
-    print('${DateTime.now()} sendEvenAIReply---text----$text-----type---$type---status---$status----pos---$pos-');
+    AppLog.debug(
+      '${DateTime.now()} sendEvenAIReply text=$text type=$type status=$status pos=$pos',
+      tag: 'EvenAI',
+    );
     if (!isRunning) {
       return false;
     }

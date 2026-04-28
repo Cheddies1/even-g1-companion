@@ -44,6 +44,18 @@ Glance is currently the main working user-facing feature.
 Glance is text-only by design:
 
 ```text
+14:32  85%
+--
+AppName
+Notification body
+```
+
+The glasses battery percentage is appended to the time line whenever a battery
+value has been received from the glasses. If the glasses have not yet pushed a
+battery reading (e.g. immediately after connect, before the first `F5 0A`), the
+time line is rendered without the percentage:
+
+```text
 14:32
 --
 AppName
@@ -339,14 +351,18 @@ Leaving a mode through quick switching follows the same cleanup rules as normal 
 ## Logging
 
 Current logging posture:
-- operational lifecycle and error logs remain enabled
-- verbose investigation logs are disabled by default
+- all Flutter-side logs route through a single `AppLog` helper
+- operational lifecycle (`AppLog.info`) and error (`AppLog.error`) logs remain enabled
+- verbose investigation logs (`AppLog.debug`) are disabled by default
+- every log line carries a category tag prefix (e.g. `[BLE]`, `[Glance]`, `[Chat]`) for easy filtering
 
 To re-enable verbose Flutter-side logging:
 
 ```powershell
 flutter run --dart-define="COMPANION_VERBOSE_LOGS=true"
 ```
+
+When verbose is enabled, the per-event BLE packet trace, F5/R21/RightHold probes, Glance/Navigate render diagnostics, tilt-intent traces, and dashboard/legacy traces all come back on.
 
 To re-enable native Google Maps payload dumps:
 
@@ -359,6 +375,14 @@ This keeps normal daily-use builds quieter while preserving a path for targeted 
 
 Tilt-intent debug logging:
 - the controller emits narrow debug-level `TiltIntent` logs for pending, confirmed, cancelled, and cleanup cases around the `500ms` gate
+
+Filtering by tag in `logcat` (examples):
+
+```powershell
+adb logcat | findstr "\[BLE\]"
+adb logcat | findstr "\[Glance\] \[GlanceAssistant\]"
+adb logcat | findstr "\[R21Probe\] \[RightHoldProbe\] \[QuickNoteProbe\]"
+```
 
 ## Connection and transport reliability
 
@@ -384,7 +408,14 @@ Current behavior:
   - left/right compact status
   - current mode
   - health summary
+  - glasses battery percentage when known
+  - case (cradle) battery percentage when known
+  - wear state: `Worn`, `In cradle`, or `—` if not yet known
   - last saved capture when present
+- battery and wear state values are pushed by the glasses; once a value
+  arrives the relevant pill appears, and the home card live-updates as the
+  glasses re-push values
+- on full disconnect, battery values clear and wear state returns to `—`
 - a `Force Reconnect` action remains available in the connection area
 - occasional setup items now live under `Settings` rather than staying on the main screen
 

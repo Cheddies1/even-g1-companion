@@ -213,6 +213,101 @@ Confirmed examples:
 - disabling dashboard-on-tilt suppresses visible firmware UI behavior, not the
   underlying tilt event emission
 
+### Battery and wear state (confirmed via official-app HCI snoop)
+
+These sub-codes were resolved by capturing the official Even Realities Android
+app over BLE and matching observed payload bytes against the on-screen battery
+percentages. Capture, parser, and analysis live in
+[/logs/bluetooth/](/c:/Users/EddieJohnson/projects/EvenDemoApp/logs/bluetooth/);
+the corresponding raw protocol entries are in
+[protocol-reference.md](protocol-reference.md).
+
+The current Flutter ingestion lives in
+[lib/services/device_status_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart),
+fed from the existing F5 dispatch in
+[lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart).
+
+#### `F5 06`
+
+- Meaning: glasses are being worn
+- Confidence: high
+- Evidence:
+  - emitted exactly when the glasses come out of the cradle and are donned
+  - paired with a subsequent burst of `F5 0A` battery pushes while worn
+
+#### `F5 07`
+
+- Meaning: transitioning between worn and cradled (or vice versa)
+- Confidence: high
+- Evidence:
+  - consistently appears between `F5 06` and `F5 08`/`F5 0B` boundary events
+- Notes:
+  - too transient to drive UI state directly; the app ignores it for wear-state
+    classification
+
+#### `F5 08`
+
+- Meaning: in cradle, lid open
+- Confidence: high
+- Evidence:
+  - emitted on cradle-open transitions and on initial connect when the glasses
+    are sitting in an open cradle
+
+#### `F5 0A <pct>`
+
+- Meaning: glasses battery percentage push
+- Confidence: high
+- Evidence:
+  - byte 2 carries a 0–100 value
+  - matched the on-screen value in the official app exactly (100% during the
+    capture; the byte was `0x64`)
+  - pushed every ~1–2 s while the glasses are being worn; quiet otherwise
+- Notes:
+  - both temples emit this independently; the app accepts whichever arrives
+    most recently
+
+#### `F5 0B`
+
+- Meaning: in cradle, lid closed
+- Confidence: high
+- Evidence:
+  - emitted on cradle-close transitions
+
+#### `F5 0E <flag>`
+
+- Meaning: cradle charging cable state
+- Confidence: medium
+- Evidence:
+  - byte 2 toggles between `0x00` and `0x01` paired with `F5 09` events
+  - aligns with the Python SDK label "Cradle charging cable state changed"
+- Notes:
+  - the flag interpretation (0 = unplugged / 1 = plugged, or vice versa) is not
+    yet validated against a deliberate plug/unplug capture
+
+#### `F5 0F <pct>`
+
+- Meaning: case (cradle) battery percentage push
+- Confidence: high
+- Evidence:
+  - byte 2 carries a 0–100 value
+  - matched the on-screen "Case 60%" value in the official app exactly
+    (`0x3c` = 60)
+  - pushed alongside other cradle state events; less frequently than `F5 0A`
+
+#### `F5 12 <level>`
+
+- Meaning: brightness state push (echoes the most recent brightness level)
+- Confidence: medium-high
+- Evidence:
+  - byte 2 mirrored the value most recently sent via the brightness command
+    `0x01 <level> <auto>`
+  - observed values 0–42 (`0x00`–`0x2a`) tracking the official app's brightness
+    slider movement
+- Notes:
+  - useful as confirmation that a host-issued brightness change took effect
+  - this app does not yet send brightness commands itself; tracked as a
+    follow-up
+
 ### Confirmed
 
 #### `F5 02`
@@ -249,12 +344,15 @@ Confirmed examples:
 
 #### `F5 09`
 
-- Meaning: secondary tilt/head-up state event
+- Meaning: cradle/charge substate paired with `F5 0E` cable state
 - Confidence: low-medium
 - Evidence:
-  - appears during idle runs with no deliberate touch input
-  - appears more like posture/state than direct button interaction
-  - now seems less likely to be the primary tilt trigger itself
+  - byte 2 toggles between `0x00` and `0x01`
+  - emitted ~1 s before each `F5 0E` cable-state event with the matching value
+  - originally hypothesised as a tilt/head-up state but the snoop pairing with
+    `F5 0E` is more consistent with a cradle/charge substate
+- Notes:
+  - the exact 0/1 semantics are not yet pinned down
 
 #### `F5 10`
 
@@ -314,14 +412,14 @@ Confirmed examples:
 These event IDs have been observed but are not yet mapped with enough confidence
 to assign a meaning:
 
-- `F5 06`
-- `F5 07`
-- `F5 08`
 - `F5 11`
-- `F5 12`
 - `F5 14`
 - `F5 15`
 - `F5 32`
+
+`F5 06`, `F5 07`, `F5 08`, `F5 0A`, `F5 0B`, `F5 0F`, and `F5 12` were
+previously in this list and have since been mapped — see the
+"Battery and wear state" section above.
 
 ## Current Code Notes
 

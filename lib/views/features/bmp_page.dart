@@ -1,6 +1,7 @@
 // ignore_for_file: library_private_types_in_public_api
 
 import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/features_services.dart';
 import 'package:flutter/material.dart';
 
@@ -26,7 +27,10 @@ class _BmpState extends State<BmpPage> {
               GestureDetector(
                 onTap: () async {
                   if (BleManager.get().isConnected == false) return;
-                  print("${DateTime.now()} to show bmp1-----------");
+                  AppLog.debug(
+                    '${DateTime.now()} to show bmp1',
+                    tag: 'BmpPage',
+                  );
                   FeaturesServices().sendBmp("assets/images/image_1.bmp");
                 },
                 child: Container(
@@ -43,7 +47,10 @@ class _BmpState extends State<BmpPage> {
               GestureDetector(
                 onTap: () async {
                   if (BleManager.get().isConnected == false) return;
-                  print("${DateTime.now()} to show bmp2-----------");
+                  AppLog.debug(
+                    '${DateTime.now()} to show bmp2',
+                    tag: 'BmpPage',
+                  );
                   FeaturesServices().sendBmp("assets/images/image_2.bmp");
                 },
                 child: Container(

@@ -74,7 +74,10 @@ class ChatService {
     if (showReadyCard) {
       await _showText('Chat ready\nTilt up to talk');
     }
-    print('${DateTime.now()} Chat: session started -> $_sessionId');
+    AppLog.info(
+      '${DateTime.now()} session started -> $_sessionId',
+      tag: 'Chat',
+    );
   }
 
   Future<void> resetSession() async {
@@ -103,7 +106,7 @@ class ChatService {
         endedAt: DateTime.now(),
       );
     }
-    print('${DateTime.now()} Chat: session reset');
+    AppLog.info('${DateTime.now()} session reset', tag: 'Chat');
   }
 
   Future<String> startListening() async {
@@ -133,7 +136,7 @@ class ChatService {
 
     _isListening = true;
     await _showText('Listening...');
-    print('${DateTime.now()} Chat: listening started');
+    AppLog.info('${DateTime.now()} listening started', tag: 'Chat');
     return 'Listening for chat';
   }
 
@@ -209,25 +212,35 @@ class ChatService {
         text: cleanedAnswer,
       );
       await _showText(cleanedAnswer);
-      print(
-        '${DateTime.now()} Chat: assistant reply sent -> chars=${cleanedAnswer.length}, turns=${_messages.length}',
+      AppLog.info(
+        '${DateTime.now()} assistant reply sent -> chars=${cleanedAnswer.length}, turns=${_messages.length}',
+        tag: 'Chat',
       );
       return 'Assistant replied';
     } on ChatTranscriptionException catch (e) {
-      print('${DateTime.now()} Chat: transcription error -> ${e.kind} | ${e.message}');
+      AppLog.error(
+        '${DateTime.now()} transcription error -> ${e.kind} | ${e.message}',
+        tag: 'Chat',
+      );
       await _showText(_transcriptionErrorMessage(e));
       return 'Speech error';
     } on ChatBackendException catch (e) {
-      print('${DateTime.now()} Chat: backend error -> ${e.kind} | ${e.message}');
+      AppLog.error(
+        '${DateTime.now()} backend error -> ${e.kind} | ${e.message}',
+        tag: 'Chat',
+      );
       await _showText(_backendErrorMessage(e));
       return 'Chat backend error';
     } on ChatFlowException catch (e) {
-      print('${DateTime.now()} Chat: flow error -> ${e.message}');
+      AppLog.error(
+        '${DateTime.now()} flow error -> ${e.message}',
+        tag: 'Chat',
+      );
       await _showText(_flowErrorMessage(e));
       return e.message;
     } catch (e) {
       await _showText('Something went wrong');
-      print('${DateTime.now()} Chat: submit failed -> $e');
+      AppLog.error('${DateTime.now()} submit failed -> $e', tag: 'Chat');
       return 'Chat failed';
     } finally {
       _isThinking = false;

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/companion_notification.dart';
+import 'package:demo_ai_even/services/app_log.dart';
+import 'package:demo_ai_even/services/device_status_service.dart';
 import 'package:demo_ai_even/services/notification_policy.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
@@ -38,8 +40,9 @@ class GlanceService {
     } else if (_currentIndex >= _notifications.length) {
       _currentIndex = 0;
     }
-    print(
-      '${DateTime.now()} Glance: hydrated notifications -> count=${_notifications.length}',
+    AppLog.debug(
+      '${DateTime.now()} hydrated notifications -> count=${_notifications.length}',
+      tag: 'Glance',
     );
   }
 
@@ -53,13 +56,15 @@ class GlanceService {
       _notifications.removeRange(_maxNotifications, _notifications.length);
     }
     _currentIndex = 0;
-    print(
-      '${DateTime.now()} Glance: notification received -> ${notification.source}',
+    AppLog.debug(
+      '${DateTime.now()} notification received -> ${notification.source}',
+      tag: 'Glance',
     );
     if (autoPop) {
       if (_isVisible) {
-        print(
-          '${DateTime.now()} Glance: notification queued while visible -> ${notification.source}',
+        AppLog.debug(
+          '${DateTime.now()} notification queued while visible -> ${notification.source}',
+          tag: 'Glance',
         );
       } else {
         await _enqueueRender(autoHide: true, markInteracted: false);
@@ -85,7 +90,10 @@ class GlanceService {
         _pendingDismissKey = null;
         await TextService.get.stopTextSendingByOS();
         await Proto.exit();
-        print('${DateTime.now()} Glance: cleared after notification removal');
+        AppLog.info(
+          '${DateTime.now()} cleared after notification removal',
+          tag: 'Glance',
+        );
       } else {
         await _enqueueRender(autoHide: false, markInteracted: false);
       }
@@ -113,7 +121,10 @@ class GlanceService {
       return;
     }
     _restartClearTimer();
-    print('${DateTime.now()} Glance: tilt-down timeout started');
+    AppLog.debug(
+      '${DateTime.now()} tilt-down timeout started',
+      tag: 'Glance',
+    );
   }
 
   Future<void> close() async {
@@ -123,7 +134,7 @@ class GlanceService {
     _isVisible = false;
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
-    print('${DateTime.now()} Glance: closed');
+    AppLog.info('${DateTime.now()} closed', tag: 'Glance');
   }
 
   Future<bool> showIdleSurfaceIfAvailable() async {
@@ -163,19 +174,24 @@ class GlanceService {
       _clearTimer?.cancel();
       _clearTimer = null;
     }
-    print(
-      '${DateTime.now()} Glance: render -> index=$_currentIndex count=${_notifications.length}',
+    AppLog.debug(
+      '${DateTime.now()} render -> index=$_currentIndex count=${_notifications.length}',
+      tag: 'Glance',
     );
   }
 
   String _buildDisplayText(DateTime now) {
     final hour = now.hour.toString().padLeft(2, '0');
     final minute = now.minute.toString().padLeft(2, '0');
+    final batteryLabel = DeviceStatusService.get.glassesBatteryLabel;
+    final timeLine = batteryLabel == null
+        ? '$hour:$minute'
+        : '$hour:$minute  $batteryLabel';
     final current = _currentNotification();
     if (current == null) {
-      return '$hour:$minute\n--\nNo notifications';
+      return '$timeLine\n--\nNo notifications';
     }
-    return '$hour:$minute\n--\n${current.source}\n${current.message}';
+    return '$timeLine\n--\n${current.source}\n${current.message}';
   }
 
   CompanionNotification? _currentNotification() {
@@ -202,11 +218,15 @@ class GlanceService {
       } else if (_currentIndex >= _notifications.length) {
         _currentIndex = 0;
       }
-      print(
-        '${DateTime.now()} Glance: dismissed notification on phone -> $key',
+      AppLog.info(
+        '${DateTime.now()} dismissed notification on phone -> $key',
+        tag: 'Glance',
       );
     } catch (e) {
-      print('${DateTime.now()} Glance: dismiss notification failed -> $e');
+      AppLog.error(
+        '${DateTime.now()} dismiss notification failed -> $e',
+        tag: 'Glance',
+      );
     }
   }
 
@@ -227,8 +247,9 @@ class GlanceService {
       return;
     }
     _currentIndex = (_currentIndex + 1) % _notifications.length;
-    print(
-      '${DateTime.now()} Glance: advanced protected notification without dismiss -> ${current.packageName}',
+    AppLog.debug(
+      '${DateTime.now()} advanced protected notification without dismiss -> ${current.packageName}',
+      tag: 'Glance',
     );
   }
 

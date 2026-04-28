@@ -54,6 +54,23 @@ Working, but still needs real-world observation:
 
 ## Recent Confirmed Findings
 
+Battery and wear state:
+- HCI snoop of the official Even Realities Android app (firmware 1.6.6)
+  resolved the previously-unknown `F5` sub-codes for battery and wear:
+  - `F5 06` worn, `F5 08` cradle open, `F5 0B` cradle closed
+  - `F5 0A <pct>` glasses battery percentage push
+  - `F5 0F <pct>` case (cradle) battery percentage push
+- Now ingested by `lib/services/device_status_service.dart`
+- Glasses % renders next to the Glance time line; home screen shows
+  glasses %, case %, and a `Worn` / `In cradle` pill
+- Source data and parser are in `logs/bluetooth/`
+
+Brightness (open follow-up):
+- TX `0x01 <level> <auto>` continues to be the brightness command
+- The glasses push `F5 12 <level>` whenever the level actually changes,
+  giving a confirmation channel
+- Sending brightness commands from this app is not yet implemented
+
 Pinned score:
 - `com.samsung.android.app.aodservice` is definitely observed
 - In probe logs it exposed:

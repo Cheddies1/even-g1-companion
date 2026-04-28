@@ -3,6 +3,7 @@ import 'package:demo_ai_even/models/app_mode.dart';
 import 'package:demo_ai_even/services/ble.dart';
 import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
+import 'package:demo_ai_even/services/device_status_service.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:flutter/services.dart';
@@ -129,19 +130,19 @@ class BleManager {
 
   Future<void> startScan() async {
     try {
-      print("${DateTime.now()} BLE UI: scan requested");
+      AppLog.info('${DateTime.now()} scan requested', tag: 'BLE');
       await _channel.invokeMethod('startScan');
     } catch (e) {
-      print('Error starting scan: $e');
+      AppLog.error('startScan failed: $e', tag: 'BLE');
     }
   }
 
   Future<void> stopScan() async {
     try {
-      print("${DateTime.now()} BLE UI: stop scan requested");
+      AppLog.info('${DateTime.now()} stop scan requested', tag: 'BLE');
       await _channel.invokeMethod('stopScan');
     } catch (e) {
-      print('Error stopping scan: $e');
+      AppLog.error('stopScan failed: $e', tag: 'BLE');
     }
   }
 
@@ -152,14 +153,15 @@ class BleManager {
       }
       final reconnectAttempt =
           connectionStatus != 'Not connected' || pairedGlasses.isNotEmpty;
-      print(
-        "${DateTime.now()} BLE UI: connect requested for $deviceName, reconnectAttempt=$reconnectAttempt",
+      AppLog.info(
+        '${DateTime.now()} connect requested for $deviceName, reconnectAttempt=$reconnectAttempt',
+        tag: 'BLE',
       );
       await _channel
           .invokeMethod('connectToGlasses', {'deviceName': deviceName});
       connectionStatus = 'Connecting...';
     } catch (e) {
-      print('Error connecting to device: $e');
+      AppLog.error('connectToGlasses failed: $e', tag: 'BLE');
     }
   }
 
@@ -190,14 +192,15 @@ class BleManager {
         await CompanionController.get.handleNotificationModeSwitch(modeLabel);
         break;
       default:
-        print('Unknown method: ${call.method}');
+        AppLog.error('Unknown method: ${call.method}', tag: 'BLE');
     }
   }
 
   void _onGlassesConnected(dynamic arguments) {
-    print("_onGlassesConnected----arguments----$arguments------");
-    print(
-      "${DateTime.now()} BLE UI: both connected -> ${arguments['leftDeviceName']} | ${arguments['rightDeviceName']}",
+    AppLog.debug('_onGlassesConnected arguments=$arguments', tag: 'BLE');
+    AppLog.info(
+      '${DateTime.now()} both connected -> ${arguments['leftDeviceName']} | ${arguments['rightDeviceName']}',
+      tag: 'BLE',
     );
     _applyConnectionPayload(Map<String, dynamic>.from(arguments as Map));
     CompanionController.get.noteTransportConnected(source: 'glassesConnected');
@@ -233,20 +236,21 @@ class BleManager {
   }
 
   void _onGlassesConnecting() {
-    print("${DateTime.now()} BLE UI: connecting");
+    AppLog.info('${DateTime.now()} connecting', tag: 'BLE');
     connectionStatus = 'Connecting...';
 
     onStatusChanged?.call();
   }
 
   void _onGlassesDisconnected() {
-    print("${DateTime.now()} BLE UI: disconnected");
+    AppLog.info('${DateTime.now()} disconnected', tag: 'BLE');
     connectionStatus = 'Not connected';
     isConnected = false;
     beatHeartTimer?.cancel();
     beatHeartTimer = null;
     _reconnectMonitorTimer?.cancel();
     _reconnectMonitorTimer = null;
+    DeviceStatusService.get.reset(source: 'GlassesDisconnected');
     _updateLegState(
       'L',
       legState('L').copyWith(
@@ -291,8 +295,9 @@ class BleManager {
   }
 
   void _onPairedGlassesFound(Map<String, String> deviceInfo) {
-    print(
-      "${DateTime.now()} BLE UI: pair discovered -> channel=${deviceInfo['channelNumber']}, left=${deviceInfo['leftDeviceName']}, right=${deviceInfo['rightDeviceName']}",
+    AppLog.info(
+      '${DateTime.now()} pair discovered -> channel=${deviceInfo['channelNumber']}, left=${deviceInfo['leftDeviceName']}, right=${deviceInfo['rightDeviceName']}',
+      tag: 'BLE',
     );
     final String channelNumber = deviceInfo['channelNumber']!;
     final isAlreadyPaired = pairedGlasses
@@ -352,6 +357,11 @@ class BleManager {
         eventLabel: eventLabel,
         payload: payload,
       );
+      DeviceStatusService.get.ingestF5Event(
+        subCode: notifyIndex,
+        rawData: res.data,
+        side: res.lr,
+      );
 
       switch (notifyIndex) {
         case 0:
@@ -372,28 +382,48 @@ class BleManager {
         case 3:
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
           break;
+        case 6:
+        case 8:
+        case 10:
+        case 11:
+        case 15:
+          // Handled above by DeviceStatusService.ingestF5Event (wear state +
+          // battery percentages). Empty case prevents the default-branch
+          // "Unhandled Ble Event" info log from firing on every push.
+          break;
         case 17:
-          print(
-              '${DateTime.now()} GlanceAssistant: F5 17 received from ${res.lr}');
+          AppLog.debug(
+            '${DateTime.now()} F5 17 received from ${res.lr}',
+            tag: 'GlanceAssistant',
+          );
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
           break;
         case 18:
-          print(
-              '${DateTime.now()} GlanceAssistant: F5 18 received from ${res.lr}');
+          AppLog.debug(
+            '${DateTime.now()} F5 18 received from ${res.lr}',
+            tag: 'GlanceAssistant',
+          );
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
           break;
         case 23: //BleEvent.evenaiStart:
-          print(
-              '${DateTime.now()} GlanceAssistant: F5 23 legacy EvenAI start received from ${res.lr}');
+          AppLog.debug(
+            '${DateTime.now()} F5 23 legacy EvenAI start received from ${res.lr}',
+            tag: 'GlanceAssistant',
+          );
           CompanionController.get.handleGlassesGesture(17, res.lr);
           break;
         case 24: //BleEvent.evenaiRecordOver:
-          print(
-              '${DateTime.now()} GlanceAssistant: F5 24 legacy EvenAI stop received from ${res.lr}');
+          AppLog.debug(
+            '${DateTime.now()} F5 24 legacy EvenAI stop received from ${res.lr}',
+            tag: 'GlanceAssistant',
+          );
           CompanionController.get.handleGlassesGesture(18, res.lr);
           break;
         default:
-          print("Unhandled Ble Event: $notifyIndex ($eventLabel)");
+          AppLog.info(
+            'Unhandled Ble Event: $notifyIndex ($eventLabel)',
+            tag: 'BLE',
+          );
       }
       return;
     }
@@ -418,21 +448,23 @@ class BleManager {
       case 3:
         return 'dashboard-close-start';
       case 6:
-        return 'unknown-background-state-6';
+        return 'wear-state-worn';
       case 7:
-        return 'unknown-background-state-7';
+        return 'wear-state-transitioning';
       case 8:
-        return 'unknown-background-state-8';
+        return 'wear-state-cradle-open';
       case 9:
         return 'suspected-tilt-or-headup-state-9';
       case 10:
-        return 'suspected-tilt-or-headup-state-10';
+        return 'glasses-battery-push';
       case 11:
-        return 'unknown-background-state-11';
+        return 'wear-state-cradle-closed';
+      case 12:
+        return 'brightness-state-push';
       case 14:
         return 'unknown-background-state-14';
       case 15:
-        return 'unknown-background-state-15';
+        return 'case-battery-push';
       case 17:
         return 'voice-start-or-state-17';
       case 18:
@@ -467,12 +499,14 @@ class BleManager {
     final rawPayload = res.data.hexString;
     final probeContext = _probeContext();
 
-    print(
-      '${DateTime.now()} R21Probe: lr=${res.lr} len=${res.data.length} lengthField=$lengthField sequenceGuess=$sequenceGuess deltaMs=${deltaMs ?? 'n/a'} raw=$rawPayload mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
+    AppLog.debug(
+      '${DateTime.now()} lr=${res.lr} len=${res.data.length} lengthField=$lengthField sequenceGuess=$sequenceGuess deltaMs=${deltaMs ?? 'n/a'} raw=$rawPayload mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
+      tag: 'R21Probe',
     );
     if (res.lr == 'R') {
-      print(
-        '${DateTime.now()} QuickNoteProbe: candidate=R21-primary lr=${res.lr} len=${res.data.length} raw=$rawPayload groups=[$grouped] mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
+      AppLog.debug(
+        '${DateTime.now()} candidate=R21-primary lr=${res.lr} len=${res.data.length} raw=$rawPayload groups=[$grouped] mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
+        tag: 'QuickNoteProbe',
       );
       if (res.data.length == 42) {
         unawaited(CompanionController.get.handleRightHoldModeSwitchProbe());
@@ -547,7 +581,7 @@ class BleManager {
       var res = BleReceive();
       res.isTimeout = true;
       //var showData = data.length > 50 ? data.sublist(0, 50) : data;
-      print("send Timeout $cmd of $timeoutMs");
+      AppLog.error('send Timeout $cmd of $timeoutMs', tag: 'BLE');
       cb.complete(res);
     }
 
@@ -584,8 +618,9 @@ class BleManager {
         ? 'n/a'
         : '${nowMs - lastRightCmd21EventMs}';
 
-    print(
-      '${DateTime.now()} RightHoldProbe: lr=${res.lr} f5=$notifyIndex label=$eventLabel len=${res.data.length} raw=${res.data.hexString} payload=[$payload] nearRight21=$nearRight21 deltaFromRight21Ms=$deltaFromRight21 mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
+    AppLog.debug(
+      '${DateTime.now()} lr=${res.lr} f5=$notifyIndex label=$eventLabel len=${res.data.length} raw=${res.data.hexString} payload=[$payload] nearRight21=$nearRight21 deltaFromRight21Ms=$deltaFromRight21 mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
+      tag: 'RightHoldProbe',
     );
   }
 
@@ -620,7 +655,7 @@ class BleManager {
     }
     ret = BleReceive();
     ret.isTimeout = true;
-    print("requestRetry $lr timeout of $timeoutMs");
+    AppLog.error('requestRetry $lr timeout of $timeoutMs', tag: 'BLE');
     return ret;
   }
 
@@ -707,13 +742,13 @@ class BleManager {
         var res = BleReceive();
         res.isTimeout = true;
         _reqListen[cmd]?.complete(res);
-        print("already exist key: $cmd");
+        AppLog.error('already exist key: $cmd', tag: 'BLE');
 
         _reqTimeout[cmd]?.cancel();
       }
       _reqListen[cmd] = completer;
     }
-    print("request key: $cmd, ");
+    AppLog.debug('request key: $cmd', tag: 'BLE');
 
     if (timeoutMs > 0) {
       _reqTimeout[cmd] = Timer(Duration(milliseconds: timeoutMs), () {
@@ -748,8 +783,10 @@ class BleManager {
     String? lr,
     int? timeoutMs,
   }) async {
-    print(
-        "requestList---sendList---${sendList.first}----lr---$lr----timeoutMs----$timeoutMs-");
+    AppLog.debug(
+      'requestList first=${sendList.first} lr=$lr timeoutMs=$timeoutMs',
+      tag: 'BLE',
+    );
 
     if (lr != null) {
       return await _requestList(sendList, lr, timeoutMs: timeoutMs);
@@ -774,7 +811,7 @@ class BleManager {
         var lastPack = sendList[sendList.length - 1];
         return await sendBoth(lastPack, timeoutMs: timeoutMs ?? 250);
       } else {
-        print("error request lr leg");
+        AppLog.error('requestList: per-leg request failed', tag: 'BLE');
       }
     }
     return false;

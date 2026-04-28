@@ -37,6 +37,8 @@ Important:
 - [lib/services/capture_service.dart](lib/services/capture_service.dart)
 - [lib/services/navigate_service.dart](lib/services/navigate_service.dart)
 - [lib/services/chat_service.dart](lib/services/chat_service.dart)
+- [lib/services/device_status_service.dart](lib/services/device_status_service.dart)
+- [lib/services/app_log.dart](lib/services/app_log.dart)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
@@ -46,6 +48,10 @@ Important:
 - mode ownership must stay in CompanionController
 - do not route gesture behaviour directly inside feature services
 - prefer adding narrow hooks over duplicating control flow
+- use `AppLog` for all Flutter-side logging; do not reintroduce raw `print()` in `lib/`
+  - `AppLog.info` / `AppLog.error` are always on (lifecycle, state changes, error paths)
+  - `AppLog.debug` is gated behind `COMPANION_VERBOSE_LOGS=true` (per-event chatter, probes, render traces)
+  - always pass a `tag:` matching the subsystem (e.g. `BLE`, `Glance`, `Chat`, `Navigate`, `Companion`)
 
 ## Constraints
 - preserve working BLE scan/connect/pairing and protocol framing

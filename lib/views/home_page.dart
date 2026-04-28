@@ -6,6 +6,7 @@ import 'package:demo_ai_even/services/chat_history_store.dart';
 import 'package:demo_ai_even/services/capture_service.dart';
 import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
+import 'package:demo_ai_even/services/device_status_service.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
 import 'package:demo_ai_even/views/chat_transcript_page.dart';
 import 'package:demo_ai_even/views/features_page.dart';
@@ -75,6 +76,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     CompanionController.get.addListener(_refreshPage);
+    DeviceStatusService.get.addListener(_refreshPage);
     ChatHistoryStore.get.addListener(_refreshPage);
     ChatHistoryStore.get.init();
   }
@@ -186,9 +188,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final controller = CompanionController.get;
     final capture = CaptureService.get;
     final chat = ChatService.get;
+    final deviceStatus = DeviceStatusService.get;
+    final glassesBattery = deviceStatus.glassesBatteryLabel;
+    final caseBattery = deviceStatus.caseBatteryLabel;
     final pills = <String>[
       'Mode: ${controller.activeMode.label}',
       'Health: ${_healthSummary()}',
+      if (glassesBattery != null) 'Glasses: $glassesBattery',
+      if (caseBattery != null) 'Case: $caseBattery',
+      'State: ${deviceStatus.wearState.displayLabel}',
       'Notifications: ${GlanceService.get.notificationCount}',
     ];
     if (capture.lastSavedFileName != null) {
@@ -529,6 +537,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     scanTimer?.cancel();
     CompanionController.get.removeListener(_refreshPage);
+    DeviceStatusService.get.removeListener(_refreshPage);
     ChatHistoryStore.get.removeListener(_refreshPage);
     super.dispose();
   }

@@ -1,4 +1,5 @@
 import 'package:demo_ai_even/controllers/evenai_model_controller.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -18,7 +19,10 @@ class _EvenAIListPageState extends State<EvenAIListPage> {
     super.initState();
     controller = Get.find<EvenaiModelController>();
 
-    print("controller.items--------${controller.items.length}");
+    AppLog.debug(
+      'EvenAIList: items count=${controller.items.length}',
+      tag: 'EvenAI',
+    );
   }
 
   @override

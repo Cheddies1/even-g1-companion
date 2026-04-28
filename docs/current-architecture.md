@@ -105,6 +105,33 @@ Owns:
 - Navigate-only BMP card rendering for real Google Maps guidance
 - suppression / prioritization rules relative to Glance
 
+### Device status
+- [lib/services/device_status_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart)
+
+Owns:
+- glasses battery percentage (push from `F5 0A`)
+- case (cradle) battery percentage (push from `F5 0F`)
+- wear state derived from `F5 06` / `F5 08` / `F5 0B`
+
+Behaviour:
+- ingests every `0xF5` event via a single entry point called from
+  [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+- only notifies listeners when a value actually changes, so the per-1–2-second
+  re-pushes the firmware emits while the glasses are worn do not churn the UI
+- resets to `unknown` on full disconnect so stale values are not displayed
+- accepts updates from either temple; the glasses share a single battery, so
+  whichever side reports last wins
+- the Python-SDK label `F5 12` "Device unknown 12" is reinterpreted here as a
+  brightness state push; brightness ingestion itself is a follow-up
+
+Consumers:
+- [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart)
+  reads the glasses battery label at render time so the Glance heads-up display
+  shows e.g. `14:32  85%` next to the time
+- [lib/views/home_page.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/views/home_page.dart)
+  subscribes to the service and renders glasses %, case %, and the worn /
+  in cradle state as status pills
+
 ### Chat
 - [lib/services/chat_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_service.dart)
 - [lib/services/chat_backend.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_backend.dart)
@@ -384,13 +411,30 @@ The home screen stays focused on day-to-day companion control. Runtime backend c
 
 ## Logging posture
 
-The app now uses a split logging posture:
+Single Flutter-side logger:
+- [lib/services/app_log.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/app_log.dart)
+
+Raw `print()` is no longer used anywhere in `lib/`. Every Flutter-side log goes through `AppLog`, which exposes three levels and an optional category tag:
+- `AppLog.info(msg, tag: ...)`  : always enabled. Concise operational lifecycle and state changes.
+- `AppLog.error(msg, tag: ...)` : always enabled. Error paths, failed guards, recoverable bugs.
+- `AppLog.debug(msg, tag: ...)` : gated behind the build-time define `COMPANION_VERBOSE_LOGS`. Used for investigation-grade chatter (per-event BLE packet notes, tilt-intent traces, heartbeat details, probe output).
+
+When a `tag` is provided, it is rendered as a `[TAG] ` prefix so logs can be filtered by category in `logcat` / IDE output.
+
+Canonical tags currently in use:
+- `BLE`, `Companion`, `Glance`, `GlanceAssistant`, `Chat`, `ChatBackend`, `Capture`, `Navigate`, `NavigateBmp`, `TiltIntent`, `NotificationPolicy`, `Transport`, `DeviceStatus`, `AppStartup`, `Text`, `BmpUpdate`
+- probe tags kept distinct from their owning subsystem for targeted filtering: `R21Probe`, `QuickNoteProbe`, `RightHoldProbe`
+- legacy/demo quarantine tags: `Dashboard`, `DashboardBmp`, `EvenAI`, `Features`, `ApiService`, `DeepSeek`, `BmpPage`, `Utils`
+
+Split posture preserved:
 - concise operational lifecycle/error logs remain enabled by default
 - verbose investigation logs are gated behind:
   - Flutter build-time define: `COMPANION_VERBOSE_LOGS=true`
   - Android log tag enablement for Maps payload dumps: `MapsNotificationDump`
 
-This keeps day-to-day release builds quieter while preserving useful diagnosis paths when needed.
+This keeps day-to-day release builds quieter while preserving useful diagnosis paths when needed. Because all Flutter-side logs now flow through `AppLog`, the `COMPANION_VERBOSE_LOGS` gate now applies uniformly — including the BLE packet, F5 event, R21, RightHold, and Glance/Navigate render paths that previously bypassed it via raw `print()`.
+
+New Flutter-side log sites should use `AppLog` with an appropriate level and tag. Raw `print()` should not be reintroduced.
 
 ## Legacy / demo code posture
 

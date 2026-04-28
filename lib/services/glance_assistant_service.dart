@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/chat_message.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/chat_backend.dart';
 import 'package:demo_ai_even/services/openai_chat_backend.dart';
 import 'package:demo_ai_even/services/openai_transcription_service.dart';
@@ -44,31 +45,49 @@ class GlanceAssistantService {
 
   Future<String> startListening() async {
     if (_isThinking) {
-      print('${DateTime.now()} GlanceAssistant: start ignored -> still thinking');
+      AppLog.debug(
+        '${DateTime.now()} start ignored -> still thinking',
+        tag: 'GlanceAssistant',
+      );
       await _showText('Thinking...');
       return 'Assistant still thinking';
     }
     if (_isListening) {
-      print('${DateTime.now()} GlanceAssistant: start ignored -> already listening');
+      AppLog.debug(
+        '${DateTime.now()} start ignored -> already listening',
+        tag: 'GlanceAssistant',
+      );
       return 'Assistant already listening';
     }
 
     _expireSessionIfStale();
     _displayClearTimer?.cancel();
 
-    print('${DateTime.now()} GlanceAssistant: recorder start requested');
+    AppLog.debug(
+      '${DateTime.now()} recorder start requested',
+      tag: 'GlanceAssistant',
+    );
     final started = await BleManager.invokeMethod<bool>('startGlassesCapture');
     if (started != true) {
-      print('${DateTime.now()} GlanceAssistant: recorder start failed');
+      AppLog.error(
+        '${DateTime.now()} recorder start failed',
+        tag: 'GlanceAssistant',
+      );
       await _showText('Mic start failed');
       _scheduleClear();
       return 'Assistant listen failed';
     }
 
-    print('${DateTime.now()} GlanceAssistant: micOn requested');
+    AppLog.debug(
+      '${DateTime.now()} micOn requested',
+      tag: 'GlanceAssistant',
+    );
     final (_, micStarted) = await Proto.micOn(lr: 'R');
     if (!micStarted) {
-      print('${DateTime.now()} GlanceAssistant: micOn failed');
+      AppLog.error(
+        '${DateTime.now()} micOn failed',
+        tag: 'GlanceAssistant',
+      );
       await BleManager.invokeMethod('cancelGlassesCapture');
       await _showText('Mic start failed');
       _scheduleClear();
@@ -77,14 +96,18 @@ class GlanceAssistantService {
 
     _isListening = true;
     _lastActivityAt = DateTime.now();
-    print('${DateTime.now()} GlanceAssistant: listening started');
+    AppLog.info(
+      '${DateTime.now()} listening started',
+      tag: 'GlanceAssistant',
+    );
     return 'Listening for glance assistant';
   }
 
   Future<String> stopListeningAndSubmit() async {
     if (!_isListening) {
-      print(
-        '${DateTime.now()} GlanceAssistant: stop ignored -> isListening=$_isListening isThinking=$_isThinking',
+      AppLog.debug(
+        '${DateTime.now()} stop ignored -> isListening=$_isListening isThinking=$_isThinking',
+        tag: 'GlanceAssistant',
       );
       return _isThinking ? 'Assistant still thinking' : 'Assistant not listening';
     }
@@ -94,13 +117,17 @@ class GlanceAssistantService {
     _isThinking = true;
 
     try {
-      print('${DateTime.now()} GlanceAssistant: recorder stopToTemp requested');
+      AppLog.debug(
+        '${DateTime.now()} recorder stopToTemp requested',
+        tag: 'GlanceAssistant',
+      );
       final raw = await BleManager.invokeMethod<Map<dynamic, dynamic>>(
         'stopGlassesCaptureToTemp',
       );
       final filePath = (raw?['localPath'] as String?) ?? '';
-      print(
-        '${DateTime.now()} GlanceAssistant: stopToTemp result -> success=${raw?['success']} localPath=$filePath pcmBytes=${raw?['pcmBytes']} durationMs=${raw?['durationMs']}',
+      AppLog.debug(
+        '${DateTime.now()} stopToTemp result -> success=${raw?['success']} localPath=$filePath pcmBytes=${raw?['pcmBytes']} durationMs=${raw?['durationMs']}',
+        tag: 'GlanceAssistant',
       );
       await TextService.get.stopTextSendingByOS();
       await Proto.exit();
@@ -185,7 +212,10 @@ class GlanceAssistantService {
     _displayClearTimer?.cancel();
     _displayClearTimer = null;
     _isDisplayVisible = false;
-    print('${DateTime.now()} GlanceAssistant: close -> cancel capture and clear');
+    AppLog.info(
+      '${DateTime.now()} close -> cancel capture and clear',
+      tag: 'GlanceAssistant',
+    );
     await BleManager.invokeMethod('cancelGlassesCapture');
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();

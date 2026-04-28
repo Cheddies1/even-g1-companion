@@ -165,7 +165,7 @@ class TextService {
   }
 
   Future stopTextSendingByOS() async {
-    print("stopTextSendingByOS---------------");
+    AppLog.debug('stopTextSendingByOS', tag: 'Text');
     isRunning = false;
     clear();
   }

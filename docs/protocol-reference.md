@@ -212,6 +212,55 @@ Observed reality:
 - image transfer path exists and works in this repo
 - but bitmap dashboard rendering is no longer treated as the primary UX path for the companion app
 
+## Battery and wear state: `0xF5`
+
+Source:
+- official-app HCI snoop captured from this repo's target hardware on
+  firmware 1.6.6 — see [/logs/bluetooth/](/c:/Users/EddieJohnson/projects/EvenDemoApp/logs/bluetooth/)
+  for the raw log, parser, and analysis output
+
+Observed reality (`Confirmed`):
+
+- `F5 06` — wearing
+- `F5 07` — transitioning
+- `F5 08` — in cradle, lid open
+- `F5 0A <pct>` — glasses battery percentage push (byte 2, range 0..100)
+- `F5 0B` — in cradle, lid closed
+- `F5 0F <pct>` — case (cradle) battery percentage push (byte 2, range 0..100)
+
+Notes:
+- both temples emit these events independently; the app accepts whichever
+  arrives most recently
+- battery is push-based — there is no need to poll
+- while worn, `F5 0A` is re-pushed every ~1–2 s; while cradled it goes quiet
+  until the value changes
+- the official Even Realities Android app also implements a polled fallback
+  via a single-byte `0x29` write to the right glass with response
+  `29 65 <pct> 00 ...`, but a polling path is not required for live readings
+
+Implementation:
+- ingestion: [lib/services/device_status_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart)
+- routed from the F5 dispatch in [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+
+Cross-reference:
+- [even-g1-event-mapping.md](even-g1-event-mapping.md) "Battery and wear state"
+
+## Brightness state push: `F5 12`
+
+Vendor/demo reference:
+- not described in the old README excerpt
+
+Observed reality (`Suspected`, medium-high confidence):
+
+- `F5 12 <level>` is pushed by the glasses whenever the brightness level
+  changes
+- byte 2 mirrors the most recently applied level (range 0..42 inclusive in
+  observed traffic, sent via `0x01 <level> <auto>`)
+- useful as a confirmation that a host-issued brightness command took effect
+
+Notes:
+- this app does not yet send brightness commands; tracked as a follow-up
+
 ## Heartbeat: `0x25`
 
 Vendor/demo reference:
@@ -220,6 +269,9 @@ Vendor/demo reference:
 Observed reality:
 - `Confirmed`
 - `0x25` is the active heartbeat request/response family in the current app logs
+- the official Even Realities app uses a different periodic exchange
+  (`0x1f`) at ~2 s cadence; firmware accepts both, so the `0x25` heartbeat in
+  this app remains valid
 
 ## QuickNote / `0x21`
 

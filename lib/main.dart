@@ -1,5 +1,6 @@
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/controllers/evenai_model_controller.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/chat_history_store.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
@@ -11,14 +12,14 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   BleManager.get();
   Get.put(EvenaiModelController());
-  print('${DateTime.now()} App startup: runApp');
+  AppLog.info('${DateTime.now()} runApp', tag: 'AppStartup');
   runApp(const EvenCompanionApp());
   Future<void>(() async {
-    print('${DateTime.now()} App startup: companion init begin');
+    AppLog.info('${DateTime.now()} companion init begin', tag: 'AppStartup');
     await AppSettingsStore.get.init();
     await ChatHistoryStore.get.init();
     await CompanionController.get.init();
-    print('${DateTime.now()} App startup: companion init end');
+    AppLog.info('${DateTime.now()} companion init end', tag: 'AppStartup');
   });
 }
 

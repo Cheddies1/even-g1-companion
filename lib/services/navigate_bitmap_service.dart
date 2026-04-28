@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:demo_ai_even/models/companion_notification.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/features_services.dart';
 import 'package:flutter/material.dart';
 
@@ -34,8 +35,9 @@ class NavigateBitmapService {
     final paddedRowBytes = ((rowBytes + 3) ~/ 4) * 4;
     final expectedPixelBytes = paddedRowBytes * _height;
     final expectedFileBytes = _pixelOffset + expectedPixelBytes;
-    print(
-      '${DateTime.now()} Navigate BMP: render complete -> bytes=${bmpBytes.length}, expectedFileBytes=$expectedFileBytes, expectedPixelBytes=$expectedPixelBytes, width=$_width, height=$_height, bpp=1, iconSource=${notification?.navIconSource ?? ''}',
+    AppLog.debug(
+      '${DateTime.now()} render complete -> bytes=${bmpBytes.length}, expectedFileBytes=$expectedFileBytes, expectedPixelBytes=$expectedPixelBytes, width=$_width, height=$_height, bpp=1, iconSource=${notification?.navIconSource ?? ''}',
+      tag: 'NavigateBmp',
     );
     await FeaturesServices().sendNavigateBmpData(bmpBytes);
   }
@@ -154,7 +156,10 @@ class NavigateBitmapService {
       final frame = await codec.getNextFrame();
       return frame.image;
     } catch (e) {
-      print('${DateTime.now()} Navigate BMP: icon decode failed -> $e');
+      AppLog.error(
+        '${DateTime.now()} icon decode failed -> $e',
+        tag: 'NavigateBmp',
+      );
       return null;
     }
   }

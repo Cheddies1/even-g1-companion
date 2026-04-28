@@ -17,7 +17,10 @@ class BmpUpdateManager {
     bool isOldSendPackError(int? currentSeq) {
       bool oldSendError = (seq == null && currentSeq != null);
       if (oldSendError) {
-        print("BmpUpdate -> updateBmp: old pack send error, seq = $currentSeq");
+        AppLog.error(
+          'updateBmp: old pack send error, seq = $currentSeq',
+          tag: 'BmpUpdate',
+        );
       }
       return oldSendError;
     }

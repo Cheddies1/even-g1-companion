@@ -84,7 +84,10 @@ class FeaturesServices {
   Future<void> _sendBmpDataInternal(Uint8List bmpData) async {
     int initialSeq = 0;
     bool isSuccess = await Proto.sendHeartBeat();
-    print("${DateTime.now()} testBMP -------startSendBeatHeart----isSuccess---$isSuccess------");
+    AppLog.debug(
+      '${DateTime.now()} testBMP startSendBeatHeart isSuccess=$isSuccess',
+      tag: 'Features',
+    );
     BleManager.get().startSendBeatHeart();
 
     final results = await Future.wait([
@@ -96,21 +99,21 @@ class FeaturesServices {
     final successR = results[1].success;
 
     if (successL) {
-      print("${DateTime.now()} left ble success");
+      AppLog.debug('${DateTime.now()} left ble success', tag: 'Features');
     } else {
-      print("${DateTime.now()} left ble fail");
+      AppLog.error('${DateTime.now()} left ble fail', tag: 'Features');
     }
 
     if (successR) {
-      print("${DateTime.now()} right ble success");
+      AppLog.debug('${DateTime.now()} right ble success', tag: 'Features');
     } else {
-      print("${DateTime.now()} right ble success");
+      AppLog.error('${DateTime.now()} right ble fail', tag: 'Features');
     }
   }
 
   Future<void> exitBmp() async {
     bool isSuccess = await Proto.exit();
-    print("exitBmp----isSuccess---$isSuccess--");
+    AppLog.debug('exitBmp isSuccess=$isSuccess', tag: 'Features');
   }
 
   void _ensureNavigateLegPump(String lr) {

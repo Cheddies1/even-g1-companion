@@ -1,4 +1,5 @@
 import 'package:demo_ai_even/models/chat_message.dart';
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/assistant_backend_config.dart';
 import 'package:demo_ai_even/services/chat_backend.dart';
 import 'package:dio/dio.dart';
@@ -112,8 +113,9 @@ class OpenAiChatBackend implements ChatBackend {
       return messages;
     }
     final trimmed = messages.sublist(messages.length - maxHistoryMessages);
-    print(
-      '${DateTime.now()} Chat backend: trimmed history from ${messages.length} to ${trimmed.length} messages',
+    AppLog.debug(
+      '${DateTime.now()} trimmed history from ${messages.length} to ${trimmed.length} messages',
+      tag: 'ChatBackend',
     );
     return trimmed;
   }

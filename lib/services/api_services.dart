@@ -1,3 +1,4 @@
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:dio/dio.dart';
 
 class ApiService {
@@ -23,27 +24,33 @@ class ApiService {
         {"role": "user", "content": question}
       ],
     };
-    print("sendChatRequest------data----------$data--------");
+    AppLog.debug('sendChatRequest data=$data', tag: 'ApiService');
 
     try {
       final response = await _dio.post('/chat/completions', data: data);
 
       if (response.statusCode == 200) {
-          print("Response: ${response.data}");
+          AppLog.debug('Response: ${response.data}', tag: 'ApiService');
 
           final data = response.data;
           final content = data['choices']?[0]?['message']?['content'] ?? "Unable to answer the question";
           return content;
       } else {
-        print("Request failed with status: ${response.statusCode}");
+        AppLog.error(
+          'Request failed with status: ${response.statusCode}',
+          tag: 'ApiService',
+        );
         return "Request failed with status: ${response.statusCode}";
       }
     } on DioError catch (e) {
       if (e.response != null) {
-        print("Error: ${e.response?.statusCode}, ${e.response?.data}");
+        AppLog.error(
+          'Error: ${e.response?.statusCode}, ${e.response?.data}',
+          tag: 'ApiService',
+        );
         return "AI request error: ${e.response?.statusCode}, ${e.response?.data}";
       } else {
-        print("Error: ${e.message}");
+        AppLog.error('Error: ${e.message}', tag: 'ApiService');
         return "AI request error: ${e.message}";
       }
     }

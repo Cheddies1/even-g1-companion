@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/dashboard_bitmap_service.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
@@ -68,8 +69,9 @@ class DashboardService {
     } else if (currentNotificationIndex >= _notifications.length) {
       currentNotificationIndex = 0;
     }
-    print(
-      '${DateTime.now()} Dashboard: feed updated -> count=${_notifications.length}',
+    AppLog.debug(
+      '${DateTime.now()} feed updated -> count=${_notifications.length}',
+      tag: 'Dashboard',
     );
     if (_customDashboardRenderingEnabled) {
       unawaited(_warmDashboardCache(reason: 'feed-update'));
@@ -86,8 +88,9 @@ class DashboardService {
       final now = DateTime.now();
       currentNotificationIndex = 0;
       state = DashboardState.dashboardOpen;
-      print(
-        '${DateTime.now()} Dashboard: opened -> notificationIndex=$currentNotificationIndex',
+      AppLog.debug(
+        '${DateTime.now()} opened -> notificationIndex=$currentNotificationIndex',
+        tag: 'Dashboard',
       );
       await _renderCurrentCard(now: now);
       return;
@@ -97,8 +100,9 @@ class DashboardService {
       currentNotificationIndex =
           (currentNotificationIndex + 1) % _notifications.length;
     }
-    print(
-      '${DateTime.now()} Dashboard: tilt-up next -> notificationIndex=$currentNotificationIndex',
+    AppLog.debug(
+      '${DateTime.now()} tilt-up next -> notificationIndex=$currentNotificationIndex',
+      tag: 'Dashboard',
     );
     await _renderCurrentCard();
   }
@@ -126,15 +130,19 @@ class DashboardService {
           .toList();
       setNotifications(notifications);
     } on PlatformException catch (e) {
-      print(
-        '${DateTime.now()} Dashboard: notification sync unavailable -> ${e.message}',
+      AppLog.error(
+        '${DateTime.now()} notification sync unavailable -> ${e.message}',
+        tag: 'Dashboard',
       );
     }
   }
 
   Future<void> closeDashboard({bool sendExitCommand = false}) async {
     if (!isOpen) {
-      print('${DateTime.now()} Dashboard: close ignored -> dashboard closed');
+      AppLog.debug(
+        '${DateTime.now()} close ignored -> dashboard closed',
+        tag: 'Dashboard',
+      );
       return;
     }
 
@@ -142,13 +150,16 @@ class DashboardService {
     _autoCloseTimer = null;
     state = DashboardState.dashboardClosed;
     currentNotificationIndex = 0;
-    print('${DateTime.now()} Dashboard: closed -> idle');
+    AppLog.debug('${DateTime.now()} closed -> idle', tag: 'Dashboard');
     if (_customDashboardRenderingEnabled) {
       await TextService.get.stopTextSendingByOS();
     }
     if (_customDashboardRenderingEnabled && sendExitCommand) {
       final didExit = await Proto.exit();
-      print('${DateTime.now()} Dashboard: sent exit command -> success=$didExit');
+      AppLog.debug(
+        '${DateTime.now()} sent exit command -> success=$didExit',
+        tag: 'Dashboard',
+      );
     }
   }
 
@@ -156,19 +167,21 @@ class DashboardService {
     cancelAutoCloseCountdown();
     state = DashboardState.dashboardClosed;
     currentNotificationIndex = 0;
-    print('${DateTime.now()} Dashboard: reset');
+    AppLog.debug('${DateTime.now()} reset', tag: 'Dashboard');
   }
 
   void startAutoCloseCountdownOnTiltDown() {
     if (!isOpen) {
-      print(
-        '${DateTime.now()} Dashboard: tilt-down ignored -> dashboard closed',
+      AppLog.debug(
+        '${DateTime.now()} tilt-down ignored -> dashboard closed',
+        tag: 'Dashboard',
       );
       return;
     }
     _restartAutoCloseTimer();
-    print(
-      '${DateTime.now()} Dashboard: tilt-down -> auto-close countdown started',
+    AppLog.debug(
+      '${DateTime.now()} tilt-down -> auto-close countdown started',
+      tag: 'Dashboard',
     );
   }
 
@@ -179,16 +192,18 @@ class DashboardService {
 
   Future<void> _renderCurrentCard({DateTime? now}) async {
     if (!_customDashboardRenderingEnabled) {
-      print(
-        '${DateTime.now()} Dashboard: custom rendering disabled -> firmware dashboard left untouched',
+      AppLog.debug(
+        '${DateTime.now()} custom rendering disabled -> firmware dashboard left untouched',
+        tag: 'Dashboard',
       );
       return;
     }
 
     final renderTime = now ?? DateTime.now();
     final notification = _currentNotification();
-    print(
-      '${DateTime.now()} Dashboard: render -> notificationIndex=$currentNotificationIndex',
+    AppLog.debug(
+      '${DateTime.now()} render -> notificationIndex=$currentNotificationIndex',
+      tag: 'Dashboard',
     );
     try {
       await DashboardBitmapService.get.renderAndSend(
@@ -201,7 +216,10 @@ class DashboardService {
       final text = notification == null
           ? 'Time\n$hour:$minute\n\nNo notifications'
           : 'Time\n$hour:$minute\n\n${notification.source}\n${notification.message}';
-      print('${DateTime.now()} Dashboard: bitmap render failed -> $e');
+      AppLog.error(
+        '${DateTime.now()} bitmap render failed -> $e',
+        tag: 'Dashboard',
+      );
       await TextService.get.startSendText(text);
     }
   }
@@ -216,7 +234,10 @@ class DashboardService {
   void _restartAutoCloseTimer() {
     _autoCloseTimer?.cancel();
     _autoCloseTimer = Timer(_autoCloseDelay, () {
-      print('${DateTime.now()} Dashboard: auto-close after inactivity');
+      AppLog.debug(
+        '${DateTime.now()} auto-close after inactivity',
+        tag: 'Dashboard',
+      );
       closeDashboard(sendExitCommand: true);
     });
   }
@@ -260,8 +281,9 @@ class DashboardService {
       );
       _lastPrimedMinuteKey = _minuteKey(refreshedNow);
       _lastPrimedFeedSignature = _feedSignature(_notifications);
-      print(
-        '${DateTime.now()} Dashboard: cache warmed -> reason=$reason, minute=$_lastPrimedMinuteKey, count=${_notifications.length}',
+      AppLog.debug(
+        '${DateTime.now()} cache warmed -> reason=$reason, minute=$_lastPrimedMinuteKey, count=${_notifications.length}',
+        tag: 'Dashboard',
       );
     } finally {
       _isWarmingCache = false;

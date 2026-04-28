@@ -75,7 +75,7 @@ class CompanionController extends ChangeNotifier {
       return;
     }
     _initialized = true;
-    print('${DateTime.now()} Companion: init begin');
+    AppLog.info('${DateTime.now()} init begin', tag: 'Companion');
     BleManager.get().setMethodCallHandler();
     BleManager.get().startListening();
     BleManager.get().onStatusChanged = () {
@@ -88,11 +88,14 @@ class CompanionController extends ChangeNotifier {
     _notificationSubscription = _notificationChannel
         .receiveBroadcastStream(_eventNotifications)
         .listen(_handleNotificationEvent, onError: (Object error) {
-      print('${DateTime.now()} Companion: notification stream error -> $error');
+      AppLog.error(
+        '${DateTime.now()} notification stream error -> $error',
+        tag: 'Companion',
+      );
     });
     await _startBackgroundFoundation();
     _logDisplayStateIfChanged('Controller.init.complete');
-    print('${DateTime.now()} Companion: init complete');
+    AppLog.info('${DateTime.now()} init complete', tag: 'Companion');
   }
 
   Future<void> disposeController() async {
@@ -300,10 +303,14 @@ class CompanionController extends ChangeNotifier {
           _statusMessage = 'Glance ready';
           break;
         }
-        print('${DateTime.now()} GlanceAssistant: F5 17 routed in Glance mode');
+        AppLog.debug(
+          '${DateTime.now()} F5 17 routed in Glance mode',
+          tag: 'GlanceAssistant',
+        );
         if (hasActiveDisplay) {
-          print(
-            '${DateTime.now()} GlanceAssistant: start blocked -> activeDisplay owner=$_activeDisplayOwner',
+          AppLog.debug(
+            '${DateTime.now()} start blocked -> activeDisplay owner=$_activeDisplayOwner',
+            tag: 'GlanceAssistant',
           );
           _statusMessage = 'Glance busy';
           break;
@@ -315,7 +322,10 @@ class CompanionController extends ChangeNotifier {
           _statusMessage = 'Glance ready';
           break;
         }
-        print('${DateTime.now()} GlanceAssistant: F5 18 routed in Glance mode');
+        AppLog.debug(
+          '${DateTime.now()} F5 18 routed in Glance mode',
+          tag: 'GlanceAssistant',
+        );
         _statusMessage =
             await GlanceAssistantService.get.stopListeningAndSubmit();
         break;
@@ -698,7 +708,10 @@ class CompanionController extends ChangeNotifier {
         }
       }
     } catch (e) {
-      print('${DateTime.now()} Companion: hydrate notifications failed -> $e');
+      AppLog.error(
+        '${DateTime.now()} hydrate notifications failed -> $e',
+        tag: 'Companion',
+      );
     }
   }
 
@@ -709,8 +722,10 @@ class CompanionController extends ChangeNotifier {
       );
       _notificationAccessEnabled = enabled ?? false;
     } catch (e) {
-      print(
-          '${DateTime.now()} Companion: notification access check failed -> $e');
+      AppLog.error(
+        '${DateTime.now()} notification access check failed -> $e',
+        tag: 'Companion',
+      );
     }
   }
 
@@ -730,12 +745,15 @@ class CompanionController extends ChangeNotifier {
         'startCompanionService',
         {'modeLabel': _activeMode.label},
       );
-      print(
-        '${DateTime.now()} Companion: foreground service started -> ${_activeMode.label}',
+      AppLog.info(
+        '${DateTime.now()} foreground service started -> ${_activeMode.label}',
+        tag: 'Companion',
       );
     } catch (e) {
-      print(
-          '${DateTime.now()} Companion: failed to start foreground service -> $e');
+      AppLog.error(
+        '${DateTime.now()} failed to start foreground service -> $e',
+        tag: 'Companion',
+      );
     }
   }
 
