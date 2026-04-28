@@ -104,6 +104,11 @@ Owns:
 - text fallback for startup / waiting states
 - Navigate-only BMP card rendering for real Google Maps guidance
 - suppression / prioritization rules relative to Glance
+- note: the 2026-04-28 layouts capture confirmed a structured `0x0a`
+  navigation card protocol that sends text data slots in one ~48-byte
+  packet, eliminating the BMP sync issues. See
+  [protocol-reference.md](protocol-reference.md) "Navigation card" and
+  [FINDINGS-layouts.md](FINDINGS-layouts.md). Not yet wired in.
 
 ### Device status
 - [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)
@@ -158,6 +163,11 @@ Owns:
 - STT handoff
 - backend request / response handling
 - concise text-state rendering back to the glasses
+- note: the 2026-04-28 layouts capture confirmed a `0x52` streaming text
+  protocol that pushes text word by word with a cursor — the natural fit
+  for streaming LLM responses. See
+  [protocol-reference.md](protocol-reference.md) "Live streaming text" and
+  [FINDINGS-layouts.md](FINDINGS-layouts.md). Not yet wired in.
 
 Current backend seam:
 - `ChatService` depends on the `ChatBackend` abstraction, not a controller-level hardcoded backend

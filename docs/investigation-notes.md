@@ -200,6 +200,16 @@ Recently resolved:
 - **Note management family**: `0x06 ... / 0x22 ack` three-step transaction
   used by the official app for delete / reorder. The 8-byte note UID it
   carries is the same shape as the trailing block in `R21` payloads.
+- **Three new rendering protocols** (2026-04-28 layouts capture):
+  - `0x52` live streaming text — word-by-word incremental rendering with
+    cursor. Confirmed with the known phrase "The quick brown fox..." 
+  - `0x0a` navigation structured card — text data slots (ETA, distance,
+    road, turn distance) in one ~48-byte packet plus optional icon/map
+    bitmap chunks. Replaces BMP-per-frame Navigate.
+  - `0x1e` TX dashboard data slots — pushes titled content into the
+    firmware's dashboard grid.
+  - `0x50` display mode control — fires before every mode transition.
+  See [FINDINGS-layouts.md](FINDINGS-layouts.md) for the full analysis.
 
 ## Why this file exists
 

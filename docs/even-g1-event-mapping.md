@@ -490,6 +490,24 @@ fed from the existing F5 dispatch in
   - current logs show this on the right leg only
   - do not infer field semantics yet
 
+## Rendering protocols (confirmed via official-app HCI snoop)
+
+Three rendering paths beyond the existing `0x4E` text and `0x15/0x16/0x20`
+BMP transfer were identified in the 2026-04-28 layouts capture — see
+[FINDINGS-layouts.md](FINDINGS-layouts.md) for the full analysis and
+[protocol-reference.md](protocol-reference.md) for packet structures:
+
+- **`0x52` live streaming text** — word-by-word incremental text with cursor,
+  used by the official app for live transcription. The companion app can use
+  this for streaming Chat responses.
+- **`0x0a` navigation card** — structured text data slots (ETA, distance, road
+  name, turn distance) in one ~48-byte packet, plus optional icon/map bitmap
+  chunks. Replaces the BMP-per-frame Navigate path.
+- **`0x1e` TX dashboard data slots** — pushes titled content (note title +
+  body) into the firmware's dashboard grid layout.
+- **`0x50` display mode control** — primes the display before entering
+  streaming text or navigation card mode.
+
 ## Unknown
 
 These event IDs have been observed but are not yet mapped with enough confidence

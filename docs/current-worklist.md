@@ -100,6 +100,24 @@ Note-management family `0x06`:
   app for delete / reorder. UID shape matches the trailing block in
   `R21` payloads. Out of scope for the current app.
 
+Rendering protocols (layouts capture):
+- 2026-04-28 layouts capture (`FINDINGS-layouts.md`) discovered three new
+  rendering paths the official app uses beyond `0x4E` text and BMP:
+  - **`0x52` live streaming text** — word-by-word with cursor, confirmed
+    with a known phrase. `0x53` keepalive every ~5 s. Chat mode can stream
+    LLM responses instead of dumping finished text blocks.
+  - **`0x0a` navigation card** — structured text data slots in one ~48-byte
+    packet (ETA, distance, road, turn distance) plus optional icon/map
+    bitmap chunks. Replaces BMP-per-frame Navigate, eliminates the
+    split-eye sync issue.
+  - **`0x1e` TX dashboard data slots** — pushes titled content into the
+    firmware's grid layout. Enables companion-app quicknote and dashboard
+    injection features.
+  - **`0x50` display mode control** — primes the display before entering
+    streaming text or navigation card mode.
+- None of these are wired into the companion app yet; they are documented
+  as confirmed protocols ready for implementation.
+
 Tap and long-press mapping:
 - 2026-04-28 capture (`FINDINGS-taps.md`) hardened the
   understanding of the touch family:

@@ -90,6 +90,15 @@ far. Each item is detailed in the docs above.
   `0x08 06 00 00 03 <value>`. Double-tap action: `0x26 06 00 <seq> 05 <value>`.
   Both follow the same shape as the brightness command. The values persist
   in firmware and survive an app uninstall.
+- **Live streaming text (`0x52`).** Word-by-word incremental rendering with a
+  cursor and live-updating clock. The official app uses this for live
+  transcription; the companion app can use it for streaming Chat responses.
+- **Navigation structured card (`0x0a`).** One ~48-byte packet with
+  null-separated text fields (ETA, distance, road name, turn distance) plus
+  optional direction-icon and route-map bitmap chunks. Replaces the
+  full-screen BMP approach and eliminates the split-eye sync issue.
+- **Dashboard data slot injection (`0x1e` TX).** Pushes titled content (note
+  title + body) into the firmware's built-in dashboard grid layout.
 - **Note management.** Delete and reorder of saved notes use a three-step
   `0x06 ... / 0x22` ack transaction with an 8-byte note UID — same UID shape
   as the trailing block in `R21` payloads, suggesting `R21` advertises the

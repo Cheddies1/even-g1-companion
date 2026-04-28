@@ -241,6 +241,110 @@ Observed reality:
 - image transfer path exists and works in this repo
 - but bitmap dashboard rendering is no longer treated as the primary UX path for the companion app
 
+## Live streaming text: `0x52` / `0x53`
+
+Source:
+- 2026-04-28 layouts capture, Phase 3 (live transcription) — full write-up
+  in [FINDINGS-layouts.md](FINDINGS-layouts.md)
+
+Observed reality (`Confirmed`):
+
+- TX `0x52` pushes word-by-word incremental text to the glasses with a
+  cursor and live-updating clock. The firmware handles line wrapping
+  (typewriter-style, oldest line scrolls off the top).
+- Mode init: `52 06 00 00 01 01` (identical shape to `0x50` mode control).
+- Text update frame:
+  ```
+  52 <len> 00 <seq> 02 02 00 <line> 00 <flags> 00 00 <text_utf8> 0a
+  ```
+  `<line>` = which display line (01, 02, ...); `<flags>` = `01 00` when
+  confirmed, `00 00` while still typing. Each update re-sends the full
+  current line (not a delta).
+- Cursor-update frame (interleaved):
+  `52 0e 00 <seq> 02 02 00 01 00 00 00 00 0a 0a`
+- TX `0x53` is a keepalive sent every ~5 s during streaming to prevent the
+  firmware from timing out the display mode.
+- Known test phrase "The quick brown fox jumped over the lazy dog" confirmed
+  byte-for-byte in the payloads, growing word by word.
+
+Notes:
+- this is the protocol the companion app would use for streaming LLM
+  responses in Chat mode (currently Chat renders a finished text block via
+  `0x4E`)
+- `0x50 06 00 00 01 01` should be sent before the first `0x52` frame to
+  prime the display (see "Display mode control" below)
+
+## Navigation card: `0x0a`
+
+Source:
+- 2026-04-28 layouts capture, Phase 4 (Google Maps navigation) — full
+  write-up in [FINDINGS-layouts.md](FINDINGS-layouts.md)
+
+Observed reality (`Confirmed`):
+
+- TX `0x0a` pushes structured navigation card data to the glasses. The
+  firmware has a built-in card template; the host fills text fields and
+  optionally supplies icon + map bitmaps.
+- Control frames:
+  - `0a 06 00 <seq> 00 01` — enter navigation display mode
+  - `0a 06 00 <seq> 04 01` — status ready / prepare for card data
+- **Sub-type 1 — structured text** (one packet per card update):
+  ```
+  0a <len> 00 <seq> 01 03 c8 00 12 00
+    <eta_utf8> 00 <distance_utf8> 00 <road_name_utf8> 00 <turn_distance_utf8> 00
+  ```
+  Observed: `"26 min" \0 "2.2km" \0 "Church Road " \0 "46m" \0` — ~48 bytes.
+- **Sub-type 2 — direction icon bitmap** (`02 0d`):
+  `0a c2 00 <seq> 02 0d 00 <row> <~188 bytes>` — ~13 rows of icon data.
+- **Sub-type 3 — route map bitmap** (`03 5a`):
+  `0a c3 00 <seq> 03 5a 00 <row> <~190 bytes>` — ~30–50 rows of map data.
+
+Notes:
+- the text sub-type alone is sufficient for a useful navigation card — the
+  icon and map bitmaps are optional enhancements
+- replaces the current BMP-per-frame Navigate path: payload drops from
+  ~5 KB to ~48 bytes per update, eliminating the split-eye sync issue
+
+## Dashboard data slots: `0x1e` TX
+
+Source:
+- 2026-04-28 layouts capture, Phases 1–2 (dashboard cycling + quicknote
+  sync) — full write-up in [FINDINGS-layouts.md](FINDINGS-layouts.md)
+
+Observed reality (`Confirmed` for note content push):
+
+- TX `0x1e` pushes titled content into the firmware's dashboard grid slots.
+  The firmware renders the layout; the host only supplies the data.
+- Short form (refresh / activate widget): `1e 06 00 <seq> 01 01`
+- Content form:
+  ```
+  1e <len> 00 <seq> 03 01 00 01 00 <slot_index> 01 <title_len> <title_utf8> <body_len> 00 <body_utf8>
+  ```
+- Observed payloads:
+  - "Test Note 2" + "This is a test quick note."
+  - "Keyword Research" + "Focus on the keyword: Banana Chocolate."
+  (both confirmed against the on-screen dashboard rendering)
+
+Notes:
+- `0x1e` appears as both TX (host → glasses, pushing content into dashboard
+  slots) and RX (glasses → host, the post-quicknote-release audio stream
+  documented separately). The two directions carry different payloads.
+- the `0x06` three-step transaction family handles the transactional
+  framing around dashboard updates; `0x1e` carries the actual slot content.
+
+## Display mode control: `0x50`
+
+Source:
+- 2026-04-28 layouts capture — fires at every mode transition
+
+Observed reality (`Confirmed`):
+
+- TX `0x50 06 00 00 01 01` — identical 6-byte packet fired before every
+  mode entry (transcription, navigation, return to idle).
+- The payload is constant regardless of which mode follows; the mode is
+  implicit in which data opcode (`0x52` or `0x0a`) arrives next.
+- Likely means "clear display and prepare for structured content."
+
 ## Battery and wear state: `0xF5`
 
 Source:

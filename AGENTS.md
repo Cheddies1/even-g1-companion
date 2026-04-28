@@ -43,6 +43,11 @@ Important:
   and the post-quicknote-release `0x1e c8` audio-shaped stream are now mapped
   in `docs/protocol-reference.md`. Refer there rather than re-deriving from
   the snoop logs.
+- three rendering protocols beyond `0x4E` text and BMP are now mapped:
+  `0x52` (live streaming text with cursor), `0x0a` (navigation structured
+  card with text data slots + optional bitmap chunks), `0x1e` TX (dashboard
+  data slot injection), and `0x50` (display mode control). All documented
+  in `docs/protocol-reference.md` and `docs/FINDINGS-layouts.md`.
 
 ## Key files
 - [lib/ble_manager.dart](lib/ble_manager.dart)
