@@ -1,6 +1,5 @@
 import 'package:demo_ai_even/models/companion_notification.dart';
 import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/navigate_bitmap_service.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
 
@@ -8,7 +7,7 @@ class NavigateService {
   NavigateService._();
 
   static const _minTextRenderGap = Duration(milliseconds: 250);
-  static const _minBitmapRenderGap = Duration(milliseconds: 2200);
+  static const _minNavCardGap = Duration(milliseconds: 500);
 
   static NavigateService? _instance;
   static NavigateService get get => _instance ??= NavigateService._();
@@ -17,7 +16,8 @@ class NavigateService {
   bool _isVisible = false;
   bool _renderActive = false;
   bool _renderDirty = false;
-  bool _lastRenderUsedBitmap = false;
+  bool _lastRenderUsedNavCard = false;
+  bool _navModeEntered = false;
   DateTime? _lastRenderCompletedAt;
 
   CompanionNotification? get latestInstruction => _latestInstruction;
@@ -53,7 +53,7 @@ class NavigateService {
     }
     _isVisible = true;
     _renderDirty = false;
-    _lastRenderUsedBitmap = false;
+    _lastRenderUsedNavCard = false;
     await TextService.get.startSendText('Open Google Maps\nto start navigation');
     AppLog.debug('${DateTime.now()} render -> idle-prompt', tag: 'Navigate');
   }
@@ -100,6 +100,7 @@ class NavigateService {
     }
     _isVisible = false;
     _renderDirty = false;
+    _navModeEntered = false;
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
     AppLog.info('${DateTime.now()} closed', tag: 'Navigate');
@@ -135,8 +136,8 @@ class NavigateService {
     final notification = _latestInstruction;
     _isVisible = true;
 
-    final useBitmap = notification != null && _shouldUseBitmap(notification);
-    final minGap = _lastRenderUsedBitmap ? _minBitmapRenderGap : _minTextRenderGap;
+    final useNavCard = notification != null && _shouldUseNavCard(notification);
+    final minGap = _lastRenderUsedNavCard ? _minNavCardGap : _minTextRenderGap;
     final gap = _lastRenderCompletedAt == null
         ? Duration.zero
         : DateTime.now().difference(_lastRenderCompletedAt!);
@@ -144,25 +145,21 @@ class NavigateService {
       await Future<void>.delayed(minGap - gap);
     }
 
-    if (useBitmap) {
+    if (useNavCard) {
       await TextService.get.stopTextSendingByOS();
-      await NavigateBitmapService.get.renderAndSend(notification);
-      _lastRenderUsedBitmap = true;
-      AppLog.debug('${DateTime.now()} render -> bitmap-card', tag: 'Navigate');
+      await _sendNavCard(notification);
+      _lastRenderUsedNavCard = true;
+      AppLog.debug('${DateTime.now()} render -> nav-card', tag: 'Navigate');
       return;
     }
 
     final text = _buildTextFallback(notification);
     await TextService.get.startSendText(text);
-    _lastRenderUsedBitmap = false;
+    _lastRenderUsedNavCard = false;
     AppLog.debug('${DateTime.now()} render -> text-fallback', tag: 'Navigate');
   }
 
-  bool _shouldUseBitmap(CompanionNotification notification) {
-    if (notification.navIconPngBase64.isEmpty) {
-      return false;
-    }
-
+  bool _shouldUseNavCard(CompanionNotification notification) {
     final primary = _clean(
       notification.navPrimaryInfo.isNotEmpty
           ? notification.navPrimaryInfo
@@ -188,6 +185,70 @@ class NavigateService {
     }
 
     return true;
+  }
+
+  /// Map the notification's icon-source label to a Unicode arrow for use
+  /// as a text-based direction hint in the nav card's road-name field.
+  /// The `0x0a 02` icon bitmap encoding is compressed column-major RLE
+  /// that hasn't been fully decoded yet; this is the interim solution.
+  static String _directionHint(String iconSource) {
+    final lower = iconSource.toLowerCase();
+    if (lower.contains('u-turn') || lower.contains('uturn')) return '↩ ';
+    if (lower.contains('sharp') && lower.contains('left')) return '↰ ';
+    if (lower.contains('sharp') && lower.contains('right')) return '↱ ';
+    if (lower.contains('slight') && lower.contains('left')) return '↖ ';
+    if (lower.contains('slight') && lower.contains('right')) return '↗ ';
+    if (lower.contains('left')) return '← ';
+    if (lower.contains('right')) return '→ ';
+    if (lower.contains('straight') || lower.contains('continue')) return '↑ ';
+    if (lower.contains('arrive') || lower.contains('destination')) return '◉ ';
+    if (lower.contains('merge')) return '↗ ';
+    if (lower.contains('roundabout')) return '↻ ';
+    return '';
+  }
+
+  Future<void> _sendNavCard(CompanionNotification notification) async {
+    if (!_navModeEntered) {
+      await Proto.sendNavModeEnter();
+      _navModeEntered = true;
+    }
+
+    final turnDistance = _clean(
+      notification.navPrimaryInfo.isNotEmpty
+          ? notification.navPrimaryInfo
+          : notification.navChipExpandedText,
+    );
+    final dirHint = _directionHint(notification.navIconSource);
+    final rawRoad = _clean(
+      notification.navSecondaryInfo.isNotEmpty
+          ? notification.navSecondaryInfo
+          : notification.text.isNotEmpty
+              ? notification.text
+              : notification.title,
+    );
+    final roadName = '$dirHint$rawRoad';
+    final meta = _clean(notification.subText);
+
+    String eta = meta;
+    String totalDistance = '';
+    final separatorIndex = meta.indexOf('·');
+    final bulletIndex = separatorIndex >= 0 ? separatorIndex : meta.indexOf('•');
+    if (bulletIndex >= 0) {
+      eta = meta.substring(0, bulletIndex).trim();
+      totalDistance = meta.substring(bulletIndex + 1).trim();
+    }
+
+    AppLog.info(
+      '${DateTime.now()} nav card fields: eta="$eta" dist="$totalDistance" road="$roadName" turn="$turnDistance"',
+      tag: 'Navigate',
+    );
+
+    await Proto.sendNavCard(
+      eta: eta,
+      distance: totalDistance,
+      roadName: roadName,
+      turnDistance: turnDistance,
+    );
   }
 
   bool _isEligibleNavigationNotification(CompanionNotification notification) {

@@ -163,6 +163,88 @@ class Proto {
     await BleManager.sendData(data);
   }
 
+  /// Sequence counter for `0x0a` navigation card packets.
+  static int _navSeq = 0;
+
+  /// Prime the glasses display for navigation card mode.
+  ///
+  /// Sends three frames in order:
+  /// 1. `0x50 06 00 00 01 01` — display mode control (clear + prepare)
+  /// 2. `0x0a 06 00 <seq> 00 01` — enter navigation display mode
+  /// 3. `0x0a 06 00 <seq> 04 01` — ready for card data
+  ///
+  /// Call once before the first [sendNavCard] in a session. See
+  /// `docs/protocol-reference.md` "Navigation card" and "Display mode
+  /// control".
+  static Future<void> sendNavModeEnter() async {
+    await BleManager.sendData(
+        Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]));
+    final enterSeq = _navSeq & 0xff;
+    _navSeq++;
+    await BleManager.sendData(
+        Uint8List.fromList([0x0a, 0x06, 0x00, enterSeq, 0x00, 0x01]));
+    final readySeq = _navSeq & 0xff;
+    _navSeq++;
+    await BleManager.sendData(
+        Uint8List.fromList([0x0a, 0x06, 0x00, readySeq, 0x04, 0x01]));
+    AppLog.info('${DateTime.now()} nav mode entered', tag: 'Navigate');
+  }
+
+  /// Send a structured navigation card to the glasses.
+  ///
+  /// Format: `0x0a <len> 00 <seq> 01 03 c8 00 12 00 <eta> 00 <dist> 00
+  /// <road> 00 <turn> 00`. Null-separated UTF-8 text fields that the
+  /// firmware renders into its built-in navigation card template.
+  ///
+  /// Fire-and-forget broadcast to both legs. See
+  /// `docs/protocol-reference.md` "Navigation card" sub-type 1.
+  static Future<void> sendNavCard({
+    required String eta,
+    required String distance,
+    required String roadName,
+    required String turnDistance,
+  }) async {
+    final etaBytes = utf8.encode(eta);
+    final distBytes = utf8.encode(distance);
+    final roadBytes = utf8.encode(roadName);
+    final turnBytes = utf8.encode(turnDistance);
+
+    const prefix = <int>[0x01, 0x03, 0xc8, 0x00, 0x12, 0x00];
+    final fieldsPayload = <int>[
+      ...prefix,
+      ...etaBytes, 0x00,
+      ...distBytes, 0x00,
+      ...roadBytes, 0x00,
+      ...turnBytes, 0x00,
+    ];
+
+    final seq = _navSeq & 0xff;
+    _navSeq++;
+    final totalLen = 4 + fieldsPayload.length;
+    final packet = <int>[
+      0x0a,
+      totalLen & 0xff,
+      0x00,
+      seq,
+      ...fieldsPayload,
+    ];
+
+    final data = Uint8List.fromList(packet);
+    AppLog.debug(
+      '${DateTime.now()} nav card TX: eta="$eta" dist="$distance" road="$roadName" turn="$turnDistance" len=${data.length}',
+      tag: 'Navigate',
+    );
+    await BleManager.sendData(data);
+  }
+
+  /// Exit navigation card mode. Sends the display mode control frame
+  /// to return to idle.
+  static Future<void> sendNavModeExit() async {
+    await BleManager.sendData(
+        Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]));
+    AppLog.debug('${DateTime.now()} nav mode exit sent', tag: 'Navigate');
+  }
+
   static Future<bool> sendHeartBeat() async {
     final successL = await sendHeartBeatToLeg("L");
     final successR = await sendHeartBeatToLeg("R");
