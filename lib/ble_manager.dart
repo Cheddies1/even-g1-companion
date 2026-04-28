@@ -387,20 +387,15 @@ class BleManager {
         case 10:
         case 11:
         case 15:
-          // Handled above by DeviceStatusService.ingestF5Event (wear state +
-          // battery percentages). Empty case prevents the default-branch
-          // "Unhandled Ble Event" info log from firing on every push.
+        case 18:
+          // Handled above by DeviceStatusService.ingestF5Event (wear state,
+          // battery percentages, brightness echo). Empty case prevents the
+          // default-branch "Unhandled Ble Event" info log from firing on
+          // every push.
           break;
         case 17:
           AppLog.debug(
             '${DateTime.now()} F5 17 received from ${res.lr}',
-            tag: 'GlanceAssistant',
-          );
-          CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
-          break;
-        case 18:
-          AppLog.debug(
-            '${DateTime.now()} F5 18 received from ${res.lr}',
             tag: 'GlanceAssistant',
           );
           CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
@@ -459,16 +454,14 @@ class BleManager {
         return 'glasses-battery-push';
       case 11:
         return 'wear-state-cradle-closed';
-      case 12:
-        return 'brightness-state-push';
       case 14:
-        return 'unknown-background-state-14';
+        return 'cradle-cable-state';
       case 15:
         return 'case-battery-push';
       case 17:
         return 'voice-start-or-state-17';
       case 18:
-        return 'voice-stop-or-state-18';
+        return 'brightness-state-push';
       case 30:
         return 'dashboard-open-confirm-or-state-up';
       case 31:

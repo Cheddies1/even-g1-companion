@@ -23,6 +23,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Timer? scanTimer;
   bool isScanning = false;
+  double _brightnessSliderValue = 21;
+  bool _autoBrightness = false;
 
   String _uiConnectionState() {
     if (BleManager.get().isConnected) {
@@ -79,6 +81,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     DeviceStatusService.get.addListener(_refreshPage);
     ChatHistoryStore.get.addListener(_refreshPage);
     ChatHistoryStore.get.init();
+    final ds = DeviceStatusService.get;
+    _brightnessSliderValue = (ds.brightnessLevel ?? 21).toDouble();
+    _autoBrightness = ds.autoBrightness;
   }
 
   @override
@@ -464,6 +469,86 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildDisplaySection() {
+    final theme = Theme.of(context);
+    final ds = DeviceStatusService.get;
+    final confirmed = ds.brightnessLevel;
+    final confirmedLabel = confirmed == null ? '—' : '$confirmed';
+    const maxLevel = DeviceStatusService.brightnessLevelMax;
+    final sliderValue =
+        _brightnessSliderValue.clamp(0.0, maxLevel.toDouble());
+    return _buildSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Display',
+                style: theme.textTheme.titleMedium,
+              ),
+              const Spacer(),
+              Text(
+                'Confirmed: $confirmedLabel',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF9AB7C8),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const SizedBox(width: 4),
+              const Icon(Icons.brightness_low, size: 18, color: Color(0xFF9AB7C8)),
+              Expanded(
+                child: Slider(
+                  value: sliderValue,
+                  min: 0,
+                  max: maxLevel.toDouble(),
+                  divisions: maxLevel,
+                  label: sliderValue.round().toString(),
+                  onChanged: (v) {
+                    setState(() => _brightnessSliderValue = v);
+                  },
+                  onChangeEnd: (v) {
+                    DeviceStatusService.get.setBrightness(
+                      level: v.round(),
+                      auto: _autoBrightness,
+                    );
+                  },
+                ),
+              ),
+              const Icon(Icons.brightness_high, size: 18, color: Color(0xFF9AB7C8)),
+              const SizedBox(width: 6),
+              SizedBox(
+                width: 28,
+                child: Text(
+                  sliderValue.round().toString(),
+                  textAlign: TextAlign.end,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Auto brightness'),
+            value: _autoBrightness,
+            onChanged: (next) {
+              setState(() => _autoBrightness = next);
+              DeviceStatusService.get.setBrightness(
+                level: _brightnessSliderValue.round(),
+                auto: next,
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLegacySection() {
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
@@ -523,6 +608,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ],
             ),
           ),
+          if (BleManager.get().isConnected) ...[
+            const SizedBox(height: 16),
+            _buildDisplaySection(),
+          ],
           const SizedBox(height: 16),
           _buildChatLogSection(),
           const SizedBox(height: 16),

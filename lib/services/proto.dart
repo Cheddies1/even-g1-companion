@@ -94,6 +94,27 @@ class Proto {
         ret.data[4].toInt() == 0x04;
   }
 
+  /// Set glasses display brightness on both legs.
+  ///
+  /// Format: `0x01 <level> <auto>` where `level` is 0..42 and `auto` is 0/1.
+  /// Confirmation arrives as the firmware-pushed `F5 12 <level>` event,
+  /// ingested by `DeviceStatusService`. The auto flag is not echoed by the
+  /// firmware, so callers track it themselves.
+  ///
+  /// Sent as a broadcast write without waiting for a per-leg ack — the
+  /// official Even app uses the same fire-and-forget pattern for this
+  /// command and relies on the F5 12 echo for confirmation.
+  static Future<void> setBrightness(int level, bool auto) async {
+    final clamped = level.clamp(0, 42);
+    final autoByte = auto ? 0x01 : 0x00;
+    final data = Uint8List.fromList([0x01, clamped, autoByte]);
+    AppLog.debug(
+      '${DateTime.now()} brightness TX: level=$clamped auto=$auto',
+      tag: 'DeviceStatus',
+    );
+    await BleManager.sendData(data);
+  }
+
   static Future<bool> sendHeartBeat() async {
     final successL = await sendHeartBeatToLeg("L");
     final successR = await sendHeartBeatToLeg("R");

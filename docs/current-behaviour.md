@@ -419,6 +419,24 @@ Current behavior:
 - a `Force Reconnect` action remains available in the connection area
 - occasional setup items now live under `Settings` rather than staying on the main screen
 
+### Display section
+
+When the glasses are connected, a `Display` card appears between the Modes
+card and the Chat Log on the home screen. It contains:
+
+- a brightness slider with the underlying firmware range 0–42; dragging the
+  slider does not send anything in flight, the value is committed on release
+- an `Auto brightness` switch which, when toggled, immediately sends the
+  current slider value with the new auto flag
+- a small `Confirmed: N` label that reflects the most recent
+  `F5 12 <level>` echo from the firmware so the user can see the difference
+  between requested and actually applied brightness when auto brightness is
+  doing its own thing
+
+The auto flag is locally tracked from the last sent command because the
+firmware does not echo it back. On full disconnect, both the slider state and
+the auto flag reset to defaults.
+
 ## Background behaviour
 
 The app is intended to keep functioning as a permanent companion app, not only while visible on screen.

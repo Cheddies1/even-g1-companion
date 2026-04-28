@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(python *)",
-      "Bash(flutter analyze *)"
+      "Bash(flutter analyze *)",
+      "Bash(mv summary.txt summary_baseline.txt)",
+      "Bash(mv traffic.csv traffic_baseline.csv)"
     ]
   }
 }

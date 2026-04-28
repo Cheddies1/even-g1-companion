@@ -297,16 +297,18 @@ fed from the existing F5 dispatch in
 #### `F5 12 <level>`
 
 - Meaning: brightness state push (echoes the most recent brightness level)
-- Confidence: medium-high
+- Confidence: high
 - Evidence:
   - byte 2 mirrored the value most recently sent via the brightness command
     `0x01 <level> <auto>`
   - observed values 0–42 (`0x00`–`0x2a`) tracking the official app's brightness
     slider movement
+  - this app now sends the same `0x01 <level> <auto>` command from the home
+    screen Display section, and the `F5 12` echo is ingested by
+    `DeviceStatusService` to drive the "Confirmed: N" indicator
 - Notes:
-  - useful as confirmation that a host-issued brightness change took effect
-  - this app does not yet send brightness commands itself; tracked as a
-    follow-up
+  - the auto byte is not echoed back by the firmware; the app tracks it
+    locally from the last sent value
 
 ### Confirmed
 

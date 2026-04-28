@@ -245,21 +245,43 @@ Implementation:
 Cross-reference:
 - [even-g1-event-mapping.md](even-g1-event-mapping.md) "Battery and wear state"
 
-## Brightness state push: `F5 12`
+## Brightness: `0x01 <level> <auto>` and `F5 12 <level>`
 
 Vendor/demo reference:
 - not described in the old README excerpt
 
-Observed reality (`Suspected`, medium-high confidence):
+Observed reality (`Confirmed`):
 
-- `F5 12 <level>` is pushed by the glasses whenever the brightness level
-  changes
-- byte 2 mirrors the most recently applied level (range 0..42 inclusive in
-  observed traffic, sent via `0x01 <level> <auto>`)
-- useful as a confirmation that a host-issued brightness command took effect
+- TX `0x01 <level> <auto>` sets the brightness, where `level` is 0..42 and
+  `auto` is 0/1 (1 enables firmware-driven auto brightness)
+- RX `F5 12 <level>` is pushed by the glasses whenever the active brightness
+  level changes; byte 2 mirrors the most recently applied level
+- the auto flag is not echoed back; it is tracked locally from the last sent
+  command
+
+Implementation:
+- TX command: [Proto.setBrightness](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/proto.dart)
+- RX ingestion + auto-flag tracking:
+  [DeviceStatusService](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart)
+- UI: a Display section on the home screen with a level slider and an Auto
+  Brightness switch; the slider commits its value on release, the switch sends
+  the current level with the new auto flag.
 
 Notes:
-- this app does not yet send brightness commands; tracked as a follow-up
+- the brightness command is sent as a fire-and-forget broadcast write, the
+  same pattern the official Even Realities app uses for this command
+- when auto brightness is on, the firmware adjusts the actual displayed
+  level; the home screen shows the most recent echoed level under
+  "Confirmed:" so the user can see the difference between requested and
+  applied values
+
+Important — byte/decimal note:
+- `F5 12` is hex; in the Flutter dispatch in
+  [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+  the F5 sub-code is read as a raw byte and matched as a decimal integer, so
+  the brightness echo is handled at `case 18:` (= `0x12`). Reviewers comparing
+  hex sub-codes against `case` arms in `_describeF5Event`/the dispatch switch
+  should keep that conversion in mind.
 
 ## Heartbeat: `0x25`
 

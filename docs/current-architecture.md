@@ -112,17 +112,21 @@ Owns:
 - glasses battery percentage (push from `F5 0A`)
 - case (cradle) battery percentage (push from `F5 0F`)
 - wear state derived from `F5 06` / `F5 08` / `F5 0B`
+- brightness level (echo from `F5 12`)
+- auto-brightness flag (locally tracked from the last sent
+  `0x01 <level> <auto>` because the firmware does not echo it back)
+- the brightness command path itself, via `setBrightness(level, auto)`,
+  delegating the wire-level send to
+  [Proto.setBrightness](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/proto.dart)
 
 Behaviour:
 - ingests every `0xF5` event via a single entry point called from
   [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
 - only notifies listeners when a value actually changes, so the per-1–2-second
   re-pushes the firmware emits while the glasses are worn do not churn the UI
-- resets to `unknown` on full disconnect so stale values are not displayed
+- resets to defaults on full disconnect so stale values are not displayed
 - accepts updates from either temple; the glasses share a single battery, so
   whichever side reports last wins
-- the Python-SDK label `F5 12` "Device unknown 12" is reinterpreted here as a
-  brightness state push; brightness ingestion itself is a follow-up
 
 Consumers:
 - [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart)
@@ -130,7 +134,8 @@ Consumers:
   shows e.g. `14:32  85%` next to the time
 - [lib/views/home_page.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/views/home_page.dart)
   subscribes to the service and renders glasses %, case %, and the worn /
-  in cradle state as status pills
+  in cradle state as status pills, plus the Display section with brightness
+  slider and auto switch
 
 ### Chat
 - [lib/services/chat_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_service.dart)

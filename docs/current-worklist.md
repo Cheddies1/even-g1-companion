@@ -65,11 +65,14 @@ Battery and wear state:
   glasses %, case %, and a `Worn` / `In cradle` pill
 - Source data and parser are in `logs/bluetooth/`
 
-Brightness (open follow-up):
-- TX `0x01 <level> <auto>` continues to be the brightness command
+Brightness:
+- TX `0x01 <level> <auto>` is the brightness command (level 0..42, auto 0/1)
 - The glasses push `F5 12 <level>` whenever the level actually changes,
   giving a confirmation channel
-- Sending brightness commands from this app is not yet implemented
+- Now wired in this app: a Display section on the home screen has a
+  brightness slider (commits on release) and an auto-brightness switch.
+  `Proto.setBrightness` is the wire-level send; `DeviceStatusService` owns
+  the locally-tracked auto flag and the echoed level.
 
 Pinned score:
 - `com.samsung.android.app.aodservice` is definitely observed
