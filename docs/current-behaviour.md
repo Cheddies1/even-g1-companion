@@ -34,6 +34,15 @@ It is intentionally separate from:
 - available from the persistent Android notification
 - available from the app UI mode selector
 - available as a narrow idle-only right-hold POC via right-leg `R21`
+  (note: this POC's `len == 42` gate may no longer match current firmware,
+  which appears to emit `R21` at length 15 — see
+  [FINDINGS-taps.md](FINDINGS-taps.md))
+- available via double-tap on either temple, contingent on the official
+  Even Realities app's "double-tap action" being any host-handled feature
+  (Transcribe / Translate / Teleprompter all work); the firmware then emits
+  `F5 20`, which the companion app routes to a passive mode cycle. Setting
+  the action to Dashboard or None makes the gesture firmware-only and the
+  cycle stops working. See "Double-tap mode switch" below
 
 ## Glance mode
 
@@ -141,6 +150,37 @@ Current safety rules:
 - it shows recently seen packages
 - packages can be toggled suppressed / unsuppressed there
 - built-in noisy-package suppression seeds currently include SmartThings and Samsung Camera
+
+### Firmware Settings (Settings screen)
+
+Below `Notification Filters` and above `Permissions`, the Settings screen
+exposes two dropdowns that write persisted-on-glasses choices via BLE:
+
+- **Tilt-up behaviour**
+  - `Companion app behaviour` — sends `0x08 06 00 00 03 02`. The firmware
+    does not show its own dashboard on tilt-up; the glasses still emit
+    `F5 02` / `F5 03` and the companion app drives any visible response.
+  - `Even firmware dashboard` — sends `0x08 06 00 00 03 00`. The firmware's
+    own dashboard appears on tilt-up.
+
+- **Double-tap behaviour**
+  - `Companion app mode switch` — sends `0x26 06 00 <seq> 05 05`. Configures
+    the firmware's double-tap action to "transcribe" so it fires `F5 20`,
+    which the companion app routes to a passive mode cycle.
+  - `Even firmware dashboard` — sends `0x26 06 00 <seq> 05 04`. Double-tap
+    opens the firmware's dashboard locally; no `F5 20` fires.
+  - `Do nothing` — sends `0x26 06 00 <seq> 05 00`. Only `F5 00` fires when
+    double-tap closes an already-active feature.
+
+Behavioural notes:
+- Both dropdowns are disabled while the glasses are disconnected.
+- The chosen values persist on the glasses themselves (they survive an app
+  uninstall) and are also remembered locally so the dropdown shows the last
+  pick after an app restart.
+- The companion app **does not** re-send these on reconnect. To re-apply a
+  setting, re-tap the dropdown. This is deliberate — it avoids overriding
+  anything the user might have changed in the official Even Realities app
+  between sessions.
 
 ## Capture mode
 
@@ -347,6 +387,41 @@ Leaving a mode through quick switching follows the same cleanup rules as normal 
 - it currently requires the observed stable `len == 42` packet shape
 - repeated `R21` triggers are ignored for `1500ms`
 - it is intentionally idle-only to avoid colliding with active display content or firmware QuickNote UI
+- in the 2026-04-28 taps capture every right-hold release produced an `R21`
+  of length `15`, not `42`, so the gate may need updating before this POC
+  re-enters active use
+
+### Double-tap mode switch
+
+- the companion app subscribes to `F5 20` and treats it as "double-tap fired,
+  cycle to the next mode"
+- mode order: `Glance` → `Navigate` → `Chat` → `Capture` → `Glance`
+  (reusing the `AppMode.nextMode` cycle the right-hold POC uses)
+- repeated triggers debounced at `1500ms`
+- no idle-only gate is needed: when a feature is already active, the firmware
+  emits `F5 00` (close-active) instead of `F5 20`, and that path is the
+  existing close-active handling
+- this depends on the user setting the official Even Realities app's
+  double-tap action to any **host-handled** feature. Verified configurations:
+  - **Transcribe** ✓ — `F5 20` fires, mode cycle works
+  - **Translate** ✓ — `F5 20` fires, mode cycle works
+  - **Teleprompter** ✓ — `F5 20` fires, mode cycle works
+  - **Dashboard** ✗ — firmware-native, `F5 20` does not fire (the dashboard
+    still opens on-glasses, even with the official app force-stopped)
+  - **None / Close active feature** ✗ — only `F5 00` fires (and only when
+    something is open to close)
+  - the setting is persisted on the glasses themselves, so it survives the
+    official app being uninstalled, but if the user picks Dashboard or None
+    the cycle will stop working
+- the on-glasses overlay for the configured action (e.g. Transcribe's
+  listening prompt) appears briefly alongside the mode switch — there is no
+  way for the companion app to suppress it
+- the firmware emits `F5 20` 1–6 s after the physical tap, so the mode change
+  has a noticeable latency
+- when this is removed or replaced, the wired up F5 20 case in
+  [`lib/ble_manager.dart`](../lib/ble_manager.dart)
+  should be cleaned up alongside the `handleDoubleTapModeSwitch` method in
+  [`lib/services/companion_controller.dart`](../lib/services/companion_controller.dart)
 
 ## Logging
 

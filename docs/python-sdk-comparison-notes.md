@@ -2,8 +2,8 @@
 
 This note summarizes the comparison between:
 
-- [EvenDemoApp](/c:/Users/EddieJohnson/projects/EvenDemoApp)
-- [eveng1_python_sdk](/c:/Users/EddieJohnson/projects/eveng1_python_sdk)
+- [EvenDemoApp](..)
+- `eveng1_python_sdk`
 
 Both appear to target the same Even G1 hardware family and broadly the same
 BLE/UART protocol, but they should not be treated as equally authoritative on

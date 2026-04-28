@@ -22,13 +22,27 @@ Only build on event meanings we trust from live testing:
 - `F5 00` = close active feature / home
 - `F5 02` = tilt-up / dashboard-open start
 - `F5 03` = tilt-down / dashboard-close start
+- `F5 17` = left long-press press-down (voice / Even AI start)
+- `F5 18` = left long-press release (voice / Even AI stop)
 - `F5 1E` / `30` = dashboard/state-up follow-on
 - `F5 1F` / `31` = dashboard/state-down follow-on
+- `F5 20` = double-tap delegates to host (fires for any host-handled
+  official-app double-tap action — Transcribe / Translate / Teleprompter
+  all confirmed; Dashboard is firmware-native and does not fire; None only
+  fires `F5 00`. Routed in this app to a passive mode cycle in
+  `CompanionController.handleDoubleTapModeSwitch`.)
 
 Important:
-- do not design around single taps
+- do not design around single taps — confirmed firmware-only in 2026-04-28
+  capture across idle and dashboard-list states
 - do not treat Python SDK labels as ground truth
 - do not bring bitmap dashboard work back as the main UX
+- right long-press (QuickNote) does NOT fire `F5 17` / `F5 18`; it uses the
+  `0x21` family. Left and right long-press are not symmetric.
+- the persisted-on-glasses settings opcodes `0x08` (head-up) and `0x26` (touch)
+  and the post-quicknote-release `0x1e c8` audio-shaped stream are now mapped
+  in `docs/protocol-reference.md`. Refer there rather than re-deriving from
+  the snoop logs.
 
 ## Key files
 - [lib/ble_manager.dart](lib/ble_manager.dart)

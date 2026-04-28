@@ -29,6 +29,7 @@ class CompanionController extends ChangeNotifier {
       const EventChannel(_eventNotifications);
   bool _lastReportedHasActiveDisplay = false;
   int? _lastRightHoldModeSwitchMs;
+  int? _lastDoubleTapModeSwitchMs;
 
   bool _initialized = false;
   StreamSubscription<dynamic>? _notificationSubscription;
@@ -227,6 +228,43 @@ class CompanionController extends ChangeNotifier {
     }
 
     await FeaturesServices().resendLastBmpData();
+  }
+
+  /// Cycle through the four app modes when the firmware emits `F5 20`.
+  ///
+  /// `F5 20` is fired by the glasses when a double-tap triggers the official
+  /// app's configured "double-tap action" — currently observed only with that
+  /// action set to "transcribe" (left or right temple). It only fires when the
+  /// glasses display is idle; if a feature is active, the firmware emits
+  /// `F5 00` instead and that close-active path is already handled.
+  ///
+  /// Debounced at 1500ms to avoid double-fires from a single user gesture.
+  /// The 5–6 second latency between the physical tap and `F5 20` is firmware
+  /// behaviour and is not something this method can mitigate.
+  Future<void> handleDoubleTapModeSwitch() async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final lastSwitchMs = _lastDoubleTapModeSwitchMs;
+    final debounceMs = lastSwitchMs == null ? null : nowMs - lastSwitchMs;
+
+    if (debounceMs != null && debounceMs < 1500) {
+      AppLog.debug(
+        '${DateTime.now()} DoubleTapModeSwitch: debounced mode=${_activeMode.label} deltaMs=$debounceMs',
+        tag: 'Companion',
+      );
+      return;
+    }
+
+    final nextMode = _activeMode.nextMode;
+    _lastDoubleTapModeSwitchMs = nowMs;
+    AppLog.info(
+      '${DateTime.now()} DoubleTapModeSwitch: from=${_activeMode.label} to=${nextMode.label}',
+      tag: 'Companion',
+    );
+    await setMode(
+      nextMode,
+      source: 'F5_20_DoubleTap',
+      passive: true,
+    );
   }
 
   Future<void> handleRightHoldModeSwitchProbe() async {

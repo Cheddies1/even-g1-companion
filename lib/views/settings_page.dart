@@ -1,6 +1,8 @@
+import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/assistant_backend_config.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
+import 'package:demo_ai_even/services/device_status_service.dart';
 import 'package:demo_ai_even/services/notification_settings_store.dart';
 import 'package:flutter/material.dart';
 
@@ -31,6 +33,7 @@ class _SettingsPageState extends State<SettingsPage> {
     AppSettingsStore.get.addListener(_handleStoreChanged);
     NotificationSettingsStore.get.addListener(_handleStoreChanged);
     CompanionController.get.addListener(_handleStoreChanged);
+    DeviceStatusService.get.addListener(_handleStoreChanged);
     _loadInitialValues();
   }
 
@@ -292,6 +295,140 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildFirmwareSettingsSection() {
+    final connected = BleManager.get().isConnected;
+    final settings = AppSettingsStore.get;
+    final theme = Theme.of(context);
+    return _buildSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Firmware Settings',
+            style: theme.textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'These choices are stored on the glasses themselves and survive '
+            'an app uninstall. The companion app does not re-send them on '
+            'reconnect — pick again here if you want to push the same '
+            'value back to the firmware.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF9AB7C8),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildSettingDropdown<HeadUpMode>(
+            label: 'Tilt-up behaviour',
+            description:
+                'What the glasses show when you tilt your head up.',
+            value: settings.headUpMode == HeadUpMode.unknown
+                ? null
+                : settings.headUpMode,
+            unsetLabel: HeadUpMode.unknown.displayLabel,
+            connected: connected,
+            options: const [
+              HeadUpMode.companionApp,
+              HeadUpMode.evenDashboard,
+            ],
+            optionLabel: (mode) => mode.displayLabel,
+            onChanged: (mode) {
+              if (mode == null) {
+                return;
+              }
+              DeviceStatusService.get.setHeadUpMode(mode);
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildSettingDropdown<DoubleTapAction>(
+            label: 'Double-tap behaviour',
+            description:
+                'Action when you double-tap either temple. '
+                '"Companion app mode switch" cycles app modes via the '
+                'firmware\'s host-handled F5 20 event.',
+            value: settings.doubleTapAction == DoubleTapAction.unknown
+                ? null
+                : settings.doubleTapAction,
+            unsetLabel: DoubleTapAction.unknown.displayLabel,
+            connected: connected,
+            options: const [
+              DoubleTapAction.companionAppModeSwitch,
+              DoubleTapAction.evenDashboard,
+              DoubleTapAction.doNothing,
+            ],
+            optionLabel: (action) => action.displayLabel,
+            onChanged: (action) {
+              if (action == null) {
+                return;
+              }
+              DeviceStatusService.get.setDoubleTapAction(action);
+            },
+          ),
+          if (!connected) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Connect the glasses to change these.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF7C8C99),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingDropdown<T>({
+    required String label,
+    required String description,
+    required T? value,
+    required String unsetLabel,
+    required bool connected,
+    required List<T> options,
+    required String Function(T) optionLabel,
+    required ValueChanged<T?> onChanged,
+  }) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: theme.textTheme.bodyLarge),
+        const SizedBox(height: 4),
+        Text(
+          description,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: const Color(0xFF9AB7C8),
+          ),
+        ),
+        const SizedBox(height: 8),
+        InputDecorator(
+          decoration: const InputDecoration(
+            isDense: true,
+            border: OutlineInputBorder(),
+            contentPadding:
+                EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<T>(
+              value: value,
+              hint: Text(unsetLabel),
+              isExpanded: true,
+              onChanged: connected ? onChanged : null,
+              items: options
+                  .map(
+                    (option) => DropdownMenuItem<T>(
+                      value: option,
+                      child: Text(optionLabel(option)),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPermissionsSection() {
     final controller = CompanionController.get;
     return _buildSectionCard(
@@ -340,6 +477,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 const SizedBox(height: 16),
                 _buildNotificationFiltersSection(),
                 const SizedBox(height: 16),
+                _buildFirmwareSettingsSection(),
+                const SizedBox(height: 16),
                 _buildPermissionsSection(),
               ],
             ),
@@ -351,6 +490,7 @@ class _SettingsPageState extends State<SettingsPage> {
     AppSettingsStore.get.removeListener(_handleStoreChanged);
     NotificationSettingsStore.get.removeListener(_handleStoreChanged);
     CompanionController.get.removeListener(_handleStoreChanged);
+    DeviceStatusService.get.removeListener(_handleStoreChanged);
     _apiKeyController.dispose();
     _baseUrlController.dispose();
     _chatModelController.dispose();

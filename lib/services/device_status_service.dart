@@ -1,4 +1,5 @@
 import 'package:demo_ai_even/services/app_log.dart';
+import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:flutter/foundation.dart';
 
@@ -18,6 +19,84 @@ extension WearStateLabel on WearState {
         return 'In cradle';
       case WearState.unknown:
         return '—';
+    }
+  }
+}
+
+/// Persisted-on-glasses head-up (tilt-up) behaviour.
+///
+/// Sent to the firmware as `08 06 00 00 03 <wireValue>`. Verified values:
+/// `0x00` = the firmware's own dashboard appears on tilt-up; `0x02` = the
+/// glasses emit `F5 02` / `F5 03` only and the companion app drives any
+/// visible response itself.
+enum HeadUpMode {
+  unknown,
+  evenDashboard,
+  companionApp,
+}
+
+extension HeadUpModeX on HeadUpMode {
+  String get displayLabel {
+    switch (this) {
+      case HeadUpMode.evenDashboard:
+        return 'Even firmware dashboard';
+      case HeadUpMode.companionApp:
+        return 'Companion app behaviour';
+      case HeadUpMode.unknown:
+        return 'Not yet set';
+    }
+  }
+
+  int? get wireValue {
+    switch (this) {
+      case HeadUpMode.evenDashboard:
+        return 0x00;
+      case HeadUpMode.companionApp:
+        return 0x02;
+      case HeadUpMode.unknown:
+        return null;
+    }
+  }
+}
+
+/// Persisted-on-glasses double-tap action.
+///
+/// Sent to the firmware as `26 06 00 <seq> 05 <wireValue>`. Verified values
+/// from the 2026-04-28 settings capture: `0x00` = none (firmware emits
+/// `F5 00` only when there's something to close), `0x04` = open the firmware
+/// dashboard locally (no `F5 20`), `0x05` = transcribe (host-handled, fires
+/// `F5 20` which the companion app routes to its mode-cycle handler).
+enum DoubleTapAction {
+  unknown,
+  evenDashboard,
+  companionAppModeSwitch,
+  doNothing,
+}
+
+extension DoubleTapActionX on DoubleTapAction {
+  String get displayLabel {
+    switch (this) {
+      case DoubleTapAction.companionAppModeSwitch:
+        return 'Companion app mode switch';
+      case DoubleTapAction.evenDashboard:
+        return 'Even firmware dashboard';
+      case DoubleTapAction.doNothing:
+        return 'Do nothing';
+      case DoubleTapAction.unknown:
+        return 'Not yet set';
+    }
+  }
+
+  int? get wireValue {
+    switch (this) {
+      case DoubleTapAction.doNothing:
+        return 0x00;
+      case DoubleTapAction.evenDashboard:
+        return 0x04;
+      case DoubleTapAction.companionAppModeSwitch:
+        return 0x05;
+      case DoubleTapAction.unknown:
+        return null;
     }
   }
 }
@@ -58,6 +137,8 @@ class DeviceStatusService extends ChangeNotifier {
   WearState _wearState = WearState.unknown;
   int? _brightnessLevel;
   bool _autoBrightness = false;
+  HeadUpMode _headUpMode = HeadUpMode.unknown;
+  DoubleTapAction _doubleTapAction = DoubleTapAction.unknown;
 
   int? get glassesBatteryPct => _glassesBatteryPct;
   int? get caseBatteryPct => _caseBatteryPct;
@@ -70,6 +151,16 @@ class DeviceStatusService extends ChangeNotifier {
   /// Whether auto brightness is locally believed to be on. Tracked from the
   /// last [setBrightness] call because the firmware does not echo this flag.
   bool get autoBrightness => _autoBrightness;
+
+  /// Most recent head-up (tilt-up) mode the user picked from this session.
+  /// The setting is also persisted in `AppSettingsStore` so it survives
+  /// app restarts; on a fresh connect this returns [HeadUpMode.unknown]
+  /// until the user picks again.
+  HeadUpMode get headUpMode => _headUpMode;
+
+  /// Most recent double-tap action the user picked from this session.
+  /// Persistence behaviour matches [headUpMode].
+  DoubleTapAction get doubleTapAction => _doubleTapAction;
 
   /// "85%" or null if no glasses battery push has been received yet.
   String? get glassesBatteryLabel {
@@ -137,18 +228,68 @@ class DeviceStatusService extends ChangeNotifier {
     }
   }
 
+  /// Send `0x08 06 00 00 03 <wireValue>` to both legs to persist the head-up
+  /// (tilt-up) behaviour on the glasses. Also writes the choice to
+  /// `AppSettingsStore` so it survives an app restart. No-op for
+  /// [HeadUpMode.unknown].
+  Future<void> setHeadUpMode(HeadUpMode mode) async {
+    final wire = mode.wireValue;
+    if (wire == null) {
+      return;
+    }
+    AppLog.info(
+      '${DateTime.now()} head-up mode send: ${mode.name} (0x${wire.toRadixString(16).padLeft(2, '0')})',
+      tag: 'DeviceStatus',
+    );
+    await Proto.setHeadUpMode(wire);
+    await AppSettingsStore.get.setHeadUpMode(mode);
+    if (_headUpMode != mode) {
+      _headUpMode = mode;
+      notifyListeners();
+    }
+  }
+
+  /// Send `0x26 06 00 <seq> 05 <wireValue>` to both legs to persist the
+  /// double-tap action on the glasses. Also writes the choice to
+  /// `AppSettingsStore`. No-op for [DoubleTapAction.unknown].
+  Future<void> setDoubleTapAction(DoubleTapAction action) async {
+    final wire = action.wireValue;
+    if (wire == null) {
+      return;
+    }
+    AppLog.info(
+      '${DateTime.now()} double-tap action send: ${action.name} (0x${wire.toRadixString(16).padLeft(2, '0')})',
+      tag: 'DeviceStatus',
+    );
+    await Proto.setDoubleTapAction(wire);
+    await AppSettingsStore.get.setDoubleTapAction(action);
+    if (_doubleTapAction != action) {
+      _doubleTapAction = action;
+      notifyListeners();
+    }
+  }
+
   /// Reset on full disconnect so the UI doesn't show stale numbers.
+  ///
+  /// Note: only the in-memory live state resets here. The user's persisted
+  /// firmware-settings choices in `AppSettingsStore` are deliberately kept
+  /// across disconnects so the Settings dropdowns can still display the
+  /// last picked value when the user reconnects.
   void reset({required String source}) {
     final hadAny = _glassesBatteryPct != null ||
         _caseBatteryPct != null ||
         _wearState != WearState.unknown ||
         _brightnessLevel != null ||
-        _autoBrightness;
+        _autoBrightness ||
+        _headUpMode != HeadUpMode.unknown ||
+        _doubleTapAction != DoubleTapAction.unknown;
     _glassesBatteryPct = null;
     _caseBatteryPct = null;
     _wearState = WearState.unknown;
     _brightnessLevel = null;
     _autoBrightness = false;
+    _headUpMode = HeadUpMode.unknown;
+    _doubleTapAction = DoubleTapAction.unknown;
     if (hadAny) {
       AppLog.info(
         '${DateTime.now()} cleared device status from $source',

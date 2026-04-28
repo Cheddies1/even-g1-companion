@@ -49,7 +49,7 @@ This matters at startup because early Android-side calls can arrive before backg
 ## Core controller
 
 Mode ownership is centralized in:
-- [lib/services/companion_controller.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/companion_controller.dart)
+- [lib/services/companion_controller.dart](../lib/services/companion_controller.dart)
 
 The controller owns:
 - active mode
@@ -60,7 +60,7 @@ The controller owns:
 - background-mode synchronization with the Android foreground service
 
 Supporting model:
-- [lib/models/app_mode.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/models/app_mode.dart)
+- [lib/models/app_mode.dart](../lib/models/app_mode.dart)
 
 Current mode vs active display:
 - `current mode` means which service should own the next interaction
@@ -76,8 +76,8 @@ Current active-display sources:
 ## Main services
 
 ### Glance
-- [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart)
-- [lib/services/glance_assistant_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_assistant_service.dart)
+- [lib/services/glance_service.dart](../lib/services/glance_service.dart)
+- [lib/services/glance_assistant_service.dart](../lib/services/glance_assistant_service.dart)
 
 Owns:
 - recent notification feed
@@ -87,7 +87,7 @@ Owns:
 - Glance-only assistant shortcut state and ephemeral follow-up context
 
 ### Capture
-- [lib/services/capture_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/capture_service.dart)
+- [lib/services/capture_service.dart](../lib/services/capture_service.dart)
 
 Owns:
 - capture session state
@@ -96,8 +96,8 @@ Owns:
 - bridge calls into native WAV recording
 
 ### Navigate
-- [lib/services/navigate_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/navigate_service.dart)
-- [lib/services/navigate_bitmap_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/navigate_bitmap_service.dart)
+- [lib/services/navigate_service.dart](../lib/services/navigate_service.dart)
+- [lib/services/navigate_bitmap_service.dart](../lib/services/navigate_bitmap_service.dart)
 
 Owns:
 - latest maps-derived guidance model
@@ -106,7 +106,7 @@ Owns:
 - suppression / prioritization rules relative to Glance
 
 ### Device status
-- [lib/services/device_status_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart)
+- [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)
 
 Owns:
 - glasses battery percentage (push from `F5 0A`)
@@ -117,11 +117,18 @@ Owns:
   `0x01 <level> <auto>` because the firmware does not echo it back)
 - the brightness command path itself, via `setBrightness(level, auto)`,
   delegating the wire-level send to
-  [Proto.setBrightness](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/proto.dart)
+  [Proto.setBrightness](../lib/services/proto.dart)
+- head-up (tilt-up) mode and double-tap action — the user's last picks
+  from the Settings page, with the BLE writes delegated to
+  [Proto.setHeadUpMode](../lib/services/proto.dart)
+  and
+  [Proto.setDoubleTapAction](../lib/services/proto.dart)
+  and the cross-session persistence delegated to
+  [AppSettingsStore](../lib/services/app_settings_store.dart)
 
 Behaviour:
 - ingests every `0xF5` event via a single entry point called from
-  [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+  [lib/ble_manager.dart](../lib/ble_manager.dart)
 - only notifies listeners when a value actually changes, so the per-1–2-second
   re-pushes the firmware emits while the glasses are worn do not churn the UI
 - resets to defaults on full disconnect so stale values are not displayed
@@ -129,20 +136,20 @@ Behaviour:
   whichever side reports last wins
 
 Consumers:
-- [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart)
+- [lib/services/glance_service.dart](../lib/services/glance_service.dart)
   reads the glasses battery label at render time so the Glance heads-up display
   shows e.g. `14:32  85%` next to the time
-- [lib/views/home_page.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/views/home_page.dart)
+- [lib/views/home_page.dart](../lib/views/home_page.dart)
   subscribes to the service and renders glasses %, case %, and the worn /
   in cradle state as status pills, plus the Display section with brightness
   slider and auto switch
 
 ### Chat
-- [lib/services/chat_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_service.dart)
-- [lib/services/chat_backend.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/chat_backend.dart)
-- [lib/services/openai_chat_backend.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/openai_chat_backend.dart)
-- [lib/services/openai_transcription_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/openai_transcription_service.dart)
-- [lib/services/app_settings_store.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/app_settings_store.dart)
+- [lib/services/chat_service.dart](../lib/services/chat_service.dart)
+- [lib/services/chat_backend.dart](../lib/services/chat_backend.dart)
+- [lib/services/openai_chat_backend.dart](../lib/services/openai_chat_backend.dart)
+- [lib/services/openai_transcription_service.dart](../lib/services/openai_transcription_service.dart)
+- [lib/services/app_settings_store.dart](../lib/services/app_settings_store.dart)
 
 Owns:
 - Chat mode session lifecycle
@@ -162,7 +169,7 @@ Current backend seam:
 ## Quick mode switching
 
 Quick switching is routed centrally through:
-- [lib/services/companion_controller.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/companion_controller.dart)
+- [lib/services/companion_controller.dart](../lib/services/companion_controller.dart)
 
 Input paths:
 - Android foreground notification action buttons
@@ -170,9 +177,9 @@ Input paths:
 - idle-only right-hold QuickNote POC via right-leg `R21`
 
 Notification path:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
-- [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
+- [lib/ble_manager.dart](../lib/ble_manager.dart)
 
 Current behavior:
 - notification actions request a passive mode switch
@@ -187,11 +194,29 @@ Phone UI path:
 
 Right-hold POC path:
 - `BleManager._logCmd21(...)` observes `0x21`
-- only right-leg packets with the current stable `len == 42` pattern are forwarded
+- only right-leg packets with the historical stable `len == 42` pattern are forwarded
 - `CompanionController.handleRightHoldModeSwitchProbe()` owns the decision
 - the controller only switches mode when `hasActiveDisplay == false`
 - repeated triggers are debounced for `1500ms`
 - the switch remains passive and uses the existing mode order
+- the 2026-04-28 taps capture observed `0x21` releases at length `15` rather
+  than `42`, so this gate may not match current firmware. Tracked in
+  [FINDINGS-taps.md](FINDINGS-taps.md);
+  not active user-facing functionality today
+
+Double-tap mode-switch path:
+- `BleManager` F5 dispatch routes `case 32:` (= `F5 0x20`) to
+  `CompanionController.handleDoubleTapModeSwitch()`
+- the controller cycles through the four modes via `AppMode.nextMode`
+- repeated triggers debounced at `1500ms`
+- no `hasActiveDisplay` check is needed here because the firmware emits
+  `F5 00` (close-active) instead of `F5 20` when a feature is already up
+- depends on the official Even Realities app's double-tap action being set to
+  a **host-handled** feature: confirmed working with Transcribe, Translate,
+  and Teleprompter. Setting it to Dashboard or None routes the gesture
+  inside the firmware and `F5 20` is not emitted.
+- the on-glasses overlay for the configured action briefly appears alongside
+  the mode switch and cannot be suppressed from the companion side
 
 Glasses close path:
 - `F5 00` has one trusted meaning only:
@@ -227,13 +252,13 @@ Glance assistant:
 The app intentionally preserves the working BLE and protocol foundation from the old demo app.
 
 Flutter entry:
-- [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+- [lib/ble_manager.dart](../lib/ble_manager.dart)
 
 Key protocol helper:
-- [lib/services/proto.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/proto.dart)
+- [lib/services/proto.dart](../lib/services/proto.dart)
 
 Native BLE manager:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
 
 Key preserved behaviors:
 - dual-leg scan/connect
@@ -245,7 +270,7 @@ Key preserved behaviors:
 ## Transport health and recovery
 
 Transport health is now modeled per leg in:
-- [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+- [lib/ble_manager.dart](../lib/ble_manager.dart)
 
 Current model:
 - left and right legs each track:
@@ -280,6 +305,9 @@ The app only routes trusted gesture/state events into product behavior:
 - `F5 03`
 - `F5 17`
 - `F5 18`
+- `F5 20` (mode-switch, contingent on the official Even app's double-tap
+  action being a host-handled feature — Transcribe / Translate / Teleprompter
+  all confirmed working; Dashboard and None are firmware-only and won't fire)
 
 The broader mapping is documented in:
 - [even-g1-event-mapping.md](even-g1-event-mapping.md)
@@ -306,22 +334,22 @@ Tilt-up intent gating:
   - Navigate
   - Chat stop/submit on `F5 03`
 - return-to-centre on `F5 03` cancels any still-pending gated tilt-up intent
-- the helper and narrow `TiltIntent` debug logging live in [lib/services/companion_controller.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/companion_controller.dart)
-- [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart) exposes a small state getter so idle Glance entry can be distinguished from active recall
+- the helper and narrow `TiltIntent` debug logging live in [lib/services/companion_controller.dart](../lib/services/companion_controller.dart)
+- [lib/services/glance_service.dart](../lib/services/glance_service.dart) exposes a small state getter so idle Glance entry can be distinguished from active recall
 
 ## Notification ingestion
 
 Native Android listener:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)
 
 Native rolling store:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt)
 
 Flutter model:
-- [lib/models/companion_notification.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/models/companion_notification.dart)
+- [lib/models/companion_notification.dart](../lib/models/companion_notification.dart)
 
 Bridge methods/events:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
 
 This listener path is a core foundation for both Glance and Navigate.
 
@@ -330,8 +358,8 @@ Maps payload dump logging:
 - it is now gated behind the native log tag `MapsNotificationDump` and is off by default
 
 Notification policy:
-- [lib/services/notification_policy.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_policy.dart)
-- [lib/services/notification_settings_store.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_settings_store.dart)
+- [lib/services/notification_policy.dart](../lib/services/notification_policy.dart)
+- [lib/services/notification_settings_store.dart](../lib/services/notification_settings_store.dart)
 
 Current responsibility:
 - central classification of notifications as `blocked`, `suppressed`, `protected`, or `normal`
@@ -351,10 +379,10 @@ Current built-in rules:
 The app is designed to keep functioning as a companion app while backgrounded.
 
 Foreground service:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
 
 Manifest/service registration:
-- [android/app/src/main/AndroidManifest.xml](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/AndroidManifest.xml)
+- [android/app/src/main/AndroidManifest.xml](../android/app/src/main/AndroidManifest.xml)
 
 Current role:
 - persistent Android notification
@@ -364,16 +392,16 @@ Current role:
 This is intentionally minimal, but it is part of the current architecture rather than a future bolt-on.
 
 Foreground service note:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt) uses `specialUse`
+- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt) uses `specialUse`
 - `connectedDevice` was the wrong foreground service type for app startup behavior on the target Android environment
 
 ## Capture audio path
 
 Native recorder:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt)
 
 Decode path:
-- [android/app/src/main/cpp/liblc3.cpp](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/cpp/liblc3.cpp)
+- [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp)
 
 Current technical model:
 - glasses mic packets arrive natively
@@ -396,9 +424,9 @@ This keeps Capture and Chat on the same proven recorder foundation while allowin
 ## Phone UI
 
 Current phone control surface:
-- [lib/main.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/main.dart)
-- [lib/views/home_page.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/views/home_page.dart)
-- [lib/views/settings_page.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/views/settings_page.dart)
+- [lib/main.dart](../lib/main.dart)
+- [lib/views/home_page.dart](../lib/views/home_page.dart)
+- [lib/views/settings_page.dart](../lib/views/settings_page.dart)
 
 The UI is intentionally simple:
 - a prominent connection/status area that collapses once both legs are healthy
@@ -410,6 +438,18 @@ The UI is intentionally simple:
 Settings now own:
 - OpenAI-compatible API key and backend overrides
 - notification filter management
+- firmware-persisted gesture settings (head-up / tilt-up behaviour and
+  double-tap behaviour) — two dropdowns wired through
+  [DeviceStatusService](../lib/services/device_status_service.dart)
+  and
+  [Proto.setHeadUpMode](../lib/services/proto.dart)
+  /
+  [Proto.setDoubleTapAction](../lib/services/proto.dart),
+  with the user's pick persisted in
+  [AppSettingsStore](../lib/services/app_settings_store.dart)
+  for cross-session display. The companion app deliberately does **not**
+  re-send these on reconnect — values persist in the glasses' firmware
+  themselves.
 - permission/setup affordances
 
 The home screen stays focused on day-to-day companion control. Runtime backend configuration now comes from the Settings screen, with `dart-define` retained only as fallback/default input.
@@ -417,7 +457,7 @@ The home screen stays focused on day-to-day companion control. Runtime backend c
 ## Logging posture
 
 Single Flutter-side logger:
-- [lib/services/app_log.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/app_log.dart)
+- [lib/services/app_log.dart](../lib/services/app_log.dart)
 
 Raw `print()` is no longer used anywhere in `lib/`. Every Flutter-side log goes through `AppLog`, which exposes three levels and an optional category tag:
 - `AppLog.info(msg, tag: ...)`  : always enabled. Concise operational lifecycle and state changes.

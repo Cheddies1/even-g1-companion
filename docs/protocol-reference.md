@@ -82,8 +82,37 @@ Important:
 - Vendor/demo meaning:
   - stop Even AI recording
 - Observed reality:
-  - `Suspected`
-  - often accompanies the end of the current app’s voice flow
+  - `Confirmed`
+  - paired with `F5 17` press-down on every left long-press in the
+    2026-04-28 taps capture; never observed without a preceding `F5 17`
+  - right long-press (QuickNote) does not fire `F5 17` / `F5 18` — see the
+    `R21` section below
+
+### `0xF5 0x20`
+
+- Vendor/demo meaning:
+  - not described in the old README excerpt
+- Observed reality:
+  - `Confirmed`
+  - fires when a double-tap triggers an official-app double-tap action that
+    is **host-handled** (transcribe / translate / teleprompter); fires for
+    both temples
+  - does **not** fire when the configured action is firmware-native
+    (Dashboard) or "None" — those are handled locally below the BLE boundary
+  - the close-an-active-feature half of double-tap continues to fire
+    `F5 00`, not `F5 20`
+- Implementation:
+  - this app routes `F5 20` to a mode-switch handler in
+    [companion_controller.dart](../lib/services/companion_controller.dart)
+  - see [FINDINGS-taps.md](FINDINGS-taps.md)
+
+Notes:
+- the BLE event is fired 1–6 s after the physical gesture, suggesting it's
+  emitted when the firmware's feature-open animation completes rather than on
+  the gesture edge
+- the on-glasses overlay for the configured action (Transcribe's listening
+  prompt etc.) still appears briefly; companion repurposing of the event for
+  mode switching does not suppress that overlay
 
 ### `0xF5 0x1E` / `0xF5 0x1F`
 
@@ -151,8 +180,8 @@ Observed reality:
 - this path is now reused for Capture-mode WAV recording scaffolding
 
 Relevant implementation:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
-- [android/app/src/main/cpp/liblc3.cpp](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/cpp/liblc3.cpp)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
+- [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp)
 
 ## Text / AI result sending: `0x4E`
 
@@ -216,8 +245,8 @@ Observed reality:
 
 Source:
 - official-app HCI snoop captured from this repo's target hardware on
-  firmware 1.6.6 — see [/logs/bluetooth/](/c:/Users/EddieJohnson/projects/EvenDemoApp/logs/bluetooth/)
-  for the raw log, parser, and analysis output
+  firmware 1.6.6 — full write-up in
+  [FINDINGS-battery+brightness.md](FINDINGS-battery+brightness.md)
 
 Observed reality (`Confirmed`):
 
@@ -239,11 +268,130 @@ Notes:
   `29 65 <pct> 00 ...`, but a polling path is not required for live readings
 
 Implementation:
-- ingestion: [lib/services/device_status_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart)
-- routed from the F5 dispatch in [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+- ingestion: [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)
+- routed from the F5 dispatch in [lib/ble_manager.dart](../lib/ble_manager.dart)
 
 Cross-reference:
 - [even-g1-event-mapping.md](even-g1-event-mapping.md) "Battery and wear state"
+
+## Head-up settings: `0x08 06 00 00 03 <value>`
+
+Source:
+- 2026-04-28 settings capture cycling the official Even Realities app's
+  "head-up" / tilt-up behaviour menu — see
+  [FINDINGS-settings.md](FINDINGS-settings.md)
+
+Observed reality (`Confirmed`):
+
+- TX `0x08 06 00 00 03 <value>` to both legs persists the head-up behaviour
+  on the glasses themselves
+- verified values:
+  - `0x00` — the firmware's own dashboard appears on tilt-up
+  - `0x02` — no firmware overlay on tilt-up; the glasses still emit
+    `F5 02` / `F5 03`, leaving the host to drive any visible response
+- the value at byte 4 (`0x03`) is the head-up sub-key; the baseline capture
+  also contains writes with byte 4 = `0x04`, which is a different unmapped
+  setting in the same family
+- writes are sent to both legs at near-identical timestamps and persist
+  across an app uninstall — the official app sets, the firmware remembers
+
+Implementation:
+- TX command: [Proto.setHeadUpMode](../lib/services/proto.dart)
+- UI / persistence:
+  [DeviceStatusService](../lib/services/device_status_service.dart)
+  + [AppSettingsStore](../lib/services/app_settings_store.dart)
+  + the "Firmware Settings" section on the
+  [Settings page](../lib/views/settings_page.dart)
+
+## Touch settings: `0x26 06 00 <seq> 05 <value>`
+
+Source:
+- same 2026-04-28 settings capture, cycling the official app's "double-tap
+  action" menu through every option
+
+Observed reality (`Confirmed` for the double-tap sub-key):
+
+- TX `0x26 06 00 <seq> 05 <value>` to both legs persists the double-tap
+  action on the glasses themselves
+- verified values for sub-key `0x05`:
+  - `0x00` — none / "close active feature"
+  - `0x02` — translate
+  - `0x03` — teleprompter
+  - `0x04` — open the firmware's own dashboard locally
+  - `0x05` — transcribe (host-handled — fires `F5 20`, which the companion
+    app routes to a passive mode cycle)
+- byte 3 `<seq>` is a transaction sequence the official app increments
+  monotonically per change; the firmware appears to accept any value
+- baseline traces show writes with sub-keys `0x02` and `0x08` at byte 4
+  (different lengths, different shapes); these are likely triple-tap or
+  long-press configurations and are not yet isolated
+
+This is the wire-level explanation for the F5 20 matrix in
+[even-g1-event-mapping.md](even-g1-event-mapping.md): values `0x02`,
+`0x03`, `0x05` are the host-handled actions; `0x04` is firmware-native;
+`0x00` only emits `F5 00` when there's something to close.
+
+Implementation:
+- TX command: [Proto.setDoubleTapAction](../lib/services/proto.dart)
+- UI / persistence: same triplet as Head-up settings
+
+## Quicknote post-release stream: `0x1e c8 ...`
+
+Source:
+- 2026-04-28 settings capture, Phase 3 (right-hold quicknotes of varying
+  duration: ~10 s long, ~5 s short, ~3 s silence)
+
+Observed reality (`Suspected`, medium confidence — structure is clear but
+codec is not yet decoded):
+
+- after every `0x21` quicknote-release (the `R21` family already
+  documented), the firmware emits a chunked binary stream back to the host
+  on opcode `0x1e`
+- per-chunk framing:
+  ```
+  1e c8 00 <seq1> 02 61 00 <seq2> 00 01 <~130 bytes binary data>
+  ```
+  with `seq1` and `seq2 = seq1 + 1` increasing monotonically through each
+  burst
+- frame counts scale with recording duration (~50 frames for 3 s silence,
+  ~100 frames for 10 s) at ~140 bytes per chunk and ~10 frames/s — roughly
+  11 kbit/s, in the range of low-bitrate voice codecs like LC3
+- byte distribution and sequencing are consistent with **encoded audio**;
+  not yet decoded
+
+Notes:
+- this is the BLE path the user can tap to recreate the firmware's
+  quicknote behaviour in the companion app (record → on-device or hosted
+  transcription → stored note)
+- decode work would start with the existing LC3 path in
+  [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp)
+- out of scope for the current code; documented as a future feature
+
+## Note management: `0x06 ... / 0x22` ack
+
+Source:
+- 2026-04-28 settings capture, Phase 4 (delete / reorder of saved notes
+  in the official app's note list)
+
+Observed reality (`Suspected`, structural):
+
+- delete and reorder both produce a clean three-step transaction on opcode
+  `0x06`, sent to both legs:
+  ```
+  TX  06 07 00 <seq>   06 00 00                                       — request
+  TX  06 16 00 <seq+1> 01 <8-byte note UID> d4 9d 01 00 00 02 10 00 00 02   — payload
+  TX  06 0c 00 <seq+2> 03 01 00 01 00 00 00 01                        — finalise
+  ```
+- each TX echoed back as RX, then `RX 22 05 00 <seq+3> 01 00 01 00` ack
+- the 8-byte note UID structure looks identical to the trailing block in
+  `R21` payloads, suggesting `R21` advertises the UID of the just-saved
+  note
+
+Notes:
+- out of scope for the current app
+- a future "delete a saved note from the companion app" feature would need
+  the UID, plausibly recoverable either from `R21` payloads or from a
+  not-yet-identified list-all opcode
 
 ## Brightness: `0x01 <level> <auto>` and `F5 12 <level>`
 
@@ -260,9 +408,9 @@ Observed reality (`Confirmed`):
   command
 
 Implementation:
-- TX command: [Proto.setBrightness](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/proto.dart)
+- TX command: [Proto.setBrightness](../lib/services/proto.dart)
 - RX ingestion + auto-flag tracking:
-  [DeviceStatusService](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart)
+  [DeviceStatusService](../lib/services/device_status_service.dart)
 - UI: a Display section on the home screen with a level slider and an Auto
   Brightness switch; the slider commits its value on release, the switch sends
   the current level with the new auto flag.
@@ -277,7 +425,7 @@ Notes:
 
 Important — byte/decimal note:
 - `F5 12` is hex; in the Flutter dispatch in
-  [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart)
+  [lib/ble_manager.dart](../lib/ble_manager.dart)
   the F5 sub-code is read as a raw byte and matched as a decimal integer, so
   the brightness echo is handled at `case 18:` (= `0x12`). Reviewers comparing
   hex sub-codes against `case` arms in `_describeF5Event`/the dispatch switch

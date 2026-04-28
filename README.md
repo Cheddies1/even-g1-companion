@@ -1,201 +1,204 @@
 # Even G1 Companion
 
-Personal companion app for Even G1 smart glasses.
+This repository is two things at once:
 
-This project started from the vendor-style Flutter demo app, but it is now being reshaped into a practical personal companion app built around the BLE, rendering, and notification paths that have already been proven on real hardware.
+1. A reverse-engineered behaviour and protocol knowledge base for the Even
+   Realities G1 smart glasses' BLE interface — built from HCI snoop captures
+   of the official Android app and live testing on real hardware.
+2. A personal Flutter companion app I use to drive the glasses for my own
+   day-to-day use.
 
-It is not being treated as a generic SDK or polished public consumer app.
+The companion app is **not** an official SDK, **not** a polished consumer
+release, and **not** offered with support for other users — it is shaped
+around my own workflow. Most people landing here will probably get more value
+from the documentation than from running the app itself.
 
-Primary target:
-- Samsung Galaxy S24 Ultra
-- Current Android version
+If you are investigating Even G1 BLE behaviour and want to skip past the
+generic vendor demo material, the docs and the raw captures in this repo
+should save you a lot of time.
 
-## What The App Does
+## Start here for protocol and behaviour findings
 
-The app currently supports a mode-based companion model:
-- `Glance`
-- `Capture`
-- `Navigate`
-- `Chat`
+If your interest is the protocol or the device's actual behaviour, these are
+the documents to read first:
 
-Quick mode switching is available through:
-- actions on the persistent Android notification
+- [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md) — current
+  trusted mapping of every observed `F5` sub-code, with confidence labels and
+  evidence.
+- [docs/protocol-reference.md](docs/protocol-reference.md) — wire-level
+  reference for every command and event family that has been pinned down,
+  including the persisted-on-glasses settings opcodes.
+- [docs/investigation-notes.md](docs/investigation-notes.md) — broader
+  exploratory notes, the firmware / app / persisted-config three-layer model,
+  and the running list of what is still unknown.
+- [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md) —
+  comparison against the public Python SDK, including the places where its
+  labels are stale relative to current firmware.
+- [docs/current-behaviour.md](docs/current-behaviour.md) — how the companion
+  app behaves at runtime; useful as a reference for what a host app is
+  expected to do for each gesture / event.
+- [docs/current-architecture.md](docs/current-architecture.md) — how the
+  companion app is wired internally, for anyone reading the code.
+
+The per-topic write-ups live alongside the other docs:
+
+- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md)
+- [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md)
+- [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
+
+The raw captures and parser scripts that produced them live under
+`logs/bluetooth/` in the working tree (`btsnoop_hci_*.log` files,
+`parse_btsnoop.py`, `analyze_*.py`, and per-session `wall clock *.md`
+annotations). Those raw logs are deliberately kept out of the published
+repository — the published findings stand on their own.
+
+## Key confirmed findings
+
+Short list of what these captures and the live testing have pinned down so
+far. Each item is detailed in the docs above.
+
+- **Battery push, no polling required.** `F5 0A <pct>` for the glasses,
+  `F5 0F <pct>` for the case. Byte 2 is the percentage 0–100. Both temples
+  push independently.
+- **Wear / cradle state.** `F5 06` worn, `F5 07` transitioning, `F5 08`
+  cradle open, `F5 0B` cradle closed.
+- **Brightness.** TX `0x01 <level> <auto>` where `level` is `0..42` and
+  `auto` is `0/1`. The firmware echoes the actual applied level back as
+  `F5 12 <level>` when it changes — the auto flag is not echoed and must be
+  tracked locally.
+- **Long-press (left).** `F5 17` press-down → `F5 18` release. This is the
+  voice / Even AI entry path.
+- **Long-press (right) — QuickNote.** Does **not** fire `F5 17` / `F5 18`.
+  Instead emits `0x21` on release, and *immediately afterwards* the firmware
+  streams a chunked binary blob back on `0x1e c8 ...` whose volume scales
+  with recording duration. Bitrate and shape are consistent with a
+  low-bitrate voice codec — almost certainly the same LC3 stream the live
+  mic uses on `0xf1`, just on a different family. Documented as a future
+  audio-decode opportunity for "host-side QuickNote with hosted
+  transcription".
+- **Triple-tap.** `F5 04` enables silent mode, `F5 05` disables it.
+- **Double-tap is the boundary between firmware-handled and host-handled
+  actions.** When closing an active feature → `F5 00`. When opening a feature
+  configured to a host-handled action (Transcribe / Translate / Teleprompter
+  in the official Even app) → `F5 20`. Firmware-native actions (Dashboard) or
+  "None" do not cross the BLE boundary at all.
+- **Single taps are firmware-only in every state tested.** Idle, dashboard
+  with notes list visible, dashboard with notifications visible — the
+  firmware visibly responds on the glasses but no BLE event fires. Stop
+  designing around them.
+- **Persisted-on-glasses settings.** Head-up / tilt-up behaviour:
+  `0x08 06 00 00 03 <value>`. Double-tap action: `0x26 06 00 <seq> 05 <value>`.
+  Both follow the same shape as the brightness command. The values persist
+  in firmware and survive an app uninstall.
+- **Note management.** Delete and reorder of saved notes use a three-step
+  `0x06 ... / 0x22` ack transaction with an 8-byte note UID — same UID shape
+  as the trailing block in `R21` payloads, suggesting `R21` advertises the
+  UID of the just-saved note.
+
+## Personal companion app
+
+What follows is the personal app this repo also hosts. It is written for me,
+on my hardware (Samsung Galaxy S24 Ultra), and is not intended as a
+general-purpose product.
+
+### Modes
+
+- `Glance` — Android notification ingestion, lightweight text rendering to
+  the glasses, proactive auto-pop, deliberate recall / cycling with head
+  tilt, double-tap to close, plus a Glance-only assistant shortcut that
+  reuses the same OpenAI-backed transcription / assistant path as Chat mode.
+- `Capture` — start recording from the glasses mic on a trusted gesture, save
+  WAV to the public `Internal storage/Recordings/Even Companion` collection.
+  Practically usable; stop / save reliability is still an open validation
+  item.
+- `Navigate` — consumes Google Maps navigation notifications and renders
+  concise turn guidance to the glasses. Real maps cards use the Maps-provided
+  manoeuvre icon composed into a custom BMP. Working for walking navigation
+  but still being shaken out.
+- `Chat` — voice loop. Tilt up to start listening, tilt down to submit,
+  transcript handed to an OpenAI-compatible backend, the response is
+  rendered back to the glasses. Follow-up turns share an in-memory session
+  while Chat mode stays active.
+
+### Trusted glasses interaction model
+
+The app routes only events that have held up in live testing:
+
+- `F5 00` — close active feature / home (also fires on double-tap to close)
+- `F5 02` — tilt-up / dashboard-open start
+- `F5 03` — tilt-down / dashboard-close start
+- `F5 17` — left long-press press-down (voice / Even AI start)
+- `F5 18` — left long-press release
+- `F5 1E` — dashboard / state-up follow-on confirmation
+- `F5 1F` — dashboard / state-down follow-on confirmation
+- `F5 20` — host-handled double-tap (mode cycle, contingent on the official
+  Even app's double-tap action being a host-handled feature; configurable
+  from this app's Settings → Firmware Settings dropdown)
+
+Single taps are deliberately not part of the trusted set — see the findings
+above. Right-long-press uses the `0x21` family rather than `F5`.
+
+### Quick mode switching
+
+Mode changes can come from any of:
+
+- the persistent Android foreground notification
 - the app UI mode selector
-- a narrow idle-only right-hold QuickNote POC
+- the Settings → Firmware Settings → "Double-tap behaviour" dropdown set to
+  "Companion app mode switch", which makes the firmware emit `F5 20` on
+  double-tap and the companion app cycles through `Glance` → `Navigate` →
+  `Chat` → `Capture` → `Glance`. Cycle is debounced at 1500 ms.
+- a narrow idle-only right-hold POC via `R21` that pre-dates the `F5 20`
+  path. The packet length gate (`len == 42`) may no longer match current
+  firmware, which emits `R21` at length 15 — this POC is not currently
+  active user-facing functionality.
 
-### Glance
-Glance is the most complete mode today.
+### Glasses display rule
 
-It provides:
-- Android notification ingestion
-- lightweight text rendering to the glasses
-- proactive notification auto-pop into the glasses
-- deliberate notification recall/cycling with head tilt
-- lightweight Glance assistant ask/answer shortcut while idle
-- double-tap close
+- If something is active on the glasses, double-tap closes it (`F5 00` path).
+- If the display is idle, double-tap fires `F5 20` if the configured action
+  is host-handled, otherwise nothing crosses BLE.
 
-Typical display format:
+### Firmware settings (in-app)
 
-```text
-14:32
---
-WhatsApp
-Running 5 late
-```
+The Settings page has a "Firmware Settings" section that writes two
+persisted-on-glasses values:
 
-Glance notification policy:
-- the companion app's own notifications are blocked from Glance
-- normal notifications can appear in the Glance queue and be dismissed deliberately
-- protected notifications can appear in the Glance queue but are never dismissed by Glance gestures
-- suppressed notifications stay out of the Glance queue entirely
-- ongoing notifications are generally suppressed from ordinary Glance display
-- YouTube notifications are protected
-- pinned live score notifications are protected, so they stay visible in the normal Glance flow but are never dismissed by Glance gestures (no app-owned live-score subsystem exists)
+- **Tilt-up behaviour** — choose between letting the firmware show its own
+  dashboard on tilt-up, or suppressing the firmware overlay so the companion
+  app drives any visible response.
+- **Double-tap behaviour** — choose between cycling companion app modes (the
+  setting that makes `F5 20` fire), opening the firmware dashboard locally,
+  or doing nothing.
 
-Glance filtering:
-- notifications that are effectively just `Open on phone` / `Open your phone for details` are suppressed
-- user-suppressed noisy packages stay out of the Glance queue
-- package-level suppression now lives in `Settings > Notification Filters`
+Both choices are stored on the glasses themselves and survive an app
+uninstall. The companion app remembers the last pick across restarts but
+deliberately does not re-send on reconnect — invasive to override anything
+the user might have changed in the official app between sessions.
 
-Glance assistant:
-- while in Glance mode and idle, left-hold triggers a lightweight assistant interaction
-- it reuses the same OpenAI-backed transcription and assistant backend path as Chat mode
-- it does not switch into Chat mode
-- it does not create or persist a Chat log entry
-- follow-up asks reuse a short-lived in-memory mini-session that expires after a few minutes of inactivity
+### Technical shape
 
-### Capture
-Capture mode is intended for practical meeting / voice capture from the glasses mic.
+The app intentionally preserves the proven BLE / protocol foundation from
+the original vendor demo and refactors around it rather than replacing it.
 
-Current direction:
-- start recording from a trusted glasses gesture
-- stop and save a WAV file on the phone
-- show simple status / save confirmation in the glasses
+Key pieces:
 
-On the current Android target, saved WAV files are published into the public recordings collection so they appear in normal phone storage under:
-- `Internal storage/Recordings/Even Companion`
-
-The save target is now user-visible, but Capture mode still needs focused device validation for end-to-end stop/save reliability.
-
-### Navigate
-Navigate mode is a lightweight notification-driven navigation surface.
-
-Current direction:
-- consume Google Maps navigation notifications
-- show concise turn guidance in the glasses
-- suppress or deprioritize ordinary Glance notifications while navigating
-
-This is now implemented as a Navigate-only visual card path:
-- startup / waiting states stay text-rendered
-- real Google Maps nav cards use the Maps-provided maneuver icon bitmap
-- distance, road/context text, and route metadata are composed into a custom BMP card
-- only genuine turn-by-turn Google Maps notifications are eligible input
-- non-navigation Google Maps prompts such as review/handoff style notifications are filtered out
-
-Navigate is working, but still needs longer real-world walking validation for timing and stability.
-
-### Chat
-Chat mode is now implemented as a practical v1 voice loop.
-
-Current flow:
-- enter `Chat` mode
-- tilt up to start listening from the glasses mic
-- tilt down to stop capture and submit
-- speech is transcribed to text
-- the app briefly confirms what was heard
-- the app shows `Thinking...`
-- the assistant reply is rendered in the glasses using the existing text path
-- follow-up turns stay in the same in-memory session while Chat mode remains active
-- leaving Chat mode resets the session
-
-This is not tied to a ChatGPT consumer/web session. Chat v1 uses an API-backed backend seam so the transport can be swapped later without rewriting the mode.
-
-## Quick Mode Switching
-
-The companion app now supports fast mode changes without opening the full phone UI.
-
-Available paths:
-- persistent Android notification actions:
-  - `Glance`
-  - `Capture`
-  - `Navigate`
-  - `Chat`
-- app UI mode selector
-- idle-only right-hold QuickNote POC:
-  - right-leg `R21` only
-  - current stable packet shape `len == 42`
-  - only when the glasses display is idle
-  - `1500ms` debounce
-
-Glasses rule:
-- if something is actively shown on the glasses, double tap closes it
-- if nothing is currently active on the glasses, double tap does nothing
-
-Quick switching is passive:
-- it changes the current mode
-- it does not auto-start recording
-- it does not auto-start listening
-- it does not auto-open navigation content
-- it does not force a Glance render
-- the right-hold POC does not depend on `F5` events
-
-Mode-entry displays:
-- `Capture` shows `*` when idle and ready
-- `Chat` shows `Chat ready` / `Tilt up to talk`
-- `Navigate` shows `Open Google Maps` / `to start navigation` until a live navigation instruction is available
-- `Glance` remains notification-driven and does not show a separate idle title card
-
-Glance assistant display flow:
-- firmware shows the listening overlay during left-hold
-- after release, the app can show:
-  - a short transcript preview
-  - `Thinking...`
-  - the assistant response
-- the response then clears after a short timeout
-
-Response shaping:
-- Chat responses are explicitly shaped for smart glasses
-- the backend prompt biases toward concise, practical, small-display answers
-- short sentences and compact chunks are preferred over long paragraphs
-- actionable next steps are prioritised over background explanation
-
-## Trusted Glasses Interaction Model
-
-The app is built only on interactions we trust from live testing.
-
-Currently trusted:
-- `F5 02` = tilt-up / dashboard-open start
-- `F5 03` = tilt-down / dashboard-close start
-- `F5 00` = close active feature / home
-- `F5 1E` = dashboard/state-up follow-on
-- `F5 1F` = dashboard/state-down follow-on
-
-Important:
-- single taps are **not** treated as a reliable core input in this app
-- this repo does **not** assume `0xF5 0x01` is a trustworthy single-tap event for production behavior
-- right-hold QuickNote is firmware-native
-- the app now contains a narrow idle-only mode-switch POC based on right-leg `R21`
-- that POC does not treat `F5` as a trusted QuickNote signal
-
-## Technical Shape
-
-This app keeps the proven vendor/demo transport path and refactors around it rather than replacing it.
-
-Key parts:
 - Flutter mode/controller layer
 - native dual-BLE Even G1 connection handling
-- existing text rendering path
+- existing text rendering path (`0x4E`)
 - Android notification listener
 - Android foreground companion service
-- native glasses-mic audio decode path
-- Chat STT + backend request seam
+- native glasses-mic audio decode path (LC3 → PCM)
+- Chat STT + backend request seam (`ChatBackend` abstraction)
 
-## Project Structure
+### Project structure
 
 Important Flutter files:
+
 - [lib/ble_manager.dart](lib/ble_manager.dart)
 - [lib/models/app_mode.dart](lib/models/app_mode.dart)
 - [lib/services/companion_controller.dart](lib/services/companion_controller.dart)
+- [lib/services/device_status_service.dart](lib/services/device_status_service.dart)
 - [lib/services/glance_service.dart](lib/services/glance_service.dart)
 - [lib/services/capture_service.dart](lib/services/capture_service.dart)
 - [lib/services/navigate_service.dart](lib/services/navigate_service.dart)
@@ -204,113 +207,80 @@ Important Flutter files:
 - [lib/services/openai_chat_backend.dart](lib/services/openai_chat_backend.dart)
 - [lib/services/openai_transcription_service.dart](lib/services/openai_transcription_service.dart)
 - [lib/services/app_settings_store.dart](lib/services/app_settings_store.dart)
+- [lib/services/proto.dart](lib/services/proto.dart)
 - [lib/views/home_page.dart](lib/views/home_page.dart)
 - [lib/views/settings_page.dart](lib/views/settings_page.dart)
 
-Important Android/native files:
+Important Android / native files:
+
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt](android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt)
+- [android/app/src/main/cpp/liblc3.cpp](android/app/src/main/cpp/liblc3.cpp)
 
-## Prerequisites
+Capture / analysis material:
 
-You need:
-- Flutter SDK installed
-- Android SDK / platform tools installed
-- a paired or pairable Even G1 glasses set
+- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md),
+  [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md),
+  [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md) — the per-topic
+  write-ups produced from the snoop captures.
+- `logs/bluetooth/` (kept out of the published repository) — raw HCI
+  snoop logs, parser scripts (`parse_btsnoop.py`, `analyze_*.py`), and
+  per-session `wall clock *.md` annotations.
+
+### Prerequisites
+
+- Flutter SDK
+- Android SDK / platform tools
+- a paired Even G1 glasses set
 - an Android phone with notification access enabled for the app
-- an OpenAI API key if you want Chat mode to work end-to-end
+- an OpenAI API key if you want Chat mode to work end to end
 
-This project is primarily being developed and tested on:
-- Samsung Galaxy S24 Ultra
+Primary target: Samsung Galaxy S24 Ultra on current Android. Other devices
+are not exercised.
 
-## Android Build Baseline
+### Android build baseline
 
-Current known-good Android toolchain baseline:
 - AGP `8.6.1`
 - Gradle wrapper `8.7`
 - Kotlin Gradle plugin `2.1.10`
 
-## Connection Reliability
+### Connection reliability
 
-The companion app now tracks transport health per leg rather than treating "some connection exists" as fully healthy.
+- Per-leg health is tracked separately (connected / degraded / disconnected).
+- Heartbeat `0x25` is sent per leg on a timer.
+- Repeated missed heartbeats degrade the leg; degraded legs trigger bounded
+  reconnect attempts.
+- When a leg recovers, the app resends current active content so left/right
+  displays converge again.
 
-Current model:
-- left and right legs are tracked separately
-- each leg has:
-  - connected / degraded / disconnected state
-  - last successful heartbeat
-  - last successful acknowledged command
-- heartbeat `0x25` is sent per leg on a timer
-- repeated missed heartbeats or request timeouts degrade that leg
-- degraded legs trigger bounded reconnect attempts
-- when a leg recovers, the app resends the current active content to help left/right displays converge again
+### Permissions / setup
 
-Practical outcome:
-- one-leg degradation no longer looks the same as a fully healthy connection
-- text and BMP sends can continue on the healthy leg while recovery is in progress
-- recovery tries to restore both lenses to the same current content, especially for active navigation cards
-
-## Permissions / Setup
-
-The app depends on a few Android capabilities to be useful:
-
-### Notification Access
-Required for:
-- Glance mode
-- Navigate mode
-
-Enable in Android Settings:
-- `Settings > Notification access`
-- then enable access for the app
-
-### Bluetooth
-Required for:
-- scanning
-- pairing
-- connection to both glasses arms
-
-### Foreground Service
-Used so the app can behave like a permanent companion app and continue functioning while backgrounded.
+- Notification access — required for Glance and Navigate. Toggle under
+  `Settings > Notification access` on the phone.
+- Bluetooth — required for scanning, pairing, and the dual-leg connection.
+- Foreground service — used so the app continues working while backgrounded.
 
 ### Chat backend configuration
-Required for:
-- Chat mode transcription
-- Chat mode assistant responses
-
-Current v1 backend:
-- OpenAI API
 
 Recommended setup:
+
 - install one APK
 - open `Settings > API / Assistant`
 - save your API key once
-- optionally save a base URL override and model overrides
+- optionally save base URL and model overrides
 
-Persistence:
-- the API key is stored locally in secure storage
-- the optional base URL and model overrides are stored locally in app preferences
-- those settings persist across app restarts and normal upgrades
+The API key is stored in secure storage; non-secret overrides go into app
+preferences. Both persist across restarts and normal upgrades.
 
-Runtime precedence:
-- saved runtime settings override build-time values
-- blank runtime fields fall back to `dart-define` values when present
-- if no API key exists anywhere, Chat and the Glance assistant fail cleanly with the existing `API key issue` style behaviour
-
-Optional build-time fallback:
+Optional `dart-define` fallback:
 
 ```powershell
---dart-define="OPENAI_API_KEY=sk-..."
+flutter run --dart-define="OPENAI_API_KEY=sk-..."
 ```
-
-Important:
-- pass the raw key value
-- do not include square brackets around the key
-
-Optional build-time defines:
 
 ```powershell
 --dart-define="CHAT_API_BASE_URL=https://api.openai.com/v1"
@@ -320,108 +290,79 @@ Optional build-time defines:
 --dart-define="CHAT_MAX_OUTPUT_TOKENS=220"
 --dart-define="CHAT_MAX_RESPONSE_CHARS=900"
 --dart-define="CHAT_MAX_HISTORY_MESSAGES=16"
---dart-define="COMPANION_VERBOSE_LOGS=true"
 ```
 
-Debug logging:
-- verbose Flutter-side investigation logs are off by default
-- enable them with:
+Pass the raw key value — do not wrap it in square brackets.
 
-```powershell
---dart-define="COMPANION_VERBOSE_LOGS=true"
-```
+### Debug logging
 
-- verbose native Google Maps payload dumps are also off by default
-- enable them on a connected device with:
+- Verbose Flutter-side logs are off by default. Enable them with
+  `--dart-define="COMPANION_VERBOSE_LOGS=true"`.
+- Verbose native Google Maps payload dumps are off by default. Enable on a
+  connected device with:
 
-```powershell
-adb shell setprop log.tag.MapsNotificationDump DEBUG
-adb logcat -s MapsNotificationDump
-```
+  ```powershell
+  adb shell setprop log.tag.MapsNotificationDump DEBUG
+  adb logcat -s MapsNotificationDump
+  ```
 
-## Running The App
-
-Run in development:
+### Running the app
 
 ```powershell
 flutter run
-```
-
-Run in development with Chat mode enabled:
-
-```powershell
 flutter run --dart-define="OPENAI_API_KEY=sk-..."
-```
-
-This is now optional if you plan to enter the key in the app later.
-
-Build a debug APK:
-
-```powershell
 flutter build apk --debug
-```
-
-Build a release APK with Chat mode enabled:
-
-```powershell
 flutter build apk --release --dart-define="OPENAI_API_KEY=sk-..."
 ```
 
-This is now optional if you prefer runtime setup after install.
+Validation note: `flutter run` is useful for iteration but is not enough as
+final validation. Final Android validation is an installed release APK on
+the target phone.
 
-Known-good local validation commands:
+### Current status
 
-```powershell
-flutter analyze
-flutter build apk --release
-adb install -r build/app/outputs/flutter-apk/app-release.apk
-```
+Working well:
 
-Release validation note:
-- `flutter run` is useful for iteration, but it is not sufficient as final validation
-- final Android validation requires testing an installed release APK on device
-
-Codex workflow note:
-- use Codex for edits and narrow checks
-- use a local Windows shell for full build and release validation
-
-## Current Status
-
-### Working Well
-- BLE scan/connect to both glasses arms
+- BLE scan / connect / dual-leg pairing
 - text rendering to the glasses
-- notification ingestion from Android
-- Glance mode notification display and cycling
-- Chat mode end-to-end voice loop on device
-- deliberate Glance dismissal on phone while cycling
+- Glance notification display, cycling, deliberate dismissal
+- Chat mode end-to-end voice loop
+- battery / wear / brightness state on the home screen
+- Firmware settings dropdowns (tilt-up + double-tap) writing persisted
+  values via the newly-decoded settings opcodes
 - foreground companion-service foundation
 
-### In Progress / Needs More Device Validation
+In progress / needs more device validation:
+
 - Capture mode end-to-end recording reliability
-- Navigate mode longer real-world Google Maps walking behavior
-- background behavior polish
-- left/right render synchronization under heavy notification churn
+- Navigate mode longer real-world Google Maps walking behaviour
+- background behaviour polish
+- left/right render synchronisation under heavy notification churn
 
-## What This Repo Is Not
+## What this repo is not
 
-This repo is not currently:
-- a full Even protocol reference
-- a general-purpose Even SDK
-- a polished cross-device Android release
-- a consumer ChatGPT account-linked client
-
-It is a practical personal companion app built on the parts of the Even G1 behavior that have been confirmed enough to trust.
+- not an official Even Realities SDK
+- not a complete protocol specification
+- not a polished consumer app
+- not a supported app for other users
+- not a public product roadmap
+- not a consumer ChatGPT client
 
 ## Documentation
 
-Start here:
+The full document map:
+
 - [AGENTS.md](AGENTS.md)
 - [docs/current-architecture.md](docs/current-architecture.md)
 - [docs/current-behaviour.md](docs/current-behaviour.md)
+- [docs/current-worklist.md](docs/current-worklist.md)
 - [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md)
 - [docs/protocol-reference.md](docs/protocol-reference.md)
-
-Additional reference:
 - [docs/investigation-notes.md](docs/investigation-notes.md)
 - [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md)
 - [docs/archive/](docs/archive/)
+
+---
+
+If you are not me, you will probably get more out of the behaviour
+documentation in `docs/` than out of the personal companion app itself.

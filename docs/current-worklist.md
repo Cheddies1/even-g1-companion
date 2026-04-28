@@ -3,10 +3,10 @@
 This is a short handoff note for new Codex sessions.
 
 Use this with:
-- [README.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/README.md)
-- [docs/current-behaviour.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/docs/current-behaviour.md)
-- [docs/current-architecture.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/docs/current-architecture.md)
-- [AGENTS.md](/c:/Users/EddieJohnson/projects/EvenDemoApp/AGENTS.md)
+- [README.md](../README.md)
+- [docs/current-behaviour.md](current-behaviour.md)
+- [docs/current-architecture.md](current-architecture.md)
+- [AGENTS.md](../AGENTS.md)
 
 ## Current Product State
 
@@ -63,7 +63,7 @@ Battery and wear state:
 - Now ingested by `lib/services/device_status_service.dart`
 - Glasses % renders next to the Glance time line; home screen shows
   glasses %, case %, and a `Worn` / `In cradle` pill
-- Source data and parser are in `logs/bluetooth/`
+- Full write-up in `FINDINGS-battery+brightness.md`
 
 Brightness:
 - TX `0x01 <level> <auto>` is the brightness command (level 0..42, auto 0/1)
@@ -73,6 +73,54 @@ Brightness:
   brightness slider (commits on release) and an auto-brightness switch.
   `Proto.setBrightness` is the wire-level send; `DeviceStatusService` owns
   the locally-tracked auto flag and the echoed level.
+
+Persisted-on-glasses settings (head-up + double-tap):
+- 2026-04-28 settings capture (`FINDINGS-settings.md`)
+  pinned the wire formats for both:
+  - Head-up: TX `08 06 00 00 03 <value>` — `0x00` = firmware dashboard,
+    `0x02` = no firmware overlay (companion app drives any visible
+    response).
+  - Double-tap: TX `26 06 00 <seq> 05 <value>` — `0x00` none, `0x02`
+    translate, `0x03` teleprompter, `0x04` dashboard, `0x05` transcribe.
+- Wired into the Settings page as a "Firmware Settings" section between
+  Notification Filters and Permissions. Two dropdowns: Tilt-up behaviour
+  and Double-tap behaviour. Choices are persisted in `AppSettingsStore`
+  so they survive app restarts; the companion app does **not** re-send
+  on connect (non-invasive). The settings themselves persist on the
+  glasses' firmware regardless.
+
+Quicknote post-release stream:
+- `0x21` release is followed by a chunked binary stream on `0x1e c8 ...`,
+  scaling with recording duration and shaped like a low-bitrate voice
+  codec. Documented but not decoded; future feature for "companion-app
+  quicknotes with hosted transcription".
+
+Note-management family `0x06`:
+- Three-step transaction with an 8-byte note UID, used by the official
+  app for delete / reorder. UID shape matches the trailing block in
+  `R21` payloads. Out of scope for the current app.
+
+Tap and long-press mapping:
+- 2026-04-28 capture (`FINDINGS-taps.md`) hardened the
+  understanding of the touch family:
+  - **single taps (left or right) are not surfaced over BLE in any tested
+    state** (idle, dashboard with notes, dashboard with notifications). The
+    firmware visibly responds on the glasses but no BLE event fires.
+  - `F5 17` / `F5 18` is left long-press press-down / release (Confirmed)
+  - right long-press (QuickNote) does not fire `F5 17` / `F5 18`; it fires
+    `0x21` only, currently length `15` (the historical `len == 42` may have
+    been a different family member or earlier firmware)
+  - `F5 04` / `F5 05` triple-tap silent toggle (now Confirmed)
+  - **`F5 20` is new**: fires when a double-tap triggers the official Even
+    app's configured double-tap action (currently observed only with that
+    action set to "transcribe")
+- `F5 20` is now wired into the companion app as a passive mode-cycle hook
+  via `CompanionController.handleDoubleTapModeSwitch`.
+- Live testing across configurations of the official app's double-tap
+  setting confirmed `F5 20` is generic to "host-handled action":
+  Transcribe / Translate / Teleprompter all fire `F5 20` and the mode
+  cycle works. Dashboard is firmware-native (no `F5 20`); None only fires
+  `F5 00` and only when there is something to close.
 
 Pinned score:
 - `com.samsung.android.app.aodservice` is definitely observed
@@ -155,10 +203,10 @@ Good first prompt pattern:
 
 ## Files Most Likely Relevant Next
 
-- [lib/services/notification_policy.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/notification_policy.dart)
-- [lib/services/glance_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/glance_service.dart)
-- [lib/services/companion_controller.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/companion_controller.dart)
-- [lib/services/navigate_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/navigate_service.dart)
-- [lib/services/features_services.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/features_services.dart)
-- [lib/controllers/bmp_update_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/controllers/bmp_update_manager.dart)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](/c:/Users/EddieJohnson/projects/EvenDemoApp/android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)
+- [lib/services/notification_policy.dart](../lib/services/notification_policy.dart)
+- [lib/services/glance_service.dart](../lib/services/glance_service.dart)
+- [lib/services/companion_controller.dart](../lib/services/companion_controller.dart)
+- [lib/services/navigate_service.dart](../lib/services/navigate_service.dart)
+- [lib/services/features_services.dart](../lib/services/features_services.dart)
+- [lib/controllers/bmp_update_manager.dart](../lib/controllers/bmp_update_manager.dart)
+- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)

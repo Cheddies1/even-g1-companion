@@ -115,6 +115,54 @@ class Proto {
     await BleManager.sendData(data);
   }
 
+  /// Persist the head-up (tilt-up) behaviour on the glasses.
+  ///
+  /// Format: `0x08 06 00 00 03 <value>` to both legs. Verified values from
+  /// the 2026-04-28 settings capture: `0x00` = the firmware's own dashboard
+  /// appears on tilt-up, `0x02` = no firmware overlay (the glasses still
+  /// emit `F5 02` / `F5 03`, leaving the companion app to drive any visible
+  /// response). Other values in the same family exist but were not isolated.
+  ///
+  /// Setting persists on the glasses; survives an app uninstall. See
+  /// `docs/protocol-reference.md` "Head-up settings" for the full mapping.
+  static Future<void> setHeadUpMode(int value) async {
+    final data = Uint8List.fromList([0x08, 0x06, 0x00, 0x00, 0x03, value & 0xff]);
+    AppLog.debug(
+      '${DateTime.now()} head-up mode TX: value=0x${(value & 0xff).toRadixString(16).padLeft(2, '0')}',
+      tag: 'DeviceStatus',
+    );
+    await BleManager.sendData(data);
+  }
+
+  /// Local transaction counter for `0x26` writes. Starts above the typical
+  /// range observed in official-app traffic to avoid early collisions; the
+  /// firmware appears not to care about the exact value, but the official
+  /// app increments it monotonically per change so we mirror that.
+  static int _doubleTapSeq = 0x10;
+
+  /// Persist the double-tap action on the glasses.
+  ///
+  /// Format: `0x26 06 00 <seq> 05 <value>` to both legs, where the
+  /// double-tap-action sub-key is `0x05`. Verified values from the
+  /// 2026-04-28 settings capture: `0x00` = none, `0x02` = translate,
+  /// `0x03` = teleprompter, `0x04` = open the firmware's own dashboard,
+  /// `0x05` = transcribe (the host-handled action that fires `F5 20`,
+  /// which the companion app routes to its mode-cycle handler).
+  ///
+  /// Setting persists on the glasses; survives an app uninstall. See
+  /// `docs/protocol-reference.md` "Touch settings" for the full mapping
+  /// and the F5 20 matrix.
+  static Future<void> setDoubleTapAction(int value) async {
+    final seq = _doubleTapSeq & 0xff;
+    _doubleTapSeq = (_doubleTapSeq + 1) & 0xff;
+    final data = Uint8List.fromList([0x26, 0x06, 0x00, seq, 0x05, value & 0xff]);
+    AppLog.debug(
+      '${DateTime.now()} double-tap action TX: seq=0x${seq.toRadixString(16).padLeft(2, '0')} value=0x${(value & 0xff).toRadixString(16).padLeft(2, '0')}',
+      tag: 'DeviceStatus',
+    );
+    await BleManager.sendData(data);
+  }
+
   static Future<bool> sendHeartBeat() async {
     final successL = await sendHeartBeatToLeg("L");
     final successR = await sendHeartBeatToLeg("R");

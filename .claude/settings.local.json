@@ -4,7 +4,10 @@
       "Bash(python *)",
       "Bash(flutter analyze *)",
       "Bash(mv summary.txt summary_baseline.txt)",
-      "Bash(mv traffic.csv traffic_baseline.csv)"
+      "Bash(mv traffic.csv traffic_baseline.csv)",
+      "Bash(python analyze_settings.py)",
+      "Read(//tmp/**)",
+      "Bash(awk '/QUICKNOTE management/,/All distinct TX 0x08/' /tmp/settings_analysis.txt)"
     ]
   }
 }

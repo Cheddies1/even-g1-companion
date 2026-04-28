@@ -111,11 +111,18 @@ Confirmed examples:
 
 #### `F5 18`
 
-- Meaning: stop voice flow / record over
-- Confidence: medium-high
+- Meaning: left long-press release (voice / Even AI stop)
+- Confidence: high (`Confirmed`)
 - Evidence:
   - during isolated left-hold testing, `F5 18` is followed by
     `EvenAI.get.recordOverByOS()`
+  - in the 2026-04-28 taps capture, paired with `F5 17` press-down on every
+    left long-press: e.g. `14:10:05 F5 17` → `14:10:08 F5 18`,
+    `14:19:00 F5 17` → `14:19:08 F5 18`. Never observed without a preceding
+    `F5 17`.
+- Notes:
+  - right long-press (QuickNote) does **not** fire `F5 17`/`F5 18`; it uses
+    the `0x21` family instead (see the right-hold section below)
 
 ### `F5 00`
 
@@ -133,16 +140,23 @@ Confirmed examples:
   device testing
 - Confidence: low for real firmware behavior, high for current code path
 - Evidence:
-  - in Flutter, [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart#L182)
+  - in Flutter, [lib/ble_manager.dart](../lib/ble_manager.dart#L182)
     routes:
   - left -> feature previous
   - right -> feature next
 - Notes:
   - repeated device testing did not surface `F5 01` from single left/right taps
     in dashboard mode or generic text rendering mode
-  - current best hypothesis is that tap scrolling/navigation in official feature
-    modes is often handled locally in firmware and not forwarded to this demo
-    app in the tested flows
+  - the 2026-04-28 taps capture (see
+    [FINDINGS-taps.md](FINDINGS-taps.md))
+    explicitly tested single taps in (a) idle with no display content and
+    (b) dashboard up with a notes / notifications list visible. In **both**
+    states the firmware visibly responded on the glasses (notes/notifications
+    cycled) but **no** `F5 01` (or any other F5 event) fired. This is the
+    strongest possible negative result for the "firmware forwards taps when
+    there's a target" hypothesis.
+  - current model: single taps are absorbed by the firmware in every observed
+    state. The companion app should not be designed around them.
 
 ### Suspected
 
@@ -166,9 +180,36 @@ Confirmed examples:
 - Confidence: medium
 - Evidence:
   - appears consistently after right-hold release in repeated runs
-  - observed packet length is repeatedly `42`
-  - packet structure appears stable across captures
+  - earlier captures observed packet length `42`
+  - the 2026-04-28 taps capture observed length `15` for every right-hold
+    release (`21 0f 00 <id> 01 01 01 <8 bytes>`). The byte at offset 3 looks
+    like a quicknote id (non-sequential across captures), bytes 7–14 like
+    a timestamp/UID. Either the firmware behaviour changed or the previous
+    42-byte form was a different family member triggered in a state we
+    haven't yet reproduced.
   - both spoken-note and silence runs still produce `R21`
+  - the 2026-04-28 settings capture (Phase 3 quicknotes, see
+    [FINDINGS-settings.md](FINDINGS-settings.md))
+    additionally found that **immediately after every `R21` release the
+    firmware emits a chunked binary stream on opcode `0x1e c8 ...`** —
+    frame count scales with recording duration (~50 frames for 3 s
+    silence vs ~100 for 10 s), framing `1e c8 00 <seq1> 02 61 00 <seq2>
+    00 01 <~130 bytes>`. Bitrate (~11 kbit/s) and chunk-distribution are
+    consistent with a low-bitrate voice codec — most likely the same LC3
+    stream the live mic uses on `0xf1`, just on a different family. This
+    is the BLE path that would let the companion app recreate the
+    firmware's QuickNote feature with hosted transcription. Decode work
+    is out of scope today; the cross-reference for future work is the
+    existing LC3 path in
+    [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp).
+    Full protocol shape lives in
+    [protocol-reference.md](protocol-reference.md) under "Quicknote
+    post-release stream".
+  - the 8-byte trailing block in the `R21` payload looks identical to the
+    UID block used by the `0x06` note-management transactions (delete /
+    reorder), suggesting `R21` is announcing the UID of the just-saved
+    note — see "Note management" in
+    [protocol-reference.md](protocol-reference.md).
 - Notes:
   - `R21` likely does not contain raw recognized speech transcript text
   - more likely candidates are metadata, identifiers, timestamps, or note record
@@ -177,19 +218,59 @@ Confirmed examples:
 
 #### `F5 04`
 
-- Meaning: likely triple-tap / silent-mode-related event
-- Confidence: low-medium
+- Meaning: triple-tap silent-mode enable
+- Confidence: high (`Confirmed`)
 - Evidence:
   - observed during triple-tap testing
-  - user-observed firmware behavior indicates triple tap toggles silent mode
+  - 2026-04-28 taps capture: `F5 04` at `14:07:48` correlates with the user's
+    annotated "accidental triple tap to silence" at `14:07:53`, paired with
+    a re-activation `F5 05` at `14:07:52`
 
 #### `F5 05`
 
-- Meaning: likely companion triple-tap / silent-mode-related event
-- Confidence: low-medium
+- Meaning: triple-tap silent-mode disable
+- Confidence: high (`Confirmed`)
 - Evidence:
-  - observed during triple-tap testing
-  - appears in the same gesture family as `F5 04`
+  - observed during triple-tap testing in the same family as `F5 04`
+  - 2026-04-28 taps capture: paired with the matching `F5 04` enable
+    immediately preceding it
+
+#### `F5 20`
+
+- Meaning: double-tap delegates to the host because the configured action is
+  host-handled — fires for either temple when the official Even Realities
+  app's "double-tap action" is set to a host-driven feature
+- Confidence: high (`Confirmed`)
+- Evidence:
+  - 2026-04-28 taps capture: two clean `F5 20` samples (one per temple), both
+    correlated with a double-tap that opened transcribe-mode while the
+    official app was set to **transcribe**
+  - 2026-04-28 follow-up live testing confirmed the pattern across
+    configurations:
+    - **Transcribe** → `F5 20` fires → mode cycle works
+    - **Translate** → `F5 20` fires → mode cycle works
+    - **Teleprompter** → `F5 20` fires → mode cycle works
+    - **Dashboard** → no `F5 20`. The firmware shows the dashboard locally
+      even with the official app force-stopped, confirming it's a
+      firmware-native action handled below the BLE boundary.
+    - **None** ("close active feature") → no `F5 20`. Only `F5 00` fires,
+      and only when there is an active feature to close.
+- Notes:
+  - the pattern is consistent: any official-app double-tap action that
+    requires the host (mic / network / text rendering) emits `F5 20`; any
+    action the firmware can fulfil locally is handled below the BLE boundary
+  - 1–6 second latency between the physical tap and the BLE event was
+    observed in the snoop, likely because the firmware fires `F5 20` once the
+    feature-open animation completes rather than on the gesture edge
+  - the on-glasses overlay for the configured action (e.g. Transcribe's
+    listening prompt) still appears briefly even though the companion app
+    repurposes the event for mode switching — there's no way to suppress it
+    without a different protocol path
+  - this app routes `F5 20` to
+    [CompanionController.handleDoubleTapModeSwitch](../lib/services/companion_controller.dart),
+    which cycles the companion mode and is debounced at 1500 ms. See
+    [FINDINGS-taps.md](FINDINGS-taps.md)
+    for the full capture-derived reasoning.
 
 ## Firmware Semantic Events
 
@@ -217,15 +298,15 @@ Confirmed examples:
 
 These sub-codes were resolved by capturing the official Even Realities Android
 app over BLE and matching observed payload bytes against the on-screen battery
-percentages. Capture, parser, and analysis live in
-[/logs/bluetooth/](/c:/Users/EddieJohnson/projects/EvenDemoApp/logs/bluetooth/);
+percentages. The detailed write-up lives in
+[FINDINGS-battery+brightness.md](FINDINGS-battery+brightness.md);
 the corresponding raw protocol entries are in
 [protocol-reference.md](protocol-reference.md).
 
 The current Flutter ingestion lives in
-[lib/services/device_status_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/device_status_service.dart),
+[lib/services/device_status_service.dart](../lib/services/device_status_service.dart),
 fed from the existing F5 dispatch in
-[lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart).
+[lib/ble_manager.dart](../lib/ble_manager.dart).
 
 #### `F5 06`
 
@@ -372,7 +453,7 @@ fed from the existing F5 dispatch in
   - repeatedly follows `F5 02` in isolated dashboard-up runs
   - appears on both legs shortly after the tilt-up start event
   - aligns with the Python SDK mapping `0x1E -> OPEN_DASHBOARD_CONFIRM`
-    in [utils/constants.py](/c:/Users/EddieJohnson/projects/eveng1_python_sdk/utils/constants.py)
+    in `utils/constants.py`
  - Notes:
   - best treated as a firmware confirm/state event associated with up
   - not the primary gesture edge itself
@@ -385,7 +466,7 @@ fed from the existing F5 dispatch in
   - repeatedly follows `F5 03` in isolated dashboard-down runs
   - appears on both legs shortly after the tilt-down start event
   - aligns with the Python SDK mapping `0x1F -> CLOSE_DASHBOARD_CONFIRM`
-    in [utils/constants.py](/c:/Users/EddieJohnson/projects/eveng1_python_sdk/utils/constants.py)
+    in `utils/constants.py`
  - Notes:
   - best treated as a firmware confirm/state event associated with down
   - not the primary gesture edge itself
@@ -403,7 +484,7 @@ fed from the existing F5 dispatch in
     dashboard-down sequence
   - aligns with the Python SDK event category
     `0x22 -> DASHBOARD` in
-    [utils/constants.py](/c:/Users/EddieJohnson/projects/eveng1_python_sdk/utils/constants.py)
+    `utils/constants.py`
 - Notes:
   - payload meaning is still unknown
   - current logs show this on the right leg only
@@ -417,16 +498,18 @@ to assign a meaning:
 - `F5 11`
 - `F5 14`
 - `F5 15`
-- `F5 32`
+- `F5 32` — note this is hex `0x32` (= 50 decimal), distinct from the newly
+  identified `F5 20` (hex `0x20` = 32 decimal). `F5 32` has not been observed
+  in either of the recent snoop captures.
 
-`F5 06`, `F5 07`, `F5 08`, `F5 0A`, `F5 0B`, `F5 0F`, and `F5 12` were
-previously in this list and have since been mapped — see the
-"Battery and wear state" section above.
+`F5 06`, `F5 07`, `F5 08`, `F5 0A`, `F5 0B`, `F5 0F`, `F5 12`, `F5 18`, and
+`F5 20` were previously unknown / Suspected and have since been mapped — see
+the "Battery and wear state" and User Interaction Events sections above.
 
 ## Current Code Notes
 
 The current Flutter app only actively handles a small subset of `F5` events in
-[lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart#L169):
+[lib/ble_manager.dart](../lib/ble_manager.dart#L169):
 
 - `0` -> exit/home
 - `1` -> page/navigation routing in app code
@@ -439,7 +522,7 @@ The current Flutter app only actively handles a small subset of `F5` events in
 
 Important caveat:
 
-- the current diagnostic labels in [lib/ble_manager.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/ble_manager.dart#L213)
+- the current diagnostic labels in [lib/ble_manager.dart](../lib/ble_manager.dart#L213)
   are still provisional
 - they should not be treated as protocol truth
 - runtime behavior and isolated logs are more trustworthy than the current label
@@ -468,7 +551,7 @@ There is now a narrow QuickNote-related POC in the app codebase:
 ## Text Rendering Notes
 
 - generic text rendering in this app is currently timer-paged by
-  [lib/services/text_service.dart](/c:/Users/EddieJohnson/projects/EvenDemoApp/lib/services/text_service.dart)
+  [lib/services/text_service.dart](../lib/services/text_service.dart)
 - it is not currently wired for touch-based manual paging
 - this likely explains why long text sent from the demo app does not scroll via
   left/right taps the way official Even app features do

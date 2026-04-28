@@ -414,6 +414,13 @@ class BleManager {
           );
           CompanionController.get.handleGlassesGesture(18, res.lr);
           break;
+        case 32:
+          // F5 0x20 — fired by the firmware when a double-tap triggers the
+          // official app's configured double-tap action (currently observed
+          // only when that action is set to "transcribe"). See
+          // docs/even-g1-event-mapping.md and logs/bluetooth/FINDINGS-taps.md.
+          unawaited(CompanionController.get.handleDoubleTapModeSwitch());
+          break;
         default:
           AppLog.info(
             'Unhandled Ble Event: $notifyIndex ($eventLabel)',
@@ -471,7 +478,7 @@ class BleManager {
       case 24:
         return 'app-mapped-evenai-record-over';
       case 32:
-        return 'unknown-background-state-32';
+        return 'double-tap-feature-open';
       default:
         return 'unknown-f5-event';
     }
