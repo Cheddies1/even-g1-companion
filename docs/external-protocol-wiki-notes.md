@@ -151,8 +151,13 @@ Key value for us:
   `01 03 c8 00 12 00` decode as: sub-cmd=0x01, turn=Right(0x03), x=[0xc8,0x00],
   y=0x12, null=0x00.
 - **MAP_OVERVIEW is 136×136 pixels, RLE encoded** — not 108×108 as we assumed
-  from the BMP service. Our column-major RLE decode attempts were on the right
-  track but with wrong dimensions.
+  from the BMP service. RLE format confirmed as simple `<count> <byte>` pairs
+  from the ayroblu Swift source (`runLengthEncode()` / `runLengthDecode()`).
+  Pixel layout is **row-major, LSB-first** (NOT column-major as we initially
+  assumed). Image is two layers (image + overlay boolean arrays concatenated
+  via `(image + overlay).toBytes().runLengthEncode()`), total 4,624 raw bytes.
+  The `toBytes()` packs bools LSB-first (bit 0 = first pixel in each group
+  of 8). Band splitting: 185-byte chunks, 9-byte packet header per band.
 - **PANORAMIC_MAP is 488×136, UNENCODED** — raw bitmap, not compressed.
 - **SYNC/poller has a pollerSeqId byte**: `[0x0a, length, null, seqId, 0x04,
   pollerSeqId]`. Our implementation uses 0x01 for this byte.
@@ -165,10 +170,12 @@ Key value for us:
 3. Cross-check the wiki’s `0x26` subcommand list against our `docs/FINDINGS-settings.md`
    and snoops to see if any high-impact settings are missing from our current
    mapping.
-4. Try using the proper DirectionTurn enum byte in TRIP_STATUS instead of
-   hard-coding `0x03`. Map `navIconSource` labels to the 0x01–0x23 enum.
-5. Investigate whether `0x0a` navigation requires acked writes (`sendBoth`)
-   vs fire-and-forget (`sendData`) — currently under active testing.
+4. ~~Try using the proper DirectionTurn enum byte in TRIP_STATUS~~ — **DONE**:
+   `classifyManoeuvre()` in `nav_icon_generator.dart` maps instruction text
+   to `ManoeuvreType` enum (0x01–0x0b). Full DirectionTurn values confirmed
+   from ayroblu Swift source.
+5. ~~Investigate `0x0a` acked vs fire-and-forget~~ — **RESOLVED**: fire-and-forget
+   (`sendData`) confirmed correct. Firmware does not ack `0x0a` commands.
 6. Investigate whether SYNC needs a specific `pollerSeqId` value.
 7. Try `TELEPROMPTER_CONTROL (0x09)`, `TRANSCRIBE_CONTROL (0x0D)`, and
    `TRANSLATE_CONTROL (0x0F)` as direct mode-entry alternatives to relying

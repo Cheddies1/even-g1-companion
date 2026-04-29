@@ -11,7 +11,6 @@ class NavigateService {
 
   static const _minTextRenderGap = Duration(milliseconds: 250);
   static const _minNavCardGap = Duration(milliseconds: 500);
-  static const _idlePromptDelay = Duration(milliseconds: 900);
   static const _textToNavReplaySettleDelay = Duration(milliseconds: 250);
   static const _navSyncPollInterval = Duration(seconds: 1);
   static const String navUpdateModeFullLifecycle = 'fullLifecycleUpdate';
@@ -66,26 +65,13 @@ class NavigateService {
       await _scheduleRender();
       return;
     }
-    _cancelPendingIdlePrompt(reason: 'reschedule-idle-prompt');
-    _pendingIdlePromptTimer = Timer(_idlePromptDelay, () async {
-      _pendingIdlePromptTimer = null;
-      final sessionActive = _isNavSessionActive;
-      if (_latestInstruction != null || _navReplayInFlight || sessionActive) {
-        AppLog.info(
-          '${DateTime.now()} idle prompt skipped: instruction-ready=${_latestInstruction != null} replayInFlight=$_navReplayInFlight sessionActive=$sessionActive',
-          tag: 'Navigate',
-        );
-        return;
-      }
-      _isVisible = true;
-      _renderDirty = false;
-      _lastRenderUsedNavCard = false;
-      await TextService.get
-          .startSendText('Open Google Maps\nto start navigation');
-      AppLog.debug('${DateTime.now()} render -> idle-prompt', tag: 'Navigate');
-    });
+    // Do NOT send idle text to the glasses. The old "Open Google Maps…" prompt
+    // required a Proto.exit() cleanup before the first nav replay, and that
+    // exit command raced with the 108-packet burst causing blank lenses.
+    // Leaving the glasses on whatever was displayed before is harmless — the
+    // first Maps notification will push the full nav card.
     AppLog.info(
-      '${DateTime.now()} idle prompt delayed by ${_idlePromptDelay.inMilliseconds}ms',
+      '${DateTime.now()} idle prompt suppressed (no text sent to avoid first-load race)',
       tag: 'Navigate',
     );
   }
@@ -229,8 +215,8 @@ class NavigateService {
 
   /// Map the notification's icon-source label to a Unicode arrow for use
   /// as a text-based direction hint in the nav card's road-name field.
-  /// The `0x0a 02` icon bitmap encoding is compressed column-major RLE
-  /// that hasn't been fully decoded yet; this is the interim solution.
+  /// The `0x0a 02` icon bitmap is now dynamically generated from the Maps
+  /// notification PNG; this Unicode hint supplements it in the text fields.
   static String _directionHint(String iconSource) {
     final lower = iconSource.toLowerCase();
     if (lower.contains('u-turn') || lower.contains('uturn')) return '↩ ';
@@ -266,6 +252,7 @@ class NavigateService {
         turnDistance: fields.turnDistance,
         speed: fields.speed,
         navIconSource: fields.navIconSource,
+        navIconPngBase64: fields.navIconPngBase64,
       );
       // DEBUG: Use replay test with exact snoop bytes to isolate
       // whether the issue is packet format or something deeper.
@@ -333,6 +320,7 @@ class NavigateService {
     String turnDistance,
     String speed,
     String navIconSource,
+    String navIconPngBase64,
   }) _buildLiveNavFields(CompanionNotification notification) {
     final turnDistance = _clean(
       notification.navPrimaryInfo.isNotEmpty
@@ -367,6 +355,7 @@ class NavigateService {
       turnDistance: turnDistance,
       speed: '0.0km/h',
       navIconSource: notification.navIconSource,
+      navIconPngBase64: notification.navIconPngBase64,
     );
   }
 

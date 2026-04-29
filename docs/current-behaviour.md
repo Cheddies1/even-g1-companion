@@ -247,26 +247,31 @@ Navigate is intentionally lean and notification-driven.
   and font
 - a Unicode direction arrow (→ ← ↑ ↩ etc.) is prepended to the road name
   based on the Maps notification's `navIconSource` label
+- the **MAP_OVERVIEW direction icon is now dynamically generated** from the
+  Google Maps notification icon PNG (`navIconPngBase64`): decoded to 136×136
+  monochrome via alpha threshold, RLE-encoded, padded to 13 bands. Falls
+  back to geometric arrow generation, then captured data.
+- the `DirectionTurn` byte in TRIP_STATUS is classified by
+  `classifyManoeuvre()` parsing both `navIconSource` and instruction text
 - the previous BMP-per-frame approach has been replaced; the BMP pipeline
   is preserved in the codebase for potential future use but is no longer
   called from Navigate
 - the rate limit between updates has been reduced from 2200 ms (BMP) to
   500 ms (the structured text packet is tiny and atomic)
-- on first switch into Navigate with no live instruction yet, the idle prompt
-  is intentionally delayed briefly so it does not override the first real nav
-  replay if a Google Maps navigation notification arrives immediately after
-  the mode switch
-- if the stale text fallback is already visible, Navigate now explicitly
-  closes it before starting the first `0x0a` lifecycle so the glasses do not
-  stay stuck on `Open Google Maps / to start navigation`
+- the idle prompt ("Open Google Maps to start navigation") is **suppressed**
+  — no text is sent to the glasses on mode entry. This avoids a race where
+  `Proto.exit()` cleanup completed mid-replay, blanking the display on first
+  load. The glasses stay on whatever was displayed before until the first
+  Maps notification triggers the nav card.
 
 ### Current caveats
 
-- **The `0x0a` nav card protocol is confirmed working** and current session
-  keepalive is behaving well on longer routes, but the implementation still
-  depends on captured icon/map bytes from the official app.
-- The current bootstrap is still a replay-based path around captured snoop
-  bytes rather than a fully generated production card.
+- **The `0x0a` nav card protocol is confirmed working** with dynamic
+  direction icons and live text fields. Session keepalive behaves well on
+  longer routes.
+- The bootstrap is still replay-based around captured snoop bytes, with
+  TRIP_STATUS and MAP_OVERVIEW replaced dynamically. PANORAMIC_MAP remains
+  captured/static.
 - Some Google Maps updates still map the wrong source text into the
   `turnDistance` field, so payload extraction needs cleanup.
 - Startup robustness still needs observation when one leg begins degraded or

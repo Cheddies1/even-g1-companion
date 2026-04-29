@@ -97,39 +97,40 @@ Owns:
 
 ### Navigate
 - [lib/services/navigate_service.dart](../lib/services/navigate_service.dart)
+- [lib/services/nav_icon_generator.dart](../lib/services/nav_icon_generator.dart)
 - [lib/services/navigate_bitmap_service.dart](../lib/services/navigate_bitmap_service.dart)
 
 Owns:
 - latest maps-derived guidance model
-- text fallback for startup / waiting states
 - suppression / prioritization rules relative to Glance
-- **now uses the structured `0x0a` navigation card protocol** instead of
-  the previous BMP-per-frame approach. The production target is a dynamic
-  TRIP_STATUS packet built from the current Maps notification, but the
-  current bootstrap path still replays the exact 108 captured official-app
-  packets through
-  [Proto.sendNavCardReplayTest](../lib/services/proto.dart) using an
-  interleaved per-leg fire-and-forget transport. This is the currently
-  successful on-device sync strategy.
-- the bootstrap replay now replaces only the captured `TRIP_STATUS` packet
-  with a live one built from Google Maps fields, while captured
-  `MAP_OVERVIEW` and `PANORAMIC_MAP` bytes remain unchanged
+- **uses the structured `0x0a` navigation card protocol**. The bootstrap
+  path replays 108 captured official-app packets through
+  [Proto.sendNavCardReplayTest](../lib/services/proto.dart) using
+  interleaved per-leg fire-and-forget transport, with two dynamic
+  replacements:
+  1. `TRIP_STATUS` — rebuilt from live Google Maps notification fields
+  2. `MAP_OVERVIEW` — direction icon scraped from the Google Maps
+     notification PNG (`navIconPngBase64`), decoded to 136×136 monochrome
+     via alpha threshold, RLE-encoded, padded to 13 bands. Falls back to
+     geometric arrow generation (`ManoeuvreType` enum) if PNG unavailable,
+     then to captured data. See
+     [nav_icon_generator.dart](../lib/services/nav_icon_generator.dart).
+- captured `PANORAMIC_MAP` bytes remain unchanged (static route map)
 - owns the real 1-second `0x0a` SYNC poller for active Navigate sessions and
   the post-bootstrap update-mode switch (`fullLifecycleUpdate` vs
   `tripStatusOnlyUpdate`)
 - the BMP pipeline ([NavigateBitmapService](../lib/services/navigate_bitmap_service.dart))
   is preserved in the codebase but no longer called from the main Navigate
   render path
-- a Unicode direction hint (→ ← ↑ ↩ etc.) is prepended to the road name
-  based on the notification's `navIconSource` label. The bitmap direction
-  icon via `0x0a 02` sub-type is a documented follow-up — the encoding is
-  compressed column-major RLE that needs further analysis
-- `NavigateService.showIdlePrompt()` now delays the idle fallback briefly and
-  cancels it on the first real nav render path so mode entry does not leave
-  the glasses stuck on `Open Google Maps / to start navigation` just as the
-  initial replay is about to start
-- if the text fallback is already visible, `NavigateService` explicitly closes
-  it before the first nav lifecycle begins
+- `DirectionTurn` byte in TRIP_STATUS is classified by `classifyManoeuvre()`
+  which parses both `navIconSource` and instruction text (turnDistance +
+  roadName) for direction keywords. `ManoeuvreType` enum maps to firmware
+  byte values 0x01–0x0b.
+- `NavigateService.showIdlePrompt()` is suppressed — no text is sent to the
+  glasses on mode entry. This avoids a race condition where `Proto.exit()`
+  (needed to clean up idle text) completed mid-replay, blanking the display.
+  The glasses stay on whatever was shown before until the first Maps
+  notification triggers the full nav card bootstrap.
 
 ### Device status
 - [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)

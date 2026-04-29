@@ -130,13 +130,17 @@ arrow 46m 26m 2.2km". The fields are null-separated UTF-8 strings, all in
 ONE ~48-byte packet. The firmware renders them into the navigation card
 template using its built-in font and layout.
 
-**Sub-type 2 — direction icon bitmap** (`02 0d`):
+**Sub-type 2 — direction icon bitmap** (`02`):
 ```
-0a c2 00 <seq> 02 0d 00 <row> <~188 bytes bitmap data>
+0a <len> 00 <seq> 02 <bandCount> 00 <bandNum> 00 <RLE chunk>
 ```
-~13 packets at 194 bytes each — a turn-direction icon (right arrow, etc.)
-rendered as bitmap rows. Similar framing to the existing BMP path but
-chunked within the `0x0a` family rather than using `0x15/0x16/0x20`.
+13 bands (9-byte header + up to 185 bytes RLE payload each) for a 136×136
+monochrome icon. RLE format: simple `<count> <byte>` pairs, count max 255.
+Pixel layout: row-major, LSB-first bit packing. Image is two layers
+(image + overlay) = 4,624 raw bytes; overlay all-zeros for direction icons.
+Confirmed from ayroblu/bazel-demo Swift source. The companion app now
+scrapes the Google Maps notification icon PNG and converts it to this
+format; geometric arrows serve as fallback.
 
 **Sub-type 3 — route map bitmap** (`03 5a`):
 ```

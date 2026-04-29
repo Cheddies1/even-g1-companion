@@ -358,10 +358,10 @@ Working well:
 In progress / needs more device validation:
 
 - Navigate mode via `0x0a` structured card — the interleaved 108-packet
-  bootstrap, live `TRIP_STATUS`, and 1-second `SYNC` keepalive are now
-  working, but the implementation still needs startup hardening, better field
-  extraction, a final decision on post-bootstrap update shape, and a real
-  icon/map production path
+  bootstrap, live `TRIP_STATUS`, dynamic `MAP_OVERVIEW` direction icon (scraped
+  from Google Maps notification PNG), and 1-second `SYNC` keepalive are all
+  working. Remaining: startup hardening, field extraction cleanup, PANORAMIC_MAP
+  production path (currently captured/static)
 - Capture mode end-to-end recording reliability
 - background behaviour polish
 - left/right render synchronisation under heavy notification churn in

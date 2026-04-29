@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:demo_ai_even/services/app_log.dart';
 
@@ -28,10 +30,29 @@ enum ManoeuvreType {
   final int directionTurnByte;
 }
 
-/// Classify a Google Maps navIconSource label into a [ManoeuvreType].
-ManoeuvreType manoeuvreFromIconSource(String navIconSource) {
-  final lower = navIconSource.toLowerCase();
+/// Classify a navigation instruction into a [ManoeuvreType].
+///
+/// Checks [navIconSource] first (the notification icon-extra key name), then
+/// falls back to parsing [instructionText] (turnDistance / road name fields)
+/// for direction keywords.
+ManoeuvreType classifyManoeuvre({
+  String navIconSource = '',
+  String instructionText = '',
+}) {
+  // Combine both sources — navIconSource rarely contains direction words
+  // (it's usually "android.ongoingActivityNoti.chipIcon"), but instructionText
+  // from Google Maps contains "Turn left", "Continue straight", etc.
+  final lower = '$navIconSource $instructionText'.toLowerCase();
 
+  return _classifyFromText(lower);
+}
+
+/// Legacy single-string entry point used by [Proto._directionTurnForIconSource].
+ManoeuvreType manoeuvreFromIconSource(String navIconSource) {
+  return _classifyFromText(navIconSource.toLowerCase());
+}
+
+ManoeuvreType _classifyFromText(String lower) {
   // U-turn (check before left/right to avoid false matches)
   if (lower.contains('u-turn') || lower.contains('uturn')) {
     if (lower.contains('right')) return ManoeuvreType.uTurnRight;
@@ -67,15 +88,16 @@ ManoeuvreType manoeuvreFromIconSource(String navIconSource) {
     return ManoeuvreType.right;
   }
 
-  // Basic left / right / straight
+  // "Turn left", "Turn right", "Keep left", "Keep right"
   if (lower.contains('left')) return ManoeuvreType.left;
-  if (lower.contains('straight') || lower.contains('continue')) {
-    return ManoeuvreType.straight;
-  }
   if (lower.contains('right')) return ManoeuvreType.right;
 
-  // Head / proceed → straight
-  if (lower.contains('head') || lower.contains('proceed')) {
+  // Straight / continue / towards / head / proceed
+  if (lower.contains('straight') ||
+      lower.contains('continue') ||
+      lower.contains('towards') ||
+      lower.contains('head') ||
+      lower.contains('proceed')) {
     return ManoeuvreType.straight;
   }
 
@@ -97,6 +119,14 @@ const int _layerBytes = _iconSize * _bytesPerRow; // 2312
 
 /// Max RLE payload per band packet.
 const int _bandPayloadMax = 185;
+
+/// The captured MAP_OVERVIEW uses exactly 13 bands. The firmware appears to
+/// expect this count — variable band counts cause display position issues.
+const int _expectedBandCount = 13;
+
+/// Minimum RLE stream size to guarantee [_expectedBandCount] bands when
+/// chunked at [_bandPayloadMax]. (12 full bands + at least 1 byte for band 13)
+const int _minRleSize = (_expectedBandCount - 1) * _bandPayloadMax + 1;
 
 /// Packet header size (opcode + length + null + seq + sub-cmd + count + null + bandNum + null).
 const int _bandHeaderSize = 9;
@@ -126,14 +156,34 @@ List<Uint8List>? generateMapOverviewPackets(
     // 3. RLE-encode.
     final rle = _rleEncode(rawBytes);
 
-    // 4. Chunk into bands.
+    // 4. Pad RLE stream to ensure exactly 13 bands.
+    //    Append (0x01, 0x00) pairs — each decodes to a single zero byte.
+    //    The firmware's RLE decoder stops after filling the image buffer;
+    //    extra decoded zeros are discarded harmlessly.
+    final Uint8List paddedRle;
+    if (rle.length >= _minRleSize) {
+      paddedRle = rle;
+    } else {
+      final padBytes = _minRleSize - rle.length;
+      // Ensure even padding (each RLE pair is 2 bytes).
+      final padPairs = (padBytes + 1) ~/ 2;
+      final padded = Uint8List(rle.length + padPairs * 2);
+      padded.setRange(0, rle.length, rle);
+      for (int i = 0; i < padPairs; i++) {
+        padded[rle.length + i * 2] = 0x01; // count = 1
+        padded[rle.length + i * 2 + 1] = 0x00; // byte = 0x00
+      }
+      paddedRle = padded;
+    }
+
+    // 5. Chunk into bands.
     final chunks = <Uint8List>[];
-    for (int offset = 0; offset < rle.length; offset += _bandPayloadMax) {
+    for (int offset = 0; offset < paddedRle.length; offset += _bandPayloadMax) {
       final end =
-          (offset + _bandPayloadMax < rle.length)
+          (offset + _bandPayloadMax < paddedRle.length)
               ? offset + _bandPayloadMax
-              : rle.length;
-      chunks.add(Uint8List.sublistView(rle, offset, end));
+              : paddedRle.length;
+      chunks.add(Uint8List.sublistView(paddedRle, offset, end));
     }
 
     final bandCount = chunks.length;
@@ -170,13 +220,131 @@ List<Uint8List>? generateMapOverviewPackets(
 
     AppLog.info(
       'MAP_OVERVIEW generated manoeuvre=$manoeuvre bands=$bandCount '
-      'rleBytes=${rle.length} rawBytes=${rawBytes.length}',
+      'rleBytes=${rle.length} paddedRleBytes=${paddedRle.length} '
+      'rawBytes=${rawBytes.length}',
       tag: 'Navigate',
     );
     return packets;
   } catch (e) {
     AppLog.error(
       'MAP_OVERVIEW generation failed for $manoeuvre: $e',
+      tag: 'Navigate',
+    );
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PNG icon conversion — scrape the Google Maps notification icon
+// ---------------------------------------------------------------------------
+
+/// Convert a Google Maps notification icon PNG (base64-encoded) into
+/// MAP_OVERVIEW packets. The PNG is decoded, resized to 136×136, converted
+/// to monochrome, then RLE-encoded and framed.
+///
+/// Returns `null` if conversion fails (caller should fall back).
+Future<List<Uint8List>?> convertPngToMapOverviewPackets(
+  String base64Png,
+  int startSeq,
+) async {
+  if (base64Png.isEmpty) return null;
+
+  try {
+    // 1. Decode PNG and resize to 136×136.
+    final pngBytes = base64Decode(base64Png);
+    final codec = await ui.instantiateImageCodec(
+      Uint8List.fromList(pngBytes),
+      targetWidth: _iconSize,
+      targetHeight: _iconSize,
+    );
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+
+    // 2. Get RGBA pixel data.
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (byteData == null) return null;
+    final rgba = byteData.buffer.asUint8List();
+
+    // 3. Convert RGBA to monochrome bitmap (row-major, LSB-first).
+    //    The Google Maps icon is a white arrow on transparent background
+    //    (tint=0xffffffff). Use alpha channel to detect foreground:
+    //    alpha > 128 → set bit (arrow pixel), else clear (background).
+    final canvas = Uint8List(_layerBytes);
+    for (int y = 0; y < _iconSize; y++) {
+      for (int x = 0; x < _iconSize; x++) {
+        final rgbaIndex = (y * _iconSize + x) * 4;
+        final a = rgba[rgbaIndex + 3]; // alpha channel
+        if (a > 128) {
+          final byteIndex = y * _bytesPerRow + (x ~/ 8);
+          canvas[byteIndex] |= 1 << (x % 8);
+        }
+      }
+    }
+
+    // 4. Build raw buffer: image + overlay (zeros).
+    final rawBytes = Uint8List(_layerBytes * 2);
+    rawBytes.setRange(0, _layerBytes, canvas);
+
+    // 5. RLE encode + pad to 13 bands.
+    final rle = _rleEncode(rawBytes);
+    final Uint8List paddedRle;
+    if (rle.length >= _minRleSize) {
+      paddedRle = rle;
+    } else {
+      final padPairs = (_minRleSize - rle.length + 1) ~/ 2;
+      final padded = Uint8List(rle.length + padPairs * 2);
+      padded.setRange(0, rle.length, rle);
+      for (int i = 0; i < padPairs; i++) {
+        padded[rle.length + i * 2] = 0x01;
+        padded[rle.length + i * 2 + 1] = 0x00;
+      }
+      paddedRle = padded;
+    }
+
+    // 6. Chunk + frame.
+    final chunks = <Uint8List>[];
+    for (int offset = 0; offset < paddedRle.length; offset += _bandPayloadMax) {
+      final end =
+          (offset + _bandPayloadMax < paddedRle.length)
+              ? offset + _bandPayloadMax
+              : paddedRle.length;
+      chunks.add(Uint8List.sublistView(paddedRle, offset, end));
+    }
+
+    final bandCount = chunks.length;
+    if (bandCount < 1 || bandCount > 255) return null;
+
+    final packets = <Uint8List>[];
+    for (int i = 0; i < bandCount; i++) {
+      final chunk = chunks[i];
+      final totalLen = _bandHeaderSize + chunk.length;
+      final seq = (startSeq + i) & 0xff;
+      final bandNum = i + 1;
+
+      final packet = Uint8List(totalLen);
+      packet[0] = 0x0a;
+      packet[1] = totalLen & 0xff;
+      packet[2] = 0x00;
+      packet[3] = seq;
+      packet[4] = 0x02; // MAP_OVERVIEW
+      packet[5] = bandCount & 0xff;
+      packet[6] = 0x00;
+      packet[7] = bandNum & 0xff;
+      packet[8] = 0x00;
+      packet.setRange(_bandHeaderSize, totalLen, chunk);
+      packets.add(packet);
+    }
+
+    AppLog.info(
+      'MAP_OVERVIEW from PNG: bands=$bandCount '
+      'rleBytes=${rle.length} paddedRleBytes=${paddedRle.length} '
+      'pngInputBytes=${pngBytes.length}',
+      tag: 'Navigate',
+    );
+    return packets;
+  } catch (e) {
+    AppLog.error(
+      'MAP_OVERVIEW PNG conversion failed: $e',
       tag: 'Navigate',
     );
     return null;

@@ -162,7 +162,11 @@ a working Swift implementation of the navigation protocol with the decoded
 TRIP_STATUS packet structure: the prefix bytes include a DirectionTurn enum
 (0x01–0x23 for turn types), x/y coordinates, and then the five
 null-separated text fields. Also confirms MAP_OVERVIEW is 136×136 RLE-encoded
-and PANORAMIC_MAP is 488×136 unencoded. Full comparison in
+and PANORAMIC_MAP is 488×136 unencoded. The RLE format was subsequently
+confirmed as simple `<count> <byte>` pairs from the ayroblu Swift source, with
+row-major LSB-first pixel layout and a two-layer image structure (image +
+overlay). The companion app now scrapes the Maps notification icon PNG and
+converts it to this format dynamically. Full comparison in
 [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
 
 ## Python SDK role

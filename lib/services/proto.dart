@@ -28,6 +28,7 @@ class _NavTripStatusPayload {
     required this.turnDistance,
     required this.speed,
     required this.navIconSource,
+    required this.navIconPngBase64,
   });
 
   final String eta;
@@ -36,6 +37,7 @@ class _NavTripStatusPayload {
   final String turnDistance;
   final String speed;
   final String navIconSource;
+  final String navIconPngBase64;
 }
 
 class Proto {
@@ -325,6 +327,7 @@ class Proto {
         turnDistance: turnDistance,
         speed: speed,
         navIconSource: navIconSource,
+        navIconPngBase64: '',
       ),
     );
     _navSeq++;
@@ -347,9 +350,9 @@ class Proto {
     final tripStatusReplaced = dynamicTripStatus == null
         ? false
         : _replaceReplayTripStatusPacket(replayPackets, dynamicTripStatus);
-    final mapOverviewReplaced = _replaceReplayMapOverviewPackets(
+    final mapOverviewReplaced = await _replaceReplayMapOverviewPackets(
       replayPackets,
-      dynamicTripStatus?.navIconSource ?? '',
+      dynamicTripStatus,
     );
     final availableLegs = ['L', 'R']
         .where((lr) => BleManager.get().isLegAvailable(lr))
@@ -690,6 +693,7 @@ class Proto {
     required String turnDistance,
     String speed = '0.0km/h',
     required String navIconSource,
+    String navIconPngBase64 = '',
   }) {
     _pendingReplayTripStatus = _NavTripStatusPayload(
       eta: eta,
@@ -698,11 +702,15 @@ class Proto {
       turnDistance: turnDistance,
       speed: speed,
       navIconSource: navIconSource,
+      navIconPngBase64: navIconPngBase64,
     );
   }
 
-  static int _directionTurnForIconSource(String navIconSource) {
-    return manoeuvreFromIconSource(navIconSource).directionTurnByte;
+  static int _directionTurnForPayload(_NavTripStatusPayload payload) {
+    return classifyManoeuvre(
+      navIconSource: payload.navIconSource,
+      instructionText: '${payload.turnDistance} ${payload.roadName}',
+    ).directionTurnByte;
   }
 
   static Uint8List _buildReplayTripStatusPacket({
@@ -716,7 +724,7 @@ class Proto {
     required int seq,
     required _NavTripStatusPayload payload,
   }) {
-    final directionTurn = _directionTurnForIconSource(payload.navIconSource);
+    final directionTurn = _directionTurnForPayload(payload);
     const x0 = 0xc8;
     const x1 = 0x00;
     const y = 0x12;
@@ -775,15 +783,15 @@ class Proto {
     return false;
   }
 
-  /// Replace captured MAP_OVERVIEW packets with dynamically generated icon
-  /// packets for the classified manoeuvre. Returns `true` if replacement
-  /// succeeded. On failure the captured bytes remain untouched.
-  static bool _replaceReplayMapOverviewPackets(
+  /// Replace captured MAP_OVERVIEW packets with icon data.
+  ///
+  /// Primary: convert the scraped Google Maps notification PNG.
+  /// Fallback: generate a geometric arrow for the classified manoeuvre.
+  /// Last resort: leave captured data untouched.
+  static Future<bool> _replaceReplayMapOverviewPackets(
     List<Uint8List> replayPackets,
-    String navIconSource,
-  ) {
-    final manoeuvre = manoeuvreFromIconSource(navIconSource);
-
+    _NavTripStatusPayload? payload,
+  ) async {
     // Find indices of all MAP_OVERVIEW packets (sub-cmd 0x02).
     final oldIndices = <int>[];
     for (int i = 0; i < replayPackets.length; i++) {
@@ -794,28 +802,49 @@ class Proto {
     }
     if (oldIndices.isEmpty) return false;
 
-    // Use the first MAP_OVERVIEW packet's seq as the starting sequence.
     final startSeq = replayPackets[oldIndices.first][3];
-    final generated = generateMapOverviewPackets(manoeuvre, startSeq);
-    if (generated == null || generated.isEmpty) return false;
+    final navIconPng = payload?.navIconPngBase64 ?? '';
+    final navIconSource = payload?.navIconSource ?? '';
+    final instructionText =
+        '${payload?.turnDistance ?? ''} ${payload?.roadName ?? ''}';
 
-    // Replace: remove old MAP_OVERVIEW packets and insert generated ones.
-    // Work backwards to preserve indices while removing.
+    // Try PNG conversion first (actual Google Maps icon).
+    List<Uint8List>? generated =
+        await convertPngToMapOverviewPackets(navIconPng, startSeq);
+    String iconSource = 'png';
+
+    // Fall back to geometric arrow.
+    if (generated == null || generated.isEmpty) {
+      final manoeuvre = classifyManoeuvre(
+        navIconSource: navIconSource,
+        instructionText: instructionText,
+      );
+      generated = generateMapOverviewPackets(manoeuvre, startSeq);
+      iconSource = 'generated($manoeuvre)';
+    }
+
+    // Last resort: keep captured data.
+    if (generated == null || generated.isEmpty) {
+      AppLog.info(
+        'MAP_OVERVIEW: using captured fallback '
+        'navIconSource="$navIconSource"',
+        tag: 'Navigate',
+      );
+      return false;
+    }
+
+    // Replace: remove old, insert new.
     for (int i = oldIndices.length - 1; i >= 0; i--) {
       replayPackets.removeAt(oldIndices[i]);
     }
-
-    // Insert generated packets at the position of the first old packet.
-    final insertAt = oldIndices.first;
-    replayPackets.insertAll(insertAt, generated);
+    replayPackets.insertAll(oldIndices.first, generated);
 
     // Renumber seq bytes for all 0x0a packets to keep them consecutive.
-    // The 0x50 mode-control packet (index 0) uses its own seq space.
     int seq = -1;
     for (final p in replayPackets) {
       if (p[0] == 0x0a && p.length >= 4) {
         if (seq < 0) {
-          seq = p[3]; // preserve the first 0x0a packet's original seq
+          seq = p[3];
         } else {
           p[3] = seq & 0xff;
         }
@@ -824,7 +853,8 @@ class Proto {
     }
 
     AppLog.info(
-      'MAP_OVERVIEW replaced: manoeuvre=$manoeuvre '
+      'MAP_OVERVIEW replaced: source=$iconSource '
+      'navIconSource="$navIconSource" '
       'oldBands=${oldIndices.length} newBands=${generated.length} '
       'totalPackets=${replayPackets.length}',
       tag: 'Navigate',

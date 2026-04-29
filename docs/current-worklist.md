@@ -59,9 +59,8 @@ Working, but still needs real-world observation:
   Text-only bootstrap cards are rejected.
 - **Next steps (incremental, each testable independently):**
   1. **Watch startup robustness** — keep testing first-entry Navigate starts,
-     especially cases where one leg begins degraded or reconnecting. The
-     current logs suggest lifecycle keepalive is good, but startup recovery
-     still needs observation.
+     especially cases where one leg begins degraded or reconnecting. Idle
+     prompt is now suppressed to avoid the first-load race condition.
   2. **Validate `TRIP_STATUS + SYNC` updates on longer walks** — determine
      whether post-bootstrap updates are now visually solid on both eyes, or
      whether some updates still require a full lifecycle resend.
@@ -69,17 +68,19 @@ Working, but still needs real-world observation:
      populating `turnDistance` with road text like `towards Milton Rd` or
      `Home (36 Campbell Rd)`. Fix the text model before treating the payload
      shape as final.
-  4. **Build real icon/map production paths** — either capture a reusable
-     turn-icon library for `MAP_OVERVIEW` or implement the RLE encoder for
-     the 136×136 icon. Replace captured Church Road replay bytes only after
-     lifecycle/update behavior is settled.
+  4. ~~Build real icon/map production paths~~ — **DONE**: MAP_OVERVIEW
+     direction icon now scraped from Google Maps notification PNG, decoded
+     to 136×136 monochrome, RLE-encoded. Geometric arrow fallback via
+     `ManoeuvreType` enum in `nav_icon_generator.dart`. PANORAMIC_MAP
+     remains captured/static for now.
   5. **Production cleanup** — once bootstrap and update behavior are trusted,
      remove the replay-only scaffolding, implement proper EXIT / ARRIVED
      handling, and decide what final lifecycle shape production Navigate
-     should use.
+     should use. Consider generating PANORAMIC_MAP (placeholder grid or
+     real route map).
 - BMP pipeline preserved in the codebase as fallback.
 - The debug replay path and `lib/services/nav_replay_data.dart` remain in use
-  for icon/map bootstrap data and should not be removed yet.
+  for PANORAMIC_MAP bootstrap data and MAP_OVERVIEW fallback. Do not remove yet.
 
 2. Streaming text for Chat via `0x52` (next rendering upgrade)
 - The `0x52` protocol streams text word-by-word with a cursor and live clock.

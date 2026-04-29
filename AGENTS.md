@@ -42,19 +42,19 @@ Under active development:
   override the first real nav replay, and explicitly clears that stale text
   fallback before the first lifecycle when needed. **Current live slice:**
   bootstrap uses the full 108-packet replay, but the replayed `TRIP_STATUS`
-  packet is now replaced dynamically from live Google Maps fields. Captured
-  `MAP_OVERVIEW` and `PANORAMIC_MAP` bytes remain unchanged. A real 1-second
-  SYNC poller now keeps the session alive, and post-bootstrap updates are
-  currently being tested as `TRIP_STATUS + SYNC` rather than full lifecycle
-  resend. Production implementation still pending: startup hardening, field
-  extraction cleanup, final update-shape decision, and real icon/RLE map
-  generation.
+  packet is now replaced dynamically from live Google Maps fields. The
+  `MAP_OVERVIEW` direction icon is now dynamically generated: the Google Maps
+  notification icon PNG (`navIconPngBase64`) is scraped, decoded to 136×136
+  monochrome, and RLE-encoded. Geometric arrow generation exists as fallback.
+  Captured `PANORAMIC_MAP` bytes remain unchanged (static route map).
+  A real 1-second SYNC poller keeps the session alive, and post-bootstrap
+  updates use `TRIP_STATUS + SYNC`. The idle prompt is suppressed to avoid a
+  first-load race condition with `Proto.exit()`.
 
 Not yet implemented (documented, protocol known):
 - **`0x52` streaming text for Chat** — word-by-word rendering with cursor. Would replace the current "wait then dump text block" Chat UX.
 - **QuickNote via hosted transcription** — right-hold → `0xf1` audio → LC3 decode → STT → `0x1e` TX note push to dashboard
 - **Dashboard content injection** — push summaries/reminders into the firmware's grid via `0x1e` TX
-- **`0x0a 02` bitmap direction icon** — the encoding is compressed column-major RLE, partially analysed but not decoded
 
 ## Trusted behaviour
 Only build on event meanings we trust from live testing:
@@ -97,6 +97,10 @@ Key protocol families already mapped:
   All three sub-types required (text-only rejected). Sub-command names from
   Gadgetbridge: INIT(0x00), TRIP_STATUS(0x01), MAP_OVERVIEW(0x02),
   PANORAMIC_MAP(0x03), SYNC(0x04), EXIT(0x05), ARRIVED(0x06).
+  MAP_OVERVIEW RLE format: simple `<count> <byte>` pairs (count max 255),
+  row-major LSB-first pixel layout, two layers (image + overlay) = 4,624
+  raw bytes. Confirmed from ayroblu Swift source. Padded to 13 bands of
+  185-byte chunks with 9-byte packet headers.
 - `0x52` / `0x53` live streaming text with cursor and keepalive
 - `0x1e` TX dashboard data slot injection / RX quicknote post-release audio stream
 - `0x50` display mode control (required before `0x0a` nav and `0x52` streaming)
@@ -117,6 +121,7 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - [lib/services/glance_service.dart](lib/services/glance_service.dart)
 - [lib/services/capture_service.dart](lib/services/capture_service.dart)
 - [lib/services/navigate_service.dart](lib/services/navigate_service.dart) — now uses `0x0a` card protocol
+- [lib/services/nav_icon_generator.dart](lib/services/nav_icon_generator.dart) — PNG-to-RLE MAP_OVERVIEW conversion, ManoeuvreType enum, geometric arrow fallback
 - [lib/services/navigate_bitmap_service.dart](lib/services/navigate_bitmap_service.dart) — legacy BMP renderer (preserved, not called from Navigate)
 - [lib/services/chat_service.dart](lib/services/chat_service.dart)
 - [lib/services/proto.dart](lib/services/proto.dart) — wire-level BLE commands (brightness, settings, nav card, heartbeat)

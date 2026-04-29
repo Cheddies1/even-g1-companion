@@ -320,14 +320,28 @@ Observed reality (`Confirmed`):
 
   DirectionTurn enum values (from ayroblu Swift implementation, 0x01–0x23):
   StraightDot=0x01, Straight=0x02, Right=0x03, Left=0x04,
-  SlightRight/SlightLeft/SharpRight/SharpLeft/UTurnLeft/UTurnRight, plus
-  multiple roundabout variants. Full list in
+  SlightRight=0x05, SlightLeft=0x06, SharpRight=0x07, SharpLeft=0x08,
+  UTurnLeft=0x09, UTurnRight=0x0a, Merge=0x0b, plus roundabout variants
+  (0x0c–0x23). Full list in
   [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
-- **Sub-type 2 — MAP_OVERVIEW (direction icon)** (`02 0d`):
-  `0a c2 00 <seq> 02 0d 00 <band> <~186 bytes RLE data>` — 13 bands for a
-  136×136 pixel icon. Data is **run-length encoded** (confirmed by the ayroblu
-  Swift implementation). The `0d` = 13 (band count). The last band is slightly
-  shorter (179 vs 194 bytes).
+  The companion app classifies manoeuvres via `classifyManoeuvre()` in
+  `nav_icon_generator.dart`, parsing both `navIconSource` and instruction
+  text for direction keywords.
+- **Sub-type 2 — MAP_OVERVIEW (direction icon)** (`02`):
+  `0a <len> 00 <seq> 02 <bandCount> 00 <bandNum> 00 <RLE chunk>` — 9-byte
+  header + up to 185 bytes of RLE payload per band. Typically 13 bands for
+  a 136×136 pixel icon. The image is **two layers** (image + overlay)
+  concatenated = 4,624 raw bytes. Overlay is all-zeros for direction icons.
+  **RLE format**: simple `<count> <byte>` pairs, count capped at 255.
+  Confirmed from ayroblu/bazel-demo Swift source (`runLengthEncode()`).
+  **Pixel layout**: row-major, LSB-first bit packing (NOT column-major as
+  previously assumed). Pixel (x, y) is at bit `(x % 8)` of byte
+  `(y * 17 + x ~/ 8)`. `toBytes()` packs 8 consecutive bools per byte,
+  bit 0 (LSB) = first pixel in the group.
+  The companion app scrapes the Google Maps notification icon PNG
+  (`navIconPngBase64`), decodes to 136×136 monochrome via alpha threshold,
+  RLE-encodes, pads to 13 bands, and frames as MAP_OVERVIEW packets.
+  Geometric arrow generation exists as fallback.
 - **Sub-type 3 — PANORAMIC_MAP (route map)** (`03 5a`):
   `0a c3 00 <seq> 03 5a 00 <row> <~187 bytes>` — 90 rows (`5a` = 90) for a
   488×136 pixel map. Data is **unencoded** raw bitmap (not RLE).
