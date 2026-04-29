@@ -22,7 +22,7 @@ enum ManoeuvreType {
   uTurnLeft(0x09),
   uTurnRight(0x0a),
   merge(0x0b),
-  unknown(0x03); // fallback to right (matches captured data)
+  unknown(0x02); // fallback to straight (real-world: unclassified = go forward)
 
   const ManoeuvreType(this.directionTurnByte);
 
@@ -561,7 +561,7 @@ void _drawIcon(Uint8List canvas, ManoeuvreType manoeuvre) {
     case ManoeuvreType.straightDot:
       _drawStraightDotArrow(canvas);
     case ManoeuvreType.unknown:
-      _drawRightArrow(canvas); // fallback matches captured icon
+      _drawStraightArrow(canvas); // fallback: unclassified = go forward
   }
 }
 
