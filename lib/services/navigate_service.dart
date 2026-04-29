@@ -6,36 +6,53 @@ import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/text_service.dart';
 
+// ---------------------------------------------------------------------------
+// Session state
+// ---------------------------------------------------------------------------
+
+enum NavSessionState {
+  idle,
+  bootstrapping,
+  active,
+  ended,
+}
+
+// ---------------------------------------------------------------------------
+// NavigateService
+// ---------------------------------------------------------------------------
+
 class NavigateService {
   NavigateService._();
 
   static const _minTextRenderGap = Duration(milliseconds: 250);
   static const _minNavCardGap = Duration(milliseconds: 500);
-  static const _textToNavReplaySettleDelay = Duration(milliseconds: 250);
+  static const _textToBootstrapSettleDelay = Duration(milliseconds: 250);
   static const _navSyncPollInterval = Duration(seconds: 1);
-  static const String navUpdateModeFullLifecycle = 'fullLifecycleUpdate';
-  static const String navUpdateModeTripStatusOnly = 'tripStatusOnlyUpdate';
-
-  static const String _navUpdateMode = navUpdateModeTripStatusOnly;
 
   static NavigateService? _instance;
   static NavigateService get get => _instance ??= NavigateService._();
 
+  // -- State ----------------------------------------------------------------
+
   CompanionNotification? _latestInstruction;
+  NavSessionState _sessionState = NavSessionState.idle;
+  bool _bootstrapInFlight = false; // async-work guard, not session state
   bool _isVisible = false;
   bool _renderActive = false;
   bool _renderDirty = false;
   bool _lastRenderUsedNavCard = false;
-  bool _navModeEntered = false;
-  bool _navReplayInFlight = false;
   DateTime? _lastRenderCompletedAt;
-  Timer? _pendingIdlePromptTimer;
   Timer? _navSyncPoller;
+  Set<String> _lastKnownAvailableLegs = {};
+
+  // -- Public accessors -----------------------------------------------------
 
   CompanionNotification? get latestInstruction => _latestInstruction;
   bool get hasInstruction => _latestInstruction != null;
   bool get isVisible => _isVisible;
   bool get isShowingDetail => false;
+
+  // -- Notification ingestion -----------------------------------------------
 
   bool acceptsNotification(CompanionNotification notification) {
     return _isEligibleNavigationNotification(notification);
@@ -43,20 +60,20 @@ class NavigateService {
 
   Future<void> ingestNotification(CompanionNotification notification) async {
     if (!_isEligibleNavigationNotification(notification)) {
-      AppLog.info(
-        '${DateTime.now()} Navigate: ignored notification key=${notification.key} package=${notification.packageName} category=${notification.category} ongoing=${notification.isOngoing} channel=${notification.channelId}',
-      );
       return;
     }
-    _cancelPendingIdlePrompt(reason: 'notification-arrived');
     _latestInstruction = notification;
     AppLog.debug(
-      '${DateTime.now()} Navigate: payload primary="${notification.navPrimaryInfo}" secondary="${notification.navSecondaryInfo}" subText="${notification.subText}" iconSource="${notification.navIconSource}"',
+      'ingested: primary="${notification.navPrimaryInfo}" '
+      'secondary="${notification.navSecondaryInfo}" '
+      'subText="${notification.subText}"',
+      tag: 'Navigate',
     );
   }
 
+  // -- Mode entry / exit (called by CompanionController) --------------------
+
   Future<void> showLatest() async {
-    _cancelPendingIdlePrompt(reason: 'show-latest');
     await _scheduleRender();
   }
 
@@ -65,15 +82,8 @@ class NavigateService {
       await _scheduleRender();
       return;
     }
-    // Do NOT send idle text to the glasses. The old "Open Google Maps…" prompt
-    // required a Proto.exit() cleanup before the first nav replay, and that
-    // exit command raced with the 108-packet burst causing blank lenses.
-    // Leaving the glasses on whatever was displayed before is harmless — the
-    // first Maps notification will push the full nav card.
-    AppLog.info(
-      '${DateTime.now()} idle prompt suppressed (no text sent to avoid first-load race)',
-      tag: 'Navigate',
-    );
+    // No text sent — avoids Proto.exit() race with first bootstrap burst.
+    AppLog.info('idle: no instruction yet', tag: 'Navigate');
   }
 
   Future<void> showDetail() async {
@@ -85,10 +95,12 @@ class NavigateService {
   }
 
   Future<void> refreshVisibleView() async {
-    if (!_isVisible) {
-      return;
-    }
+    if (!_isVisible) return;
     await _scheduleRender();
+  }
+
+  Future<void> leaveMode() async {
+    await _endSession(reason: 'leave-mode');
   }
 
   Future<bool> clearIfMatches({
@@ -96,53 +108,57 @@ class NavigateService {
     required String packageName,
   }) async {
     final latest = _latestInstruction;
-    if (latest == null || !latest.isGoogleMaps) {
-      return false;
-    }
-    final sameKey = latest.key == key;
-    if (!sameKey) {
-      return false;
-    }
+    if (latest == null || !latest.isGoogleMaps) return false;
+    if (latest.key != key) return false;
     _latestInstruction = null;
-    await close();
-    AppLog.info(
-      '${DateTime.now()} cleared after notification removal',
-      tag: 'Navigate',
-    );
+    await _endSession(reason: 'notification-removed');
     return true;
   }
 
   Future<void> close() async {
-    _cancelPendingIdlePrompt(reason: 'close');
-    _stopNavSyncPoller(reason: 'close');
-    if (!_isVisible) {
-      return;
-    }
+    await _endSession(reason: 'close');
+  }
+
+  // -- Session lifecycle ----------------------------------------------------
+
+  void _transitionTo(NavSessionState newState, {String? reason}) {
+    if (_sessionState == newState) return;
+    final from = _sessionState.name;
+    _sessionState = newState;
+    AppLog.info(
+      'session: $from → ${newState.name}${reason != null ? ' ($reason)' : ''}',
+      tag: 'Navigate',
+    );
+  }
+
+  Future<void> _endSession({required String reason}) async {
+    _stopNavSyncPoller(reason: reason);
+    final wasActive =
+        _sessionState == NavSessionState.active ||
+        _sessionState == NavSessionState.bootstrapping;
+    _transitionTo(NavSessionState.idle, reason: reason);
+    _bootstrapInFlight = false;
+    _lastKnownAvailableLegs = {};
+    if (!_isVisible) return;
     _isVisible = false;
     _renderDirty = false;
-    _navModeEntered = false;
-    _navReplayInFlight = false;
+    if (wasActive) {
+      await Proto.sendNavModeExit();
+      AppLog.info('EXIT sent', tag: 'Navigate');
+    }
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
-    AppLog.info('${DateTime.now()} closed', tag: 'Navigate');
   }
 
-  Future<void> leaveMode() async {
-    await close();
-  }
-
-  bool get _isNavSessionActive => _navModeEntered || _navSyncPoller != null;
+  // -- Render scheduling ----------------------------------------------------
 
   Future<void> _scheduleRender() async {
-    _cancelPendingIdlePrompt(reason: 'schedule-render');
     _renderDirty = true;
-    if (_renderActive) {
-      return;
-    }
+    if (_renderActive) return;
 
     _renderActive = true;
     try {
-      while (_renderDirty && _isVisibleOrShouldBecomeVisible()) {
+      while (_renderDirty && (_isVisible || _latestInstruction != null)) {
         _renderDirty = false;
         await _renderCurrentView();
         _lastRenderCompletedAt = DateTime.now();
@@ -150,10 +166,6 @@ class NavigateService {
     } finally {
       _renderActive = false;
     }
-  }
-
-  bool _isVisibleOrShouldBecomeVisible() {
-    return _isVisible || _latestInstruction != null;
   }
 
   Future<void> _renderCurrentView() async {
@@ -170,82 +182,40 @@ class NavigateService {
     }
 
     if (useNavCard) {
-      await _prepareForNavCardReplayIfNeeded();
+      await _prepareForBootstrapIfNeeded();
       await TextService.get.stopTextSendingByOS();
       await _sendNavCard(notification);
       _lastRenderUsedNavCard = true;
-      AppLog.debug('${DateTime.now()} render -> nav-card', tag: 'Navigate');
       return;
     }
 
     final text = _buildTextFallback(notification);
     await TextService.get.startSendText(text);
     _lastRenderUsedNavCard = false;
-    AppLog.debug('${DateTime.now()} render -> text-fallback', tag: 'Navigate');
   }
 
-  bool _shouldUseNavCard(CompanionNotification notification) {
-    final primary = _clean(
-      notification.navPrimaryInfo.isNotEmpty
-          ? notification.navPrimaryInfo
-          : notification.navChipExpandedText.isNotEmpty
-              ? notification.navChipExpandedText
-              : notification.title,
-    );
-    final secondary = _clean(
-      notification.navSecondaryInfo.isNotEmpty
-          ? notification.navSecondaryInfo
-          : notification.text,
-    );
-
-    if (primary.isEmpty && secondary.isEmpty) {
-      return false;
-    }
-
-    final combined =
-        '$primary $secondary ${notification.subText}'.toLowerCase();
-    if (combined.contains('start navigation') ||
-        combined.contains('starting navigation') ||
-        combined == 'google maps') {
-      return false;
-    }
-
-    return true;
+  Future<void> _prepareForBootstrapIfNeeded() async {
+    if (_lastRenderUsedNavCard || !_isVisible) return;
+    AppLog.info('closing text fallback before bootstrap', tag: 'Navigate');
+    await TextService.get.stopTextSendingByOS();
+    await Proto.exit();
+    await Future<void>.delayed(_textToBootstrapSettleDelay);
   }
 
-  /// Map the notification's icon-source label to a Unicode arrow for use
-  /// as a text-based direction hint in the nav card's road-name field.
-  /// The `0x0a 02` icon bitmap is now dynamically generated from the Maps
-  /// notification PNG; this Unicode hint supplements it in the text fields.
-  static String _directionHint(String iconSource) {
-    final lower = iconSource.toLowerCase();
-    if (lower.contains('u-turn') || lower.contains('uturn')) return '↩ ';
-    if (lower.contains('sharp') && lower.contains('left')) return '↰ ';
-    if (lower.contains('sharp') && lower.contains('right')) return '↱ ';
-    if (lower.contains('slight') && lower.contains('left')) return '↖ ';
-    if (lower.contains('slight') && lower.contains('right')) return '↗ ';
-    if (lower.contains('left')) return '← ';
-    if (lower.contains('right')) return '→ ';
-    if (lower.contains('straight') || lower.contains('continue')) return '↑ ';
-    if (lower.contains('arrive') || lower.contains('destination')) return '◉ ';
-    if (lower.contains('merge')) return '↗ ';
-    if (lower.contains('roundabout')) return '↻ ';
-    return '';
-  }
+  // -- Nav card send --------------------------------------------------------
 
   Future<void> _sendNavCard(CompanionNotification notification) async {
     final fields = _buildLiveNavFields(notification);
-    if (!_navModeEntered) {
-      if (_navReplayInFlight) {
-        AppLog.info(
-          '${DateTime.now()} nav replay already in flight; skipping duplicate trigger',
-          tag: 'Navigate',
-        );
+
+    // First card: full bootstrap.
+    if (_sessionState == NavSessionState.idle) {
+      if (_bootstrapInFlight) {
+        AppLog.info('bootstrap already in flight; skipping', tag: 'Navigate');
         return;
       }
-      _navReplayInFlight = true;
-      _navModeEntered = true;
-      Proto.setReplayTripStatus(
+      _bootstrapInFlight = true;
+      _transitionTo(NavSessionState.bootstrapping);
+      Proto.setBootstrapTripStatus(
         eta: fields.eta,
         totalDistance: fields.totalDistance,
         roadName: fields.roadName,
@@ -254,24 +224,21 @@ class NavigateService {
         navIconSource: fields.navIconSource,
         navIconPngBase64: fields.navIconPngBase64,
       );
-      // DEBUG: Use replay test with exact snoop bytes to isolate
-      // whether the issue is packet format or something deeper.
       try {
-        await Proto.sendNavCardReplayTest();
-        _startNavSyncPollerIfActive();
+        await Proto.sendNavBootstrap();
+        _transitionTo(NavSessionState.active);
+        _startNavSyncPoller();
+      } catch (e) {
+        AppLog.error('bootstrap failed: $e', tag: 'Navigate');
+        _transitionTo(NavSessionState.idle, reason: 'bootstrap-failed');
       } finally {
-        _navReplayInFlight = false;
+        _bootstrapInFlight = false;
       }
-      return; // skip normal card — replay test covers it
+      return;
     }
 
-    AppLog.info('${DateTime.now()} nav update mode=$_navUpdateMode',
-        tag: 'Navigate');
-    if (_navUpdateMode == navUpdateModeTripStatusOnly) {
-      AppLog.info(
-        '${DateTime.now()} nav update sent as TRIP_STATUS+SYNC',
-        tag: 'Navigate',
-      );
+    // Subsequent updates: TRIP_STATUS + SYNC.
+    if (_sessionState == NavSessionState.active) {
       await Proto.sendNavTripStatusAndSync(
         eta: fields.eta,
         distance: fields.totalDistance,
@@ -280,38 +247,87 @@ class NavigateService {
         speed: fields.speed,
         navIconSource: fields.navIconSource,
       );
-      _startNavSyncPollerIfActive();
+      _startNavSyncPoller();
       return;
     }
 
-    if (_navReplayInFlight) {
-      AppLog.info(
-        '${DateTime.now()} nav replay already in flight; skipping duplicate full lifecycle update',
-        tag: 'Navigate',
-      );
-      return;
-    }
-
-    AppLog.info(
-      '${DateTime.now()} nav update sent as full lifecycle',
+    // Bootstrapping or ended — ignore update.
+    AppLog.debug(
+      'update skipped: session=${_sessionState.name}',
       tag: 'Navigate',
     );
-    _navReplayInFlight = true;
-    Proto.setReplayTripStatus(
-      eta: fields.eta,
-      totalDistance: fields.totalDistance,
-      roadName: fields.roadName,
-      turnDistance: fields.turnDistance,
-      speed: fields.speed,
-      navIconSource: fields.navIconSource,
-    );
-    try {
-      await Proto.sendNavCardReplayTest();
-      _startNavSyncPollerIfActive();
-    } finally {
-      _navReplayInFlight = false;
-    }
   }
+
+  // -- SYNC poller ----------------------------------------------------------
+
+  void _startNavSyncPoller() {
+    if (_sessionState != NavSessionState.active) return;
+    if (!_isVisible || _latestInstruction == null) return;
+    if (_navSyncPoller != null) return;
+    _lastKnownAvailableLegs = _currentAvailableLegs();
+    _navSyncPoller = Timer.periodic(_navSyncPollInterval, (_) {
+      unawaited(_sendNavSyncTick());
+    });
+    AppLog.info('SYNC poller started', tag: 'Navigate');
+  }
+
+  Future<void> _sendNavSyncTick() async {
+    if (_sessionState != NavSessionState.active) {
+      _stopNavSyncPoller(reason: 'session-not-active');
+      return;
+    }
+
+    final currentLegs = _currentAvailableLegs();
+    if (currentLegs.isEmpty) {
+      _stopNavSyncPoller(reason: 'transport-unavailable');
+      return;
+    }
+
+    // Detect leg recovery — resend current state to the recovered leg.
+    final recovered = currentLegs.difference(_lastKnownAvailableLegs);
+    _lastKnownAvailableLegs = currentLegs;
+    if (recovered.isNotEmpty && _latestInstruction != null) {
+      AppLog.info(
+        'leg recovered: ${recovered.join(",")} — resending nav state',
+        tag: 'Navigate',
+      );
+      final fields = _buildLiveNavFields(_latestInstruction!);
+      await Proto.sendNavTripStatusAndSync(
+        eta: fields.eta,
+        distance: fields.totalDistance,
+        roadName: fields.roadName,
+        turnDistance: fields.turnDistance,
+        speed: fields.speed,
+        navIconSource: fields.navIconSource,
+      );
+      return; // sent SYNC as part of the update
+    }
+
+    if (_bootstrapInFlight) return;
+    await Proto.sendNavSync();
+  }
+
+  void _stopNavSyncPoller({required String reason}) {
+    final poller = _navSyncPoller;
+    if (poller == null) return;
+    poller.cancel();
+    _navSyncPoller = null;
+    AppLog.info('SYNC poller stopped: $reason', tag: 'Navigate');
+  }
+
+  Set<String> _currentAvailableLegs() {
+    return {'L', 'R'}
+        .where((lr) => BleManager.get().isLegAvailable(lr))
+        .toSet();
+  }
+
+  // -- Field extraction -----------------------------------------------------
+
+  /// Matches values that look like a turn distance: "100 yd", "0.4 mi", etc.
+  static final _distancePattern = RegExp(
+    r'^\d+(\.\d+)?\s*(yd|mi|km|m|ft)s?$',
+    caseSensitive: false,
+  );
 
   ({
     String eta,
@@ -322,22 +338,27 @@ class NavigateService {
     String navIconSource,
     String navIconPngBase64,
   }) _buildLiveNavFields(CompanionNotification notification) {
-    final turnDistance = _clean(
+    // turnDistance: only accept values that look like distances.
+    // Google Maps sometimes puts road names or destination labels in
+    // navPrimaryInfo (e.g. "towards Milton Rd", "Home (36 Campbell Rd)").
+    final rawTurn = _clean(
       notification.navPrimaryInfo.isNotEmpty
           ? notification.navPrimaryInfo
           : notification.navChipExpandedText,
     );
-    final dirHint = _directionHint(notification.navIconSource);
-    final rawRoad = _clean(
+    final turnDistance = _distancePattern.hasMatch(rawTurn) ? rawTurn : '';
+
+    // roadName: clean text, no Unicode direction prefix (real icons replace it).
+    final roadName = _clean(
       notification.navSecondaryInfo.isNotEmpty
           ? notification.navSecondaryInfo
           : notification.text.isNotEmpty
               ? notification.text
               : notification.title,
     );
-    final roadName = '$dirHint$rawRoad';
-    final meta = _clean(notification.subText);
 
+    // ETA + total distance from subText: "30 min · 1.4 mi · 22:16 ETA"
+    final meta = _clean(notification.subText);
     String eta = meta;
     String totalDistance = '';
     final separator =
@@ -359,73 +380,38 @@ class NavigateService {
     );
   }
 
-  Future<void> _prepareForNavCardReplayIfNeeded() async {
-    if (_lastRenderUsedNavCard || !_isVisible) {
-      return;
-    }
-    AppLog.info(
-      '${DateTime.now()} closing text fallback before nav replay',
-      tag: 'Navigate',
-    );
-    await TextService.get.stopTextSendingByOS();
-    await Proto.exit();
-    await Future<void>.delayed(_textToNavReplaySettleDelay);
-  }
+  // -- Notification eligibility ---------------------------------------------
 
-  void _startNavSyncPollerIfActive() {
-    if (!_navModeEntered || !_isVisible || _latestInstruction == null) {
-      return;
-    }
-    if (_navSyncPoller != null) {
-      return;
-    }
-    AppLog.info(
-      '${DateTime.now()} nav SYNC poller started',
-      tag: 'Navigate',
+  bool _shouldUseNavCard(CompanionNotification notification) {
+    final primary = _clean(
+      notification.navPrimaryInfo.isNotEmpty
+          ? notification.navPrimaryInfo
+          : notification.navChipExpandedText.isNotEmpty
+              ? notification.navChipExpandedText
+              : notification.title,
     );
-    _navSyncPoller = Timer.periodic(_navSyncPollInterval, (_) {
-      unawaited(_sendNavSyncTick());
-    });
-  }
-
-  Future<void> _sendNavSyncTick() async {
-    if (!_navModeEntered || !_isVisible || _latestInstruction == null) {
-      _stopNavSyncPoller(reason: 'session-inactive');
-      return;
-    }
-    if (_navReplayInFlight) {
-      return;
-    }
-    final hasAvailableLeg = BleManager.get().isLegAvailable('L') ||
-        BleManager.get().isLegAvailable('R');
-    if (!hasAvailableLeg) {
-      _stopNavSyncPoller(reason: 'transport-unavailable');
-      return;
-    }
-    await Proto.sendNavSync();
-  }
-
-  void _stopNavSyncPoller({required String reason}) {
-    final poller = _navSyncPoller;
-    if (poller == null) {
-      return;
-    }
-    poller.cancel();
-    _navSyncPoller = null;
-    AppLog.info(
-      '${DateTime.now()} nav SYNC poller stopped reason=$reason',
-      tag: 'Navigate',
+    final secondary = _clean(
+      notification.navSecondaryInfo.isNotEmpty
+          ? notification.navSecondaryInfo
+          : notification.text,
     );
+
+    if (primary.isEmpty && secondary.isEmpty) return false;
+
+    final combined =
+        '$primary $secondary ${notification.subText}'.toLowerCase();
+    if (combined.contains('start navigation') ||
+        combined.contains('starting navigation') ||
+        combined == 'google maps') {
+      return false;
+    }
+
+    return true;
   }
 
   bool _isEligibleNavigationNotification(CompanionNotification notification) {
-    if (!notification.isGoogleMaps) {
-      return false;
-    }
-
-    if (!notification.hasNavigationPayload) {
-      return false;
-    }
+    if (!notification.isGoogleMaps) return false;
+    if (!notification.hasNavigationPayload) return false;
 
     final category = notification.category.toLowerCase();
     final channelId = notification.channelId.toLowerCase();
@@ -453,13 +439,8 @@ class NavigateService {
         channelId.contains('navigation') ||
         tag.contains('navigation');
 
-    if (!hasStrongNavFields) {
-      return false;
-    }
-
-    if (!hasOngoingSignal) {
-      return false;
-    }
+    if (!hasStrongNavFields) return false;
+    if (!hasOngoingSignal) return false;
 
     if (combined.contains('review') ||
         combined.contains('rate this place') ||
@@ -473,10 +454,10 @@ class NavigateService {
     return true;
   }
 
+  // -- Text fallback --------------------------------------------------------
+
   String _buildTextFallback(CompanionNotification? notification) {
-    if (notification == null) {
-      return 'Start navigation in Google Maps';
-    }
+    if (notification == null) return 'Start navigation in Google Maps';
 
     final primary = _clean(
       notification.navPrimaryInfo.isNotEmpty
@@ -495,37 +476,16 @@ class NavigateService {
     final meta = _clean(notification.subText);
 
     final lines = <String>[];
-    if (primary.isNotEmpty) {
-      lines.add(primary);
-    }
-    if (secondary.isNotEmpty && secondary != primary) {
-      lines.add(secondary);
-    }
-    if (meta.isNotEmpty) {
-      lines.add(meta);
-    }
+    if (primary.isNotEmpty) lines.add(primary);
+    if (secondary.isNotEmpty && secondary != primary) lines.add(secondary);
+    if (meta.isNotEmpty) lines.add(meta);
 
-    if (lines.isEmpty) {
-      return 'Waiting for Google Maps';
-    }
-
-    return lines.join('\n');
+    return lines.isEmpty ? 'Waiting for Google Maps' : lines.join('\n');
   }
+
+  // -- Utilities ------------------------------------------------------------
 
   String _clean(String value) {
     return value.replaceAll(RegExp(r'\s+'), ' ').trim();
-  }
-
-  void _cancelPendingIdlePrompt({required String reason}) {
-    final timer = _pendingIdlePromptTimer;
-    if (timer == null) {
-      return;
-    }
-    timer.cancel();
-    _pendingIdlePromptTimer = null;
-    AppLog.info(
-      '${DateTime.now()} idle prompt cancelled: reason=$reason',
-      tag: 'Navigate',
-    );
   }
 }

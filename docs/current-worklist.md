@@ -82,12 +82,35 @@ Working, but still needs real-world observation:
 - The debug replay path and `lib/services/nav_replay_data.dart` remain in use
   for PANORAMIC_MAP bootstrap data and MAP_OVERVIEW fallback. Do not remove yet.
 
-2. Streaming text for Chat via `0x52` (next rendering upgrade)
-- The `0x52` protocol streams text word-by-word with a cursor and live clock.
-  Proto methods (`sendNavModeEnter` pattern) are the template.
-- Wiring into Chat mode would replace the current "wait then dump text block"
-  experience with a live typewriter effect as LLM tokens arrive.
-- `0x53` keepalive every ~5 s needed while streaming.
+2. Chat streaming polish via `0x52`
+- **Implemented:** Chat now uses `0x52` as the persistent conversation
+  surface on the glasses. User transcripts and assistant replies both render
+  there with compact `You:` / `G1:` labels, `0x50` mode control, `0x52`
+  init, and `0x53` keepalive.
+- **Rendering model:** committed visible lines are sent as stable `0x52`
+  line content, mapped to per-line `0x52` indices, while only the newest
+  visible line is updated progressively with the cursor. Wrapped overflow is
+  trimmed from the top of the visible window rather than re-streaming the
+  whole conversation from the start.
+- **Paced streaming implemented:** a `StreamingRenderQueue` now decouples
+  backend chunk arrival from display updates. Backend chunks only append to
+  a target buffer; the queue drains ~2 words every 150 ms, wraps
+  deterministically at ~48 chars/line, and sends only changed 0x52 lines
+  (dirty-line diffing). The queue keeps draining after the backend stream
+  completes until all text is displayed, fixing the previous truncation
+  bug. The old `TextPainter`-based wrapping and 80 ms flush timer are
+  removed.
+- **Recent fix:** `F5 00` while a Chat reply is visible now clears only the
+  visible Chat display and preserves the in-memory Chat session for follow-up
+  turns.
+- **Next steps:**
+  1. Live-validate reading pace on device — tune `wordsPerTick` (currently 2)
+     and `drainInterval` (currently 150 ms) if the pace feels too fast or slow.
+  2. Validate long-answer overflow behaviour and confirm the rolling visible
+     window scrolls smoothly line by line.
+  3. Validate follow-up turns still append below previous context correctly.
+  4. Tune `charsPerLine` (currently 48) if line wrapping does not match the
+     firmware's own wrapping behaviour at the `0x52` font size.
 
 3. QuickNote via hosted transcription (future feature)
 - Right-hold → `0xf1` mic audio during hold → `0x1e c8` chunked post-release
@@ -159,8 +182,9 @@ Rendering protocols (layouts capture):
 - 2026-04-28 layouts capture (`FINDINGS-layouts.md`) discovered three new
   rendering paths the official app uses beyond `0x4E` text and BMP:
   - **`0x52` live streaming text** — word-by-word with cursor, confirmed
-    with a known phrase. `0x53` keepalive every ~5 s. Chat mode can stream
-    LLM responses instead of dumping finished text blocks.
+    with a known phrase. `0x53` keepalive every ~5 s. **Now wired into Chat**
+    for assistant replies, with line-1 cursor and line-2 text confirmed in
+    live testing.
   - **`0x0a` navigation card** — structured text data slots in one ~48-byte
     packet (ETA, distance, road, turn distance) plus optional icon/map
     bitmap chunks. The current Navigate implementation uses:
@@ -173,8 +197,9 @@ Rendering protocols (layouts capture):
     injection features.
   - **`0x50` display mode control** — primes the display before entering
     streaming text or navigation card mode.
-- None of these are wired into the companion app yet; they are documented
-  as confirmed protocols ready for implementation.
+- `0x52` is now wired into the companion app for Chat replies. `0x0a`
+  Navigate and `0x1e` dashboard injection remain the larger protocol-driven
+  areas still under active iteration.
 
 Tap and long-press mapping:
 - 2026-04-28 capture (`FINDINGS-taps.md`) hardened the

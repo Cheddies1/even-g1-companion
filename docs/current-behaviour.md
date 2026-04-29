@@ -245,8 +245,6 @@ Navigate is intentionally lean and notification-driven.
   visible null-separated text fields (ETA, total distance, road name, turn
   distance) that the firmware renders using its own built-in card template
   and font
-- a Unicode direction arrow (→ ← ↑ ↩ etc.) is prepended to the road name
-  based on the Maps notification's `navIconSource` label
 - the **MAP_OVERVIEW direction icon is now dynamically generated** from the
   Google Maps notification icon PNG (`navIconPngBase64`): decoded to 136×136
   monochrome via alpha threshold, RLE-encoded, padded to 13 bands. Falls
@@ -293,19 +291,48 @@ Chat mode is now a working v1 feature.
 - idle state shows `Chat ready` / `Tilt up to talk`
 - tilt up starts listening from the glasses mic after a short `500ms` intent gate
 - tilt down stops capture and submits what was said
-- a short transcript preview may be shown
-- `Thinking...` is shown while waiting for the backend
-- the assistant reply is rendered via the normal text path
+- once the transcript is available, Chat enters or reuses the `0x52`
+  conversation surface instead of showing a separate transient transcript
+  preview
+- the transcribed user question is appended to the visible conversation
+- while waiting for the backend, Chat shows the user turn plus a short `G1:
+  Thinking...` placeholder in the same surface
+- the assistant reply then fills in below that in the firmware `0x52`
+  streaming text mode with the pulsing cursor on the left
 - follow-up turns continue in the same session while Chat mode stays active
 - leaving Chat mode resets and discards the session
+- `F5 00` / close-active while a reply is visible now clears only the visible
+  Chat display and returns Chat to a ready state; it does not discard the
+  in-memory conversation history
 
 ### Current implementation
 
 - glasses mic audio is captured through the existing native recorder path
 - Chat uses a temporary WAV output rather than Capture's saved-public-recording path
 - the WAV is transcribed through the configured OpenAI transcription API
-- the transcript plus in-memory conversation history are sent to the configured chat backend
-- the assistant reply is displayed in the glasses and can page across multiple screens if long
+- the transcript plus in-memory conversation history are sent to the configured
+  chat backend
+- the visible Chat surface is displayed via `0x52` streaming text:
+  - `0x50` display mode control + `0x52` init before the first streamed frame
+  - each visible wrapped line is sent to its own `0x52` line index
+  - historic visible lines are resent as stable committed line content
+  - only the newest visible line is driven progressively with the cursor
+  - each `0x52` update re-sends the full current content of that specific line
+  - the visible window is trimmed from the top as wrapped lines overflow
+  - `0x53` keepalive stays active while the `0x52` conversation surface is active
+- assistant reply rendering is paced by a `StreamingRenderQueue` that is
+  decoupled from backend chunk arrival:
+  - backend chunks only append to a target text buffer
+  - the queue drains ~2 words every 150 ms at its own cadence
+  - only changed 0x52 lines are sent (dirty-line diffing)
+  - the queue keeps draining after the backend stream completes until
+    all text is displayed, then signals completion
+  - line wrapping is deterministic at ~48 chars/line (word-boundary wrap)
+- the visible Chat surface is now a trimmed conversation buffer separate from
+  backend history, using compact labels (`You:` / `G1:`) and preserving recent
+  turns across follow-up questions while Chat mode remains active
+- if streaming is unavailable or fails before a visible streamed reply is on
+  screen, Chat can still fall back to the older `0x4E` text path
 
 ### Response shaping and limits
 
@@ -315,6 +342,9 @@ Chat mode is now a working v1 feature.
 - response characters are also capped locally before display as a second safety rail
 - session history is only lightly capped to the most recent messages if it grows unusually large
 - there is no summarisation in this phase
+- the current OpenAI-compatible integration requests streamed output; a paced
+  `StreamingRenderQueue` smooths coarse provider chunks into a readable
+  word-by-word typewriter effect on the glasses
 
 ### Current configuration
 
@@ -387,6 +417,9 @@ Richer technical detail is kept in app logs rather than dumped into the glasses 
 
 - Chat mode depends on network reachability and a valid API key
 - long conversations are lightly windowed if they exceed the recent-history cap
+- the `0x52` render path now uses a paced `StreamingRenderQueue` to decouple
+  backend chunk arrival from display updates; still needs live validation of
+  reading pace and long-answer scrolling behaviour
 - there is no spoken TTS reply in this phase
 - there is no consumer ChatGPT account linking in this phase
 

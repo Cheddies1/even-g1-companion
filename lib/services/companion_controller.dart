@@ -461,11 +461,11 @@ class CompanionController extends ChangeNotifier {
               ChatService.get.isThinking ? 'Chat working' : 'Chat submitting';
           break;
         }
-        await ChatService.get.resetSession();
+        await ChatService.get.closeVisibleDisplay();
         AppLog.debug(
           '${DateTime.now()} DisplayState: source=GestureClose service=Chat currentMode=${_activeMode.label}',
         );
-        _statusMessage = 'Chat closed';
+        _statusMessage = 'Chat ready';
         break;
       case 2:
         await _runTiltUpIntent(

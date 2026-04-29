@@ -52,7 +52,6 @@ Under active development:
   first-load race condition with `Proto.exit()`.
 
 Not yet implemented (documented, protocol known):
-- **`0x52` streaming text for Chat** — word-by-word rendering with cursor. Would replace the current "wait then dump text block" Chat UX.
 - **QuickNote via hosted transcription** — right-hold → `0xf1` audio → LC3 decode → STT → `0x1e` TX note push to dashboard
 - **Dashboard content injection** — push summaries/reminders into the firmware's grid via `0x1e` TX
 
@@ -124,6 +123,7 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - [lib/services/nav_icon_generator.dart](lib/services/nav_icon_generator.dart) — PNG-to-RLE MAP_OVERVIEW conversion, ManoeuvreType enum, geometric arrow fallback
 - [lib/services/navigate_bitmap_service.dart](lib/services/navigate_bitmap_service.dart) — legacy BMP renderer (preserved, not called from Navigate)
 - [lib/services/chat_service.dart](lib/services/chat_service.dart)
+- [lib/services/streaming_render_queue.dart](lib/services/streaming_render_queue.dart) — paced 0x52 display queue for Chat
 - [lib/services/proto.dart](lib/services/proto.dart) — wire-level BLE commands (brightness, settings, nav card, heartbeat)
 - [lib/services/app_settings_store.dart](lib/services/app_settings_store.dart) — persisted user preferences
 - [lib/services/app_log.dart](lib/services/app_log.dart) — central logger

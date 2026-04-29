@@ -1,8 +1,10 @@
-// AUTO-GENERATED: exact nav packets from official app snoop for replay test.
+// Captured bootstrap data from official app BLE snoop.
 // 108 packets, ~20071 bytes total.
-// Delete this file once the nav card protocol is working.
+// TRIP_STATUS and MAP_OVERVIEW are replaced dynamically at send time.
+// PANORAMIC_MAP remains as static placeholder.
+// MAP_OVERVIEW captured bytes serve as last-resort fallback.
 
-const navReplayHexPackets = <String>[
+const navBootstrapHexPackets = <String>[
   "500600000101",
   "0a0600750001",
   "0a0600760401",

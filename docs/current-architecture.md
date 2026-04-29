@@ -105,7 +105,7 @@ Owns:
 - suppression / prioritization rules relative to Glance
 - **uses the structured `0x0a` navigation card protocol**. The bootstrap
   path replays 108 captured official-app packets through
-  [Proto.sendNavCardReplayTest](../lib/services/proto.dart) using
+  [Proto.sendNavBootstrap](../lib/services/proto.dart) using
   interleaved per-leg fire-and-forget transport, with two dynamic
   replacements:
   1. `TRIP_STATUS` — rebuilt from live Google Maps notification fields
@@ -173,6 +173,7 @@ Consumers:
 
 ### Chat
 - [lib/services/chat_service.dart](../lib/services/chat_service.dart)
+- [lib/services/streaming_render_queue.dart](../lib/services/streaming_render_queue.dart)
 - [lib/services/chat_backend.dart](../lib/services/chat_backend.dart)
 - [lib/services/openai_chat_backend.dart](../lib/services/openai_chat_backend.dart)
 - [lib/services/openai_transcription_service.dart](../lib/services/openai_transcription_service.dart)
@@ -185,11 +186,30 @@ Owns:
 - STT handoff
 - backend request / response handling
 - concise text-state rendering back to the glasses
-- note: a `0x52` streaming text protocol has been confirmed that pushes text
-  word by word with a cursor — the natural fit for streaming LLM responses.
-  See [protocol-reference.md](protocol-reference.md) "Live streaming text".
-  Not yet wired into Chat; documented as the highest-priority rendering
-  upgrade after Navigate.
+- Chat now uses the confirmed `0x52` streaming text protocol as its
+  persistent on-glasses conversation surface. `Proto.startStreamingText()`
+  sends `0x50` display-mode control and the `0x52` init frame. Committed
+  visible context is sent as stable `0x52` line content, but now as
+  individual visible lines rather than one combined block. Only the newest
+  visible line is updated with the pulsing cursor. `0x53` keepalive runs
+  every ~5 s while the `0x52` surface is active.
+- **Paced streaming via `StreamingRenderQueue`:** Backend chunks are
+  decoupled from display updates. The backend appends raw text to a target
+  buffer; a separate `StreamingRenderQueue` drains that buffer at a paced
+  cadence (~2 words every 150 ms), wraps text deterministically at ~48
+  chars/line, and sends only changed `0x52` lines. The queue keeps
+  draining after the backend stream completes until all text is displayed,
+  then signals completion. This eliminates the previous redraw storms and
+  ensures the final visible text reaches the actual end of the response.
+- Chat now keeps a **display buffer** separate from backend message history.
+  The display buffer is the on-glasses conversation surface (`You:` / `G1:`),
+  with committed wrapped lines plus one active growing line. A small visible
+  window is derived from that buffer and mapped onto `0x52` line indices.
+  The visible window is trimmed from the top for size, while the backend
+  message list remains the source of truth for conversational context.
+- `F5 00` while a Chat reply is merely visible now closes the visible Chat
+  display without discarding the in-memory session. A full Chat session reset
+  still happens on mode switch away from Chat or explicit session teardown.
 
 Current backend seam:
 - `ChatService` depends on the `ChatBackend` abstraction, not a controller-level hardcoded backend
@@ -259,6 +279,9 @@ Current request shaping:
 - the OpenAI-compatible backend applies a glasses-specific system prompt
 - request output is bounded with a max completion token limit
 - response text is also capped locally before being rendered to the glasses
+- the backend now exposes both one-shot and streamed response paths through
+  the `ChatBackend` abstraction; Chat mode uses the streamed path first and
+  falls back to one-shot rendering if needed
 
 Current session-history behaviour:
 - the full in-memory Chat turn list is tracked while Chat mode stays active
@@ -269,9 +292,8 @@ Current session-history behaviour:
 Current mode-entry idle displays:
 - `capture`: `*`
 - `chat`: `Chat ready` / `Tilt up to talk`
-- `navigate`: `Open Google Maps` / `to start navigation` unless a live instruction is already available
-  - the idle prompt is delayed briefly on mode entry so it does not race the
-    first live Maps notification
+- `navigate`: idle prompt is suppressed — no text sent to the glasses on mode
+  entry. The first Maps notification triggers the full nav card bootstrap.
 - `glance`: no separate idle title card; content appears only when a Glance item is actually shown
 
 Glance assistant:

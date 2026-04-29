@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -57,6 +58,13 @@ class Proto {
       Duration(milliseconds: 10);
   static const Duration _navReplayInterleavedPairDelay =
       Duration(milliseconds: 20);
+  static const Duration _streamingKeepAliveInterval = Duration(seconds: 5);
+
+  static int _streamTextSeq = 0;
+  static Timer? _streamingKeepAliveTimer;
+  static bool _streamingTextActive = false;
+  static String _lastStreamingText = '';
+  static int _lastStreamingLine = 2;
 
   static String lR() {
     if (BleManager.get().isLegAvailable("R")) return "R";
@@ -118,7 +126,7 @@ class Proto {
 
   static int _beatHeartSeq = 0;
   static Uint8List _nextHeartBeatPacket() {
-    final length = 6;
+    const length = 6;
     final seq = _beatHeartSeq % 0xff;
     final data = Uint8List.fromList([
       0x25,
@@ -339,18 +347,19 @@ class Proto {
     );
   }
 
-  /// Exit navigation card mode using the proper EXIT sub-command (0x05).
-  /// DEBUG: Replay ALL snooped `0x0a` lifecycle packets with selectable
-  /// transport ordering, without changing the captured payload bytes.
-  static Future<void> sendNavCardReplayTest() async {
+  /// Send the full navigation card bootstrap lifecycle.
+  ///
+  /// Replays captured `0x0a` packets with dynamic TRIP_STATUS and
+  /// MAP_OVERVIEW replacements, using interleaved per-leg transport.
+  static Future<void> sendNavBootstrap() async {
     final replayPackets =
-        navReplayHexPackets.map(_decodeHexPacket).toList();
-    final dynamicTripStatus = _pendingReplayTripStatus;
-    _pendingReplayTripStatus = null;
+        navBootstrapHexPackets.map(_decodeHexPacket).toList();
+    final dynamicTripStatus = _pendingBootstrapPayload;
+    _pendingBootstrapPayload = null;
     final tripStatusReplaced = dynamicTripStatus == null
         ? false
-        : _replaceReplayTripStatusPacket(replayPackets, dynamicTripStatus);
-    final mapOverviewReplaced = await _replaceReplayMapOverviewPackets(
+        : _replaceTripStatusPacket(replayPackets, dynamicTripStatus);
+    final mapOverviewReplaced = await _replaceMapOverviewPackets(
       replayPackets,
       dynamicTripStatus,
     );
@@ -365,13 +374,13 @@ class Proto {
     final pairStats = _NavReplayPairStats();
 
     AppLog.info(
-      '${totalStartedAt.toIso8601String()} nav replay mode=$_navReplayMode packetCount=${replayPackets.length} availableLegs=${availableLegs.join(",")} tripStatusReplaced=$tripStatusReplaced mapOverviewReplaced=$mapOverviewReplaced',
+      'bootstrap: packets=${replayPackets.length} legs=${availableLegs.join(",")} tripStatus=$tripStatusReplaced mapOverview=$mapOverviewReplaced',
       tag: 'Navigate',
     );
 
     if (availableLegs.isEmpty) {
       AppLog.error(
-        '${DateTime.now().toIso8601String()} nav replay skipped: no available legs',
+        '${DateTime.now().toIso8601String()} nav bootstrap skipped: no available legs',
         tag: 'Navigate',
       );
       return;
@@ -409,7 +418,7 @@ class Proto {
           break;
         default:
           AppLog.error(
-            '${DateTime.now().toIso8601String()} nav replay aborted: unsupported mode=$_navReplayMode',
+            '${DateTime.now().toIso8601String()} nav bootstrap aborted: unsupported mode=$_navReplayMode',
             tag: 'Navigate',
           );
           return;
@@ -418,24 +427,10 @@ class Proto {
       BleManager.get().resumeHeartbeats(reason: 'nav-replay');
     }
 
-    for (final lr in ['L', 'R']) {
-      final stats = legStats[lr]!;
-      AppLog.info(
-        '${DateTime.now().toIso8601String()} nav replay leg=$lr packetCount=${stats.packetCount} start=${stats.startedAt?.toIso8601String() ?? "n/a"} end=${stats.endedAt?.toIso8601String() ?? "n/a"}',
-        tag: 'Navigate',
-      );
-    }
-    if (_navReplayMode == navReplayModeInterleaved) {
-      AppLog.info(
-        '${DateTime.now().toIso8601String()} nav replay pairs=${pairStats.pairCount} start=${pairStats.startedAt?.toIso8601String() ?? "n/a"} end=${pairStats.endedAt?.toIso8601String() ?? "n/a"}',
-        tag: 'Navigate',
-      );
-    }
-
     final totalDurationMs =
         DateTime.now().difference(totalStartedAt).inMilliseconds;
     AppLog.info(
-      '${DateTime.now().toIso8601String()} nav replay complete mode=$_navReplayMode totalDurationMs=$totalDurationMs',
+      'bootstrap complete: ${replayPackets.length} packets, ${totalDurationMs}ms',
       tag: 'Navigate',
     );
   }
@@ -496,6 +491,120 @@ class Proto {
       }
     } else {
       return false;
+    }
+  }
+
+  /// Prime the structured text renderer for `0x52` incremental updates.
+  ///
+  /// Sends `0x50` display mode control first, then the observed `0x52` init
+  /// frame `52 06 00 00 01 01`. A 5-second `0x53` keepalive is started and
+  /// the current text buffer is cleared.
+  static Future<void> startStreamingText() async {
+    await stopStreamingText(sendFinalFrame: false);
+
+    await BleManager.sendData(
+      Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]),
+    );
+    await BleManager.sendData(
+      Uint8List.fromList([0x52, 0x06, 0x00, 0x00, 0x01, 0x01]),
+    );
+
+    _streamTextSeq = 1;
+    _streamingTextActive = true;
+    _lastStreamingText = '';
+    _lastStreamingLine = 2;
+    _startStreamingKeepAlive();
+
+    AppLog.info('${DateTime.now()} streaming started', tag: 'Chat');
+  }
+
+  /// Send the full current text buffer to the streaming renderer.
+  ///
+  /// The firmware replaces the target line content on each `0x52` frame, so
+  /// callers must pass the whole current buffer rather than a delta.
+  static Future<void> sendStreamingText(
+    String text, {
+    int line = 2,
+    bool isFinal = false,
+  }) async {
+    if (!_streamingTextActive) {
+      await startStreamingText();
+    }
+
+    final normalized = text.replaceAll('\r', '');
+    _lastStreamingText = normalized;
+    _lastStreamingLine = line;
+
+    await BleManager.sendData(_buildStreamingCursorPacket(line: line));
+    await BleManager.sendData(
+      _buildStreamingTextPacket(
+        normalized,
+        line: line,
+        confirmed: isFinal,
+      ),
+    );
+
+    AppLog.info(
+      '${DateTime.now()} streaming update -> line=$line len=${normalized.length}',
+      tag: 'Chat',
+    );
+  }
+
+  /// Send a non-animated `0x52` line update for committed visible context.
+  ///
+  /// This uses the same full-line replacement behavior as [sendStreamingText]
+  /// but skips the cursor frame so historic lines appear stable.
+  static Future<void> sendStreamingLine(
+    String text, {
+    required int line,
+    bool confirmed = false,
+  }) async {
+    if (!_streamingTextActive) {
+      await startStreamingText();
+    }
+
+    final normalized = text.replaceAll('\r', '');
+    await BleManager.sendData(
+      _buildStreamingTextPacket(
+        normalized,
+        line: line,
+        confirmed: confirmed,
+      ),
+    );
+
+    AppLog.info(
+      '${DateTime.now()} streaming line update -> line=$line len=${normalized.length}',
+      tag: 'Chat',
+    );
+  }
+
+  /// Stop the active `0x52` session and its `0x53` keepalive.
+  static Future<void> stopStreamingText({
+    bool sendFinalFrame = true,
+  }) async {
+    final wasActive = _streamingTextActive;
+    final finalText = _lastStreamingText;
+
+    _streamingKeepAliveTimer?.cancel();
+    _streamingKeepAliveTimer = null;
+    _streamingTextActive = false;
+
+    if (wasActive && sendFinalFrame && finalText.isNotEmpty) {
+      await BleManager.sendData(_buildStreamingCursorPacket(line: _lastStreamingLine));
+      await BleManager.sendData(
+        _buildStreamingTextPacket(
+          finalText,
+          line: _lastStreamingLine,
+          confirmed: true,
+        ),
+      );
+    }
+
+    _lastStreamingText = '';
+    _lastStreamingLine = 2;
+
+    if (wasActive) {
+      AppLog.info('${DateTime.now()} streaming stopped', tag: 'Chat');
     }
   }
 
@@ -587,10 +696,80 @@ class Proto {
     return Uint8List.fromList(bytes);
   }
 
+  static void _startStreamingKeepAlive() {
+    _streamingKeepAliveTimer?.cancel();
+    _streamingKeepAliveTimer =
+        Timer.periodic(_streamingKeepAliveInterval, (_) async {
+      if (!_streamingTextActive) {
+        return;
+      }
+      await BleManager.sendData(Uint8List.fromList([0x53]));
+      AppLog.info('${DateTime.now()} keepalive sent', tag: 'Chat');
+    });
+  }
+
+  static Uint8List _buildStreamingCursorPacket({
+    int line = 1,
+  }) {
+    final seq = _nextStreamingSeq();
+    return Uint8List.fromList([
+      0x52,
+      0x0e,
+      0x00,
+      seq,
+      0x02,
+      0x02,
+      0x00,
+      line & 0xff,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x0a,
+      0x0a,
+    ]);
+  }
+
+  static Uint8List _buildStreamingTextPacket(
+    String text, {
+    required int line,
+    required bool confirmed,
+  }) {
+    final seq = _nextStreamingSeq();
+    final textBytes = utf8.encode(text);
+    final payload = <int>[
+      0x02,
+      0x02,
+      0x00,
+      line & 0xff,
+      0x00,
+      confirmed ? 0x01 : 0x00,
+      0x00,
+      0x00,
+      ...textBytes,
+      0x0a,
+    ];
+    return Uint8List.fromList([
+      0x52,
+      (4 + payload.length) & 0xff,
+      0x00,
+      seq,
+      ...payload,
+    ]);
+  }
+
+  static int _nextStreamingSeq() {
+    final seq = _streamTextSeq & 0xff;
+    _streamTextSeq = (_streamTextSeq + 1) & 0xff;
+    return seq;
+  }
+
   static List<String> _navReplaySequentialLegOrder(List<String> availableLegs) {
+    const rightFirstOrder = ['R', 'L'];
+    const leftFirstOrder = ['L', 'R'];
     final preferredOrder = _navReplayMode == navReplayModeSequentialLeftFirst
-        ? const ['L', 'R']
-        : const ['R', 'L'];
+        ? leftFirstOrder
+        : rightFirstOrder;
     return preferredOrder.where(availableLegs.contains).toList(growable: false);
   }
 
@@ -684,9 +863,9 @@ class Proto {
     }
   }
 
-  static _NavTripStatusPayload? _pendingReplayTripStatus;
+  static _NavTripStatusPayload? _pendingBootstrapPayload;
 
-  static void setReplayTripStatus({
+  static void setBootstrapTripStatus({
     required String eta,
     required String totalDistance,
     required String roadName,
@@ -695,7 +874,7 @@ class Proto {
     required String navIconSource,
     String navIconPngBase64 = '',
   }) {
-    _pendingReplayTripStatus = _NavTripStatusPayload(
+    _pendingBootstrapPayload = _NavTripStatusPayload(
       eta: eta,
       totalDistance: totalDistance,
       roadName: roadName,
@@ -711,13 +890,6 @@ class Proto {
       navIconSource: payload.navIconSource,
       instructionText: '${payload.turnDistance} ${payload.roadName}',
     ).directionTurnByte;
-  }
-
-  static Uint8List _buildReplayTripStatusPacket({
-    required int seq,
-    required _NavTripStatusPayload payload,
-  }) {
-    return _buildNavTripStatusPacket(seq: seq, payload: payload);
   }
 
   static Uint8List _buildNavTripStatusPacket({
@@ -756,24 +928,22 @@ class Proto {
       ...fieldsPayload,
     ]);
     AppLog.info(
-      '${DateTime.now().toIso8601String()} dynamic TRIP_STATUS fields: eta="${payload.eta}" dist="${payload.totalDistance}" road="${payload.roadName}" turn="${payload.turnDistance}" speed="${payload.speed}"',
-      tag: 'Navigate',
-    );
-    AppLog.info(
-      '${DateTime.now().toIso8601String()} dynamic TRIP_STATUS DirectionTurn=0x${directionTurn.toRadixString(16).padLeft(2, '0')} len=${packet.length}',
+      'TRIP_STATUS: eta="${payload.eta}" dist="${payload.totalDistance}" '
+      'road="${payload.roadName}" turn="${payload.turnDistance}" '
+      'dir=0x${directionTurn.toRadixString(16).padLeft(2, '0')}',
       tag: 'Navigate',
     );
     return packet;
   }
 
-  static bool _replaceReplayTripStatusPacket(
+  static bool _replaceTripStatusPacket(
     List<Uint8List> replayPackets,
     _NavTripStatusPayload payload,
   ) {
     for (int i = 0; i < replayPackets.length; i++) {
       final packet = replayPackets[i];
       if (packet.length > 5 && packet[0] == 0x0a && packet[4] == 0x01) {
-        replayPackets[i] = _buildReplayTripStatusPacket(
+        replayPackets[i] = _buildNavTripStatusPacket(
           seq: packet[3],
           payload: payload,
         );
@@ -783,12 +953,14 @@ class Proto {
     return false;
   }
 
+  // -- Icon caching ---------------------------------------------------------
+  static int? _lastIconHash;
+  static List<Uint8List>? _lastIconPackets;
+
   /// Replace captured MAP_OVERVIEW packets with icon data.
   ///
-  /// Primary: convert the scraped Google Maps notification PNG.
-  /// Fallback: generate a geometric arrow for the classified manoeuvre.
-  /// Last resort: leave captured data untouched.
-  static Future<bool> _replaceReplayMapOverviewPackets(
+  /// Fallback order: cached → PNG → geometric → last-known → captured.
+  static Future<bool> _replaceMapOverviewPackets(
     List<Uint8List> replayPackets,
     _NavTripStatusPayload? payload,
   ) async {
@@ -808,28 +980,45 @@ class Proto {
     final instructionText =
         '${payload?.turnDistance ?? ''} ${payload?.roadName ?? ''}';
 
-    // Try PNG conversion first (actual Google Maps icon).
-    List<Uint8List>? generated =
-        await convertPngToMapOverviewPackets(navIconPng, startSeq);
-    String iconSource = 'png';
+    // Cache check — skip regeneration if icon unchanged.
+    final iconHash = navIconPng.isNotEmpty ? navIconPng.hashCode : 0;
+    List<Uint8List>? generated;
+    String iconSourceLabel;
 
-    // Fall back to geometric arrow.
-    if (generated == null || generated.isEmpty) {
-      final manoeuvre = classifyManoeuvre(
-        navIconSource: navIconSource,
-        instructionText: instructionText,
-      );
-      generated = generateMapOverviewPackets(manoeuvre, startSeq);
-      iconSource = 'generated($manoeuvre)';
+    if (iconHash != 0 && iconHash == _lastIconHash && _lastIconPackets != null) {
+      generated = _lastIconPackets;
+      iconSourceLabel = 'cached';
+    } else {
+      // Try PNG conversion first (actual Google Maps icon).
+      generated = await convertPngToMapOverviewPackets(navIconPng, startSeq);
+      iconSourceLabel = 'png';
+
+      // Fall back to geometric arrow.
+      if (generated == null || generated.isEmpty) {
+        final manoeuvre = classifyManoeuvre(
+          navIconSource: navIconSource,
+          instructionText: instructionText,
+        );
+        generated = generateMapOverviewPackets(manoeuvre, startSeq);
+        iconSourceLabel = 'generated($manoeuvre)';
+      }
+
+      // Cache the result for next time.
+      if (generated != null && generated.isNotEmpty) {
+        _lastIconHash = iconHash;
+        _lastIconPackets = generated;
+      }
+    }
+
+    // Fall back to last known valid icon.
+    if ((generated == null || generated.isEmpty) && _lastIconPackets != null) {
+      generated = _lastIconPackets;
+      iconSourceLabel = 'last-known';
     }
 
     // Last resort: keep captured data.
     if (generated == null || generated.isEmpty) {
-      AppLog.info(
-        'MAP_OVERVIEW: using captured fallback '
-        'navIconSource="$navIconSource"',
-        tag: 'Navigate',
-      );
+      AppLog.info('icon: captured fallback', tag: 'Navigate');
       return false;
     }
 
@@ -853,7 +1042,7 @@ class Proto {
     }
 
     AppLog.info(
-      'MAP_OVERVIEW replaced: source=$iconSource '
+      'icon: $iconSourceLabel '
       'navIconSource="$navIconSource" '
       'oldBands=${oldIndices.length} newBands=${generated.length} '
       'totalPackets=${replayPackets.length}',

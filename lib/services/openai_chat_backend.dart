@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:demo_ai_even/models/chat_message.dart';
 import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/assistant_backend_config.dart';
@@ -15,29 +17,8 @@ class OpenAiChatBackend implements ChatBackend {
   Future<String> send({
     required List<ChatMessage> messages,
   }) async {
-    final config = AssistantBackendConfig.resolve();
-    if (!config.isConfigured) {
-      throw const ChatBackendException(
-        'Missing OPENAI_API_KEY for Chat mode',
-        kind: ChatBackendErrorKind.auth,
-      );
-    }
-
-    final requestMessages = _shapeHistory(
-      messages,
-      maxHistoryMessages: config.maxHistoryMessages,
-    );
-    final payload = {
-      'model': config.chatModel,
-      'max_completion_tokens': config.maxOutputTokens,
-      'messages': [
-        {
-          'role': 'system',
-          'content': config.systemPrompt,
-        },
-        ...requestMessages.map((message) => message.toApiMap()),
-      ],
-    };
+    final config = _resolveConfig();
+    final payload = _buildPayload(config, messages);
 
     try {
       final response = await _clientFor(config).post(
@@ -89,6 +70,70 @@ class OpenAiChatBackend implements ChatBackend {
     }
   }
 
+  @override
+  Stream<String> stream({
+    required List<ChatMessage> messages,
+  }) async* {
+    final config = _resolveConfig();
+    final payload = _buildPayload(
+      config,
+      messages,
+      stream: true,
+    );
+
+    try {
+      final response = await _clientFor(config).post<ResponseBody>(
+        '/chat/completions',
+        data: payload,
+        options: Options(responseType: ResponseType.stream),
+      );
+      final body = response.data;
+      if (body == null) {
+        throw const ChatBackendException(
+          'Chat backend returned no stream body',
+          kind: ChatBackendErrorKind.generic,
+        );
+      }
+
+      await for (final line in body.stream
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+        final trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) {
+          continue;
+        }
+
+        final data = trimmed.substring(5).trim();
+        if (data.isEmpty || data == '[DONE]') {
+          continue;
+        }
+
+        final decoded = jsonDecode(data);
+        final choices =
+            decoded is Map<String, dynamic> ? decoded['choices'] : null;
+        final choice =
+            choices is List && choices.isNotEmpty ? choices.first : null;
+        final delta = choice is Map ? choice['delta'] : null;
+        final content = delta is Map ? delta['content'] : null;
+        final text = _deltaToText(content);
+        if (text.isEmpty) {
+          continue;
+        }
+        yield text;
+      }
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    } on ChatBackendException {
+      rethrow;
+    } catch (e) {
+      throw ChatBackendException(
+        'Chat stream failed: $e',
+        kind: ChatBackendErrorKind.generic,
+      );
+    }
+  }
+
   Dio _clientFor(AssistantBackendConfig config) {
     return _dio ??
         Dio(
@@ -103,6 +148,40 @@ class OpenAiChatBackend implements ChatBackend {
             },
           ),
         );
+  }
+
+  AssistantBackendConfig _resolveConfig() {
+    final config = AssistantBackendConfig.resolve();
+    if (!config.isConfigured) {
+      throw const ChatBackendException(
+        'Missing OPENAI_API_KEY for Chat mode',
+        kind: ChatBackendErrorKind.auth,
+      );
+    }
+    return config;
+  }
+
+  Map<String, dynamic> _buildPayload(
+    AssistantBackendConfig config,
+    List<ChatMessage> messages, {
+    bool stream = false,
+  }) {
+    final requestMessages = _shapeHistory(
+      messages,
+      maxHistoryMessages: config.maxHistoryMessages,
+    );
+    return {
+      'model': config.chatModel,
+      'max_completion_tokens': config.maxOutputTokens,
+      'stream': stream,
+      'messages': [
+        {
+          'role': 'system',
+          'content': config.systemPrompt,
+        },
+        ...requestMessages.map((message) => message.toApiMap()),
+      ],
+    };
   }
 
   List<ChatMessage> _shapeHistory(
@@ -127,6 +206,57 @@ class OpenAiChatBackend implements ChatBackend {
     }
     final truncated = cleaned.substring(0, maxResponseChars).trimRight();
     return '$truncated…';
+  }
+
+  String _deltaToText(dynamic content) {
+    if (content is String) {
+      return content;
+    }
+    if (content is List) {
+      final buffer = StringBuffer();
+      for (final item in content) {
+        if (item is Map<String, dynamic> && item['type'] == 'text') {
+          final text = item['text'];
+          if (text is String) {
+            buffer.write(text);
+          }
+        }
+      }
+      return buffer.toString();
+    }
+    return '';
+  }
+
+  ChatBackendException _mapDioException(DioException e) {
+    final statusCode = e.response?.statusCode;
+    final statusMessage = e.response?.statusMessage ?? e.message;
+    if (statusCode == 401 || statusCode == 403) {
+      return ChatBackendException(
+        'Chat request failed: $statusCode $statusMessage',
+        kind: ChatBackendErrorKind.auth,
+      );
+    }
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return ChatBackendException(
+        'Chat request timed out: $statusMessage',
+        kind: ChatBackendErrorKind.timeout,
+      );
+    }
+    if (e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.unknown) {
+      return ChatBackendException(
+        'Chat request network error: $statusMessage',
+        kind: ChatBackendErrorKind.network,
+      );
+    }
+    return ChatBackendException(
+      statusCode == null
+          ? 'Chat request failed: $statusMessage'
+          : 'Chat request failed: $statusCode $statusMessage',
+      kind: ChatBackendErrorKind.generic,
+    );
   }
 }
 
