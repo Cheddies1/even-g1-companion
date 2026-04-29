@@ -16,7 +16,6 @@ class ChatService {
   static const _closeGestureGraceWindow = Duration(milliseconds: 1500);
   static const _maxGlassesResponseChars = 900;
   static const _maxVisibleWrappedLines = 4;
-  static const _maxCommittedWrappedLines = 12;
   static const _charsPerLine = 48;
 
   static ChatService? _instance;
@@ -41,12 +40,8 @@ class ChatService {
   DateTime? _lastSubmitStartedAt;
   int _messageSequence = 0;
   int _persistedMessageCount = 0;
-  ChatStreamingState _streamingState = ChatStreamingState.idle;
-  bool _streamingSurfaceVisible = false;
   StreamingRenderQueue? _renderQueue;
   Completer<void>? _renderQueueDrainedCompleter;
-  List<String> _committedDisplayLines = <String>[];
-  _ActiveChatDisplayTurn? _activeDisplayTurn;
   final List<ChatMessage> _messages = <ChatMessage>[];
 
   bool get hasActiveSession => _sessionId != null;
@@ -104,14 +99,7 @@ class ChatService {
     _lastSubmitStartedAt = null;
     _messageSequence = 0;
     _persistedMessageCount = 0;
-    _renderQueue?.cancel();
-    _renderQueue = null;
-    _renderQueueDrainedCompleter?.complete();
-    _renderQueueDrainedCompleter = null;
-    _streamingState = ChatStreamingState.idle;
-    _streamingSurfaceVisible = false;
-    _committedDisplayLines = <String>[];
-    _activeDisplayTurn = null;
+    _cancelRenderQueue();
     _messages.clear();
     _sessionId = null;
     await BleManager.invokeMethod('cancelGlassesCapture');
@@ -134,14 +122,8 @@ class ChatService {
       return;
     }
 
-    _renderQueue?.cancel();
-    _renderQueue = null;
-    _renderQueueDrainedCompleter?.complete();
-    _renderQueueDrainedCompleter = null;
-    await _stopStreaming(sendFinalFrame: false);
-    _streamingState = ChatStreamingState.idle;
-    _streamingSurfaceVisible = false;
-    _activeDisplayTurn = null;
+    _cancelRenderQueue();
+    await Proto.stopStreamingText(sendFinalFrame: false);
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
     markDisplayVisible(value: false, source: 'Chat.closeVisibleDisplay');
@@ -224,43 +206,26 @@ class ChatService {
         role: ChatRole.user,
         text: cleanedTranscript,
       );
-      await _showCommittedUserTurn(
-        role: ChatRole.user,
-        text: cleanedTranscript,
+
+      // Phase 1: show user question via 0x4E.
+      await _showText('You: $cleanedTranscript');
+      AppLog.info(
+        '${DateTime.now()} user question displayed -> len=${cleanedTranscript.length}',
+        tag: 'Chat',
       );
-      await _startAssistantDisplayTurn();
 
       if (!_isCurrentRequest(requestVersion)) {
         return 'Chat session changed';
       }
-      final answer = await _streamAssistantReply(
+
+      // Phase 2: show "Thinking..." while backend starts.
+      await _showText('Thinking...');
+
+      // Phase 3: stream assistant reply via fresh 0x52 surface.
+      // The method handles message persistence and display internally.
+      await _streamAssistantReply(
         requestVersion,
         messages: List<ChatMessage>.from(_messages),
-      );
-
-      if (!_isCurrentRequest(requestVersion)) {
-        return 'Chat session changed';
-      }
-
-      final cleanedAnswer = _capForGlasses(_cleanText(answer));
-      _messages.add(
-        ChatMessage(
-          role: ChatRole.assistant,
-          content: cleanedAnswer,
-        ),
-      );
-      await _persistMessage(
-        role: ChatRole.assistant,
-        text: cleanedAnswer,
-      );
-      await _finalizeActiveDisplayTurn(textOverride: cleanedAnswer);
-      await _renderDisplayBuffer(force: true);
-      if (!_streamingSurfaceVisible) {
-        await _showText(cleanedAnswer);
-      }
-      AppLog.info(
-        '${DateTime.now()} assistant reply sent -> chars=${cleanedAnswer.length}, turns=${_messages.length}',
-        tag: 'Chat',
       );
       return 'Assistant replied';
     } on ChatTranscriptionException catch (e) {
@@ -315,39 +280,50 @@ class ChatService {
     if (!_modeActive || _isListening || _isThinking) {
       return;
     }
-    if (_streamingSurfaceVisible) {
-      await _renderDisplayBuffer(force: true);
-      return;
-    }
     await _showText('Chat ready\nTilt up to talk');
   }
 
+  // -- Display primitives --------------------------------------------------
+
+  /// Show text via 0x4E (the proven legacy text path). Clears any active
+  /// 0x52 streaming surface first.
   Future<void> _showText(String text) async {
     if (!_modeActive) {
       return;
     }
-    if (_streamingSurfaceVisible) {
-      await Proto.stopStreamingText(sendFinalFrame: false);
-      _streamingSurfaceVisible = false;
-    }
+    _cancelRenderQueue();
+    await Proto.stopStreamingText(sendFinalFrame: false);
     markDisplayVisible(value: true, source: 'Chat.showText');
     await TextService.get.startSendText(text);
   }
 
-  Future<String> _streamAssistantReply(
+  /// Init a fresh 0x52 surface, create the render queue, and start draining.
+  /// Returns when the queue has fully drained (all text displayed).
+  Future<void> _streamAssistantReply(
     int requestVersion, {
     required List<ChatMessage> messages,
   }) async {
-    _streamingState = ChatStreamingState.streaming;
+    // Clear the 0x4E "Thinking..." and start a fresh 0x52 surface.
+    await TextService.get.stopTextSendingByOS();
+    await Proto.exit();
+    await Proto.startStreamingText();
+
+    _renderQueueDrainedCompleter = Completer<void>();
+    _renderQueue = StreamingRenderQueue(
+      maxVisibleLines: _maxVisibleWrappedLines,
+      charsPerLine: _charsPerLine,
+      sendLine: _sendQueuedLine,
+      onDrained: _onRenderQueueDrained,
+    );
+
     final answerBuffer = StringBuffer();
 
     try {
       var sawVisibleStreamChunk = false;
       await for (final chunk in _backend.stream(messages: messages)) {
         if (!_isCurrentRequest(requestVersion)) {
-          _renderQueue?.cancel();
-          _renderQueue = null;
-          return _cleanText(answerBuffer.toString());
+          _cancelRenderQueue();
+          return;
         }
 
         if (chunk.isEmpty) {
@@ -359,10 +335,6 @@ class ChatService {
           AppLog.info('${DateTime.now()} assistant stream started', tag: 'Chat');
         }
         answerBuffer.write(chunk);
-        _activeDisplayTurn = _ActiveChatDisplayTurn(
-          role: ChatRole.assistant,
-          text: '${_activeDisplayTurn?.text ?? ''}$chunk',
-        );
         _renderQueue?.appendText(chunk);
       }
 
@@ -373,6 +345,7 @@ class ChatService {
       );
 
       if (streamedText.isEmpty) {
+        _cancelRenderQueue();
         throw const ChatBackendException(
           'Chat backend returned no text',
           kind: ChatBackendErrorKind.generic,
@@ -385,169 +358,59 @@ class ChatService {
       if (drainCompleter != null && !drainCompleter.isCompleted) {
         await drainCompleter.future;
       }
-      _streamingState = ChatStreamingState.completed;
+
+      final cleanedAnswer = _capForGlasses(streamedText);
+      _messages.add(
+        ChatMessage(
+          role: ChatRole.assistant,
+          content: cleanedAnswer,
+        ),
+      );
+      await _persistMessage(
+        role: ChatRole.assistant,
+        text: cleanedAnswer,
+      );
       AppLog.info(
-        '${DateTime.now()} assistant stream completed -> len=${streamedText.length}',
+        '${DateTime.now()} assistant reply sent -> chars=${cleanedAnswer.length}, turns=${_messages.length}',
         tag: 'Chat',
       );
-      return streamedText;
     } on ChatBackendException catch (e) {
       final queueStarted = _renderQueue?.isDraining ?? false;
+      _cancelRenderQueue();
       if (queueStarted) {
-        _streamingState = ChatStreamingState.error;
         rethrow;
       }
 
-      _streamingState = ChatStreamingState.error;
       AppLog.info('${DateTime.now()} fallback to 0x4E', tag: 'Chat');
+      await Proto.stopStreamingText(sendFinalFrame: false);
       final answer = await _backend.send(messages: messages);
-      return answer;
+      final cleanedAnswer = _capForGlasses(_cleanText(answer));
+      _messages.add(
+        ChatMessage(
+          role: ChatRole.assistant,
+          content: cleanedAnswer,
+        ),
+      );
+      await _persistMessage(
+        role: ChatRole.assistant,
+        text: cleanedAnswer,
+      );
+      await _showText('G1: $cleanedAnswer');
+      return;
     } catch (_) {
-      _streamingState = ChatStreamingState.error;
+      _cancelRenderQueue();
       rethrow;
     }
   }
 
-  Future<void> _stopStreaming({required bool sendFinalFrame}) async {
-    _renderQueue?.cancel();
-    _renderQueue = null;
-    _renderQueueDrainedCompleter?.complete();
-    _renderQueueDrainedCompleter = null;
-    if (_streamingSurfaceVisible) {
-      await Proto.stopStreamingText(sendFinalFrame: sendFinalFrame);
-      _streamingSurfaceVisible = false;
-    }
-  }
-
-  Future<void> _showCommittedUserTurn({
-    required ChatRole role,
-    required String text,
-  }) async {
-    _commitWrappedLines(_wrapTurn(role, text));
-    AppLog.info(
-      '${DateTime.now()} chat display buffer appended ${role == ChatRole.user ? 'user' : 'assistant'} turn -> len=${text.length}',
-      tag: 'Chat',
-    );
-    await _renderDisplayBuffer(force: true);
-  }
-
-  Future<void> _startAssistantDisplayTurn() async {
-    _activeDisplayTurn = const _ActiveChatDisplayTurn(
-      role: ChatRole.assistant,
-      text: '',
-    );
-    await _ensureStreamingConversationSurface();
-    // Show "G1: Thinking..." while waiting for first backend chunk.
-    await _flushNonQueueVisibleWindow();
-    // Create the paced render queue for the assistant reply.
-    _renderQueueDrainedCompleter = Completer<void>();
-    _renderQueue = StreamingRenderQueue(
-      maxVisibleLines: _maxVisibleWrappedLines,
-      charsPerLine: _charsPerLine,
-      initialCommittedLines: List<String>.from(_committedDisplayLines),
-      sendLine: _sendQueuedLine,
-      onDrained: _onRenderQueueDrained,
-    );
-  }
-
-  Future<void> _finalizeActiveDisplayTurn({String? textOverride}) async {
-    final activeTurn = _activeDisplayTurn;
-    if (activeTurn == null) {
-      return;
-    }
-    final finalText = textOverride ?? activeTurn.text;
-    if (finalText.isNotEmpty) {
-      _commitWrappedLines(_wrapTurn(activeTurn.role, finalText));
-    }
-    _activeDisplayTurn = null;
-  }
-
-  Future<void> _renderDisplayBuffer({bool force = false}) async {
-    if (!_modeActive) {
-      return;
-    }
-    await _ensureStreamingConversationSurface();
-    await _flushNonQueueVisibleWindow();
-  }
-
-  Future<void> _ensureStreamingConversationSurface() async {
-    if (_streamingSurfaceVisible) {
-      return;
-    }
-    await TextService.get.stopTextSendingByOS();
-    await Proto.exit();
-    await Proto.startStreamingText();
-    _streamingSurfaceVisible = true;
-  }
-
-  /// Flush the visible window for non-queue renders (user turns, Thinking...,
-  /// final committed view). The render queue handles its own sends.
-  Future<void> _flushNonQueueVisibleWindow() async {
-    if (!_streamingSurfaceVisible) {
-      return;
-    }
-    final window = _currentVisibleWindow();
-    markDisplayVisible(value: true, source: 'Chat.stream');
-    for (int i = 0; i < window.visibleLines.length; i++) {
-      final lineIndex = i + 1;
-      final lineText = window.visibleLines[i];
-      final isActiveLine = window.activeLineIndex == lineIndex;
-      if (isActiveLine) {
-        await Proto.sendStreamingText(
-          lineText,
-          line: lineIndex,
-          isFinal: false,
-        );
-      } else {
-        await Proto.sendStreamingLine(
-          lineText,
-          line: lineIndex,
-          confirmed: true,
-        );
-      }
-    }
-  }
-
-  ({List<String> visibleLines, int? activeLineIndex}) _currentVisibleWindow() {
-    final combined = <String>[
-      ..._committedDisplayLines,
-      ..._currentActiveWrappedLines(),
-    ];
-    final visible = combined.length <= _maxVisibleWrappedLines
-        ? combined
-        : combined.sublist(combined.length - _maxVisibleWrappedLines);
-    if (visible.isEmpty) {
-      return (visibleLines: const <String>[], activeLineIndex: null);
-    }
-    if (_activeDisplayTurn == null) {
-      return (
-        visibleLines: visible.map(_capForGlasses).toList(growable: false),
-        activeLineIndex: null,
-      );
-    }
-    return (
-      visibleLines: visible.map(_capForGlasses).toList(growable: false),
-      activeLineIndex: visible.length,
-    );
-  }
-
-  List<String> _currentActiveWrappedLines() {
-    final activeTurn = _activeDisplayTurn;
-    if (activeTurn == null) {
-      return const <String>[];
-    }
-    if (activeTurn.text.isEmpty) {
-      return const <String>['G1: Thinking...'];
-    }
-    return _wrapTurn(activeTurn.role, activeTurn.text);
-  }
+  // -- Render queue callbacks ----------------------------------------------
 
   Future<void> _sendQueuedLine(
     int line,
     String text, {
     required bool isActive,
   }) async {
-    if (!_streamingSurfaceVisible || !_modeActive) return;
+    if (!_modeActive) return;
     markDisplayVisible(value: true, source: 'Chat.stream');
     if (isActive) {
       await Proto.sendStreamingText(text, line: line, isFinal: false);
@@ -563,33 +426,17 @@ class ChatService {
     }
   }
 
-  List<String> _wrapTurn(ChatRole role, String text) {
-    final raw = '${role == ChatRole.user ? 'You:' : 'G1:'} $text';
-    return _measureWrappedLines(raw);
+  void _cancelRenderQueue() {
+    _renderQueue?.cancel();
+    _renderQueue = null;
+    final completer = _renderQueueDrainedCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+    _renderQueueDrainedCompleter = null;
   }
 
-  List<String> _measureWrappedLines(String text) {
-    return StreamingRenderQueue.wrapText(text, _charsPerLine);
-  }
-
-  void _commitWrappedLines(List<String> lines) {
-    if (lines.isEmpty) {
-      return;
-    }
-    _committedDisplayLines = <String>[
-      ..._committedDisplayLines,
-      ...lines,
-    ];
-    if (_committedDisplayLines.length > _maxCommittedWrappedLines) {
-      _committedDisplayLines = _committedDisplayLines.sublist(
-        _committedDisplayLines.length - _maxCommittedWrappedLines,
-      );
-      AppLog.info(
-        '${DateTime.now()} display buffer trimmed -> lines=${_committedDisplayLines.length}',
-        tag: 'Chat',
-      );
-    }
-  }
+  // -- Helpers -------------------------------------------------------------
 
   bool _isCurrentRequest(int requestVersion) {
     return _modeActive && requestVersion == _sessionVersion;
@@ -673,21 +520,4 @@ class ChatFlowException implements Exception {
   const ChatFlowException(this.message);
 
   final String message;
-}
-
-enum ChatStreamingState {
-  idle,
-  streaming,
-  completed,
-  error,
-}
-
-class _ActiveChatDisplayTurn {
-  const _ActiveChatDisplayTurn({
-    required this.role,
-    required this.text,
-  });
-
-  final ChatRole role;
-  final String text;
 }

@@ -186,27 +186,33 @@ Owns:
 - STT handoff
 - backend request / response handling
 - concise text-state rendering back to the glasses
-- Chat now uses the confirmed `0x52` streaming text protocol as its
-  persistent on-glasses conversation surface. `Proto.startStreamingText()`
-  sends `0x50` display-mode control and the `0x52` init frame. Committed
-  visible context is sent as stable `0x52` line content, but now as
-  individual visible lines rather than one combined block. Only the newest
-  visible line is updated with the pulsing cursor. `0x53` keepalive runs
+- Chat uses the confirmed `0x52` streaming text protocol as its on-glasses
+  conversation surface. `Proto.startStreamingText()` sends `0x50`
+  display-mode control and the `0x52` init frame. `0x53` keepalive runs
   every ~5 s while the `0x52` surface is active.
 - **Paced streaming via `StreamingRenderQueue`:** Backend chunks are
   decoupled from display updates. The backend appends raw text to a target
   buffer; a separate `StreamingRenderQueue` drains that buffer at a paced
   cadence (~2 words every 150 ms), wraps text deterministically at ~48
-  chars/line, and sends only changed `0x52` lines. The queue keeps
-  draining after the backend stream completes until all text is displayed,
-  then signals completion. This eliminates the previous redraw storms and
-  ensures the final visible text reaches the actual end of the response.
-- Chat now keeps a **display buffer** separate from backend message history.
+  chars/line, and sends only changed `0x52` lines. The queue fills lines
+  1-4 sequentially with assistant text only (no committed user context),
+  matching the firmware's expected cursor-progressive line model.
+  The queue keeps draining after the backend stream completes until all
+  text is displayed, then signals completion.
+- **Firmware cursor-proximity rendering:** live testing confirmed that the
+  `0x52` firmware only reliably renders lines at or near the cursor (active)
+  position. Lines sent as `confirmed` without ever having been `active` may
+  not display. The render queue works around this by always keeping the
+  cursor on the last used line and filling lines sequentially from 1. Non-
+  queue renders (user turn, Thinking, final committed view) always send
+  their last visible line as active.
+- Chat keeps a **display buffer** separate from backend message history.
   The display buffer is the on-glasses conversation surface (`You:` / `G1:`),
-  with committed wrapped lines plus one active growing line. A small visible
-  window is derived from that buffer and mapped onto `0x52` line indices.
-  The visible window is trimmed from the top for size, while the backend
-  message list remains the source of truth for conversational context.
+  with committed wrapped lines. During assistant streaming the queue takes
+  over the glasses display entirely — the user question is shown before
+  streaming (in the "Thinking..." frame) and committed after streaming, but
+  not interleaved with the streaming assistant text. The backend message
+  list remains the source of truth for conversational context.
 - `F5 00` while a Chat reply is merely visible now closes the visible Chat
   display without discarding the in-memory session. A full Chat session reset
   still happens on mode switch away from Chat or explicit session teardown.

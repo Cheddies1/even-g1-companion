@@ -291,14 +291,13 @@ Chat mode is now a working v1 feature.
 - idle state shows `Chat ready` / `Tilt up to talk`
 - tilt up starts listening from the glasses mic after a short `500ms` intent gate
 - tilt down stops capture and submits what was said
-- once the transcript is available, Chat enters or reuses the `0x52`
-  conversation surface instead of showing a separate transient transcript
-  preview
-- the transcribed user question is appended to the visible conversation
-- while waiting for the backend, Chat shows the user turn plus a short `G1:
-  Thinking...` placeholder in the same surface
-- the assistant reply then fills in below that in the firmware `0x52`
-  streaming text mode with the pulsing cursor on the left
+- once the transcript is available, Chat enters the `0x52` conversation
+  surface
+- the transcribed user question and a `G1: Thinking...` placeholder are
+  shown in the `0x52` surface while waiting for the backend
+- when the assistant reply starts streaming, the render queue takes over
+  the glasses display and fills it with the reply word by word (lines 1-4,
+  assistant text only, pulsing cursor on the growing line)
 - follow-up turns continue in the same session while Chat mode stays active
 - leaving Chat mode resets and discards the session
 - `F5 00` / close-active while a reply is visible now clears only the visible
@@ -314,16 +313,16 @@ Chat mode is now a working v1 feature.
   chat backend
 - the visible Chat surface is displayed via `0x52` streaming text:
   - `0x50` display mode control + `0x52` init before the first streamed frame
-  - each visible wrapped line is sent to its own `0x52` line index
-  - historic visible lines are resent as stable committed line content
-  - only the newest visible line is driven progressively with the cursor
-  - each `0x52` update re-sends the full current content of that specific line
-  - the visible window is trimmed from the top as wrapped lines overflow
-  - `0x53` keepalive stays active while the `0x52` conversation surface is active
-- assistant reply rendering is paced by a `StreamingRenderQueue` that is
-  decoupled from backend chunk arrival:
+  - `0x53` keepalive stays active while the `0x52` surface is active
+  - non-streaming renders (user turn, Thinking, final committed view) send
+    the visible window with the last line as active (firmware requires the
+    cursor to be present for reliable display)
+- assistant reply rendering is paced by a `StreamingRenderQueue`:
   - backend chunks only append to a target text buffer
   - the queue drains ~2 words every 150 ms at its own cadence
+  - the queue fills lines 1-4 sequentially with assistant text only
+    (no interleaved user context — the firmware only reliably renders
+    lines at or near the cursor position)
   - only changed 0x52 lines are sent (dirty-line diffing)
   - the queue keeps draining after the backend stream completes until
     all text is displayed, then signals completion
@@ -420,6 +419,11 @@ Richer technical detail is kept in app logs rather than dumped into the glasses 
 - the `0x52` render path now uses a paced `StreamingRenderQueue` to decouple
   backend chunk arrival from display updates; still needs live validation of
   reading pace and long-answer scrolling behaviour
+- during assistant streaming the glasses show only the assistant reply
+  (lines 1-4), not the user question as context — this is a firmware
+  constraint (cursor-proximity rendering, see `protocol-reference.md`)
+- the user question is visible during the "Thinking..." phase and again
+  in the final committed view after streaming completes
 - there is no spoken TTS reply in this phase
 - there is no consumer ChatGPT account linking in this phase
 
@@ -549,7 +553,7 @@ Current runtime behavior:
 
 Practical effect:
 - one eye can remain usable while the other is recovering
-- Navigate BMP divergence should self-correct more often after recovery
+- Navigate display divergence should self-correct more often after recovery
 - a restart/reconnect should no longer be the only way to recover from every partial transport problem
 
 ## Home screen
@@ -636,3 +640,4 @@ This supports:
 - Capture mode needs real device validation for start/stop/save reliability
 - Navigate mode still needs longer human review against real Google Maps walking sessions
 - Chat mode still needs broader real-world testing for latency, retries, and edge-case error handling
+- Chat `0x52` streaming needs live validation: reading pace tuning, long-answer scrolling, follow-up turn rendering

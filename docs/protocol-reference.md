@@ -267,12 +267,25 @@ Observed reality (`Confirmed`):
 - Known test phrase "The quick brown fox jumped over the lazy dog" confirmed
   byte-for-byte in the payloads, growing word by word.
 
-Notes:
-- this is the protocol the companion app would use for streaming LLM
-  responses in Chat mode (currently Chat renders a finished text block via
-  `0x4E`)
-- `0x50 06 00 00 01 01` should be sent before the first `0x52` frame to
+Implementation:
+- the companion app now uses `0x52` for Chat assistant replies via a paced
+  `StreamingRenderQueue` — see
+  [chat_service.dart](../lib/services/chat_service.dart) and
+  [streaming_render_queue.dart](../lib/services/streaming_render_queue.dart)
+- `0x50 06 00 00 01 01` must be sent before the first `0x52` frame to
   prime the display (see "Display mode control" below)
+- if streaming is unavailable, Chat can fall back to `0x4E` text blocks
+
+Firmware cursor-proximity rendering (`Confirmed`, 2026-04-29):
+- the firmware only reliably renders `0x52` lines at or near the cursor
+  (active flag = `00 00`) position
+- lines sent as `confirmed` (flag `01 00`) without ever having been `active`
+  at that line index may not display
+- the official app fills lines sequentially: line 1 active → line 1
+  confirmed + line 2 active → etc. The companion app mirrors this by
+  filling lines 1-4 with the cursor always on the last used line
+- sending pre-filled confirmed content to lines 1-3 and active only on
+  line 4 results in only ~2 visible lines (tested and logged)
 
 ## Navigation card: `0x0a`
 

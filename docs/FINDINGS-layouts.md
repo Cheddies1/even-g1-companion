@@ -94,12 +94,18 @@ companion app would need to emit these while streaming.
 
 ### Implications for the companion app
 
-**Chat mode can stream the LLM response word by word** instead of rendering
-a block of text all at once. The protocol is simple:
-1. Send `52 06 00 00 01 01` to enter streaming mode
-2. For each word/phrase update, send a `0x52` text frame for the current line
-3. Interleave cursor-update frames (the 14-byte `0x52 0e ...` pattern)
-4. Send `0x53` keepalives every ~5 s while active
+**Now implemented.** Chat mode streams the LLM response word by word via a
+paced `StreamingRenderQueue`. The protocol steps:
+1. Send `50 06 00 00 01 01` to prime the display
+2. Send `52 06 00 00 01 01` to enter streaming mode
+3. For each word/phrase update, send a `0x52` text frame for the current line
+4. Interleave cursor-update frames (the 14-byte `0x52 0e ...` pattern)
+5. Send `0x53` keepalives every ~5 s while active
+
+**Firmware note (discovered during implementation):** the firmware only
+reliably renders lines at or near the cursor position. Lines must be filled
+sequentially (1 → 2 → 3 → 4) with the cursor progressing. Sending
+pre-filled confirmed content to non-cursor lines does not render reliably.
 
 ---
 
@@ -360,20 +366,17 @@ Additional implementation notes from that follow-up:
   lifecycle or just TRIP_STATUS + SYNC
 - Implement the 1-second SYNC poller as a proper Timer in NavigateService
 
-### Priority 1 — Navigation via `0x0a` text data
+### Priority 1 — Navigation via `0x0a` text data — DONE
 
-Replace the current BMP-per-frame Navigate path with a single structured
-text packet per instruction update. Eliminates the split-eye sync problem,
-reduces payload from ~5 KB to ~48 bytes, and lets the firmware handle the
-rendering. The direction icon and map bitmaps can be added later as an
-enhancement.
+Navigate now uses the `0x0a` structured card protocol with interleaved
+per-leg replay, dynamic `TRIP_STATUS`, dynamic `MAP_OVERVIEW` icons, and
+a 1-second SYNC poller. The BMP pipeline is preserved but no longer active.
 
-### Priority 2 — Chat streaming via `0x52`
+### Priority 2 — Chat streaming via `0x52` — DONE
 
-Replace the current "render a block of text" Chat response path with
-word-by-word streaming. The user already described this as desirable
-("like my current chatmode where I currently just pass a block of text").
-The `0x52` protocol maps directly to streaming LLM output.
+Chat now streams assistant replies word by word via a paced
+`StreamingRenderQueue`. The queue fills lines 1-4 sequentially with the
+cursor progressing, matching the firmware's expected line model.
 
 ### External cross-references (found during implementation)
 

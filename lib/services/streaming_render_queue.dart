@@ -5,18 +5,22 @@ import 'package:demo_ai_even/services/app_log.dart';
 /// Paced display queue for streaming assistant text to the glasses.
 ///
 /// The backend appends raw text chunks via [appendText]. A periodic drain
-/// timer reveals 1-2 words at a time and sends only the changed 0x52 lines
-/// to the glasses. The queue keeps draining after the backend finishes until
-/// all text has been displayed, then fires [onDrained].
+/// timer reveals 1-2 words at a time and sends 0x52 lines to the glasses.
+///
+/// The queue fills line 1 first, then wraps to line 2, 3, 4 — matching the
+/// firmware's expected sequential line progression. When line 4 fills, the
+/// window scrolls: all 4 lines are resent with the new content, and the
+/// cursor stays on line 4.
+///
+/// The queue keeps draining after the backend finishes until all text has
+/// been displayed, then fires [onDrained].
 class StreamingRenderQueue {
   StreamingRenderQueue({
     required this.maxVisibleLines,
     required this.charsPerLine,
-    required List<String> initialCommittedLines,
     required Future<void> Function(int line, String text, {required bool isActive}) sendLine,
     required void Function() onDrained,
-  })  : _committedLines = List<String>.from(initialCommittedLines),
-        _sendLine = sendLine,
+  })  : _sendLine = sendLine,
         _onDrained = onDrained;
 
   // -- Tuning constants (easy to tweak) ------------------------------------
@@ -30,12 +34,11 @@ class StreamingRenderQueue {
   final void Function() _onDrained;
 
   // -- State ---------------------------------------------------------------
-  List<String> _committedLines;
   final StringBuffer _targetText = StringBuffer();
   int _displayedWordCount = 0;
-  List<String> _displayedWrappedLines = const <String>[];
+  List<String> _wrappedLines = const <String>[];
   final Map<int, String> _lastSentLines = <int, String>{};
-  int? _lastSentActiveIndex;
+  int _lastSentActiveLine = 0;
   Timer? _drainTimer;
   bool _backendComplete = false;
   bool _cancelled = false;
@@ -50,7 +53,7 @@ class StreamingRenderQueue {
     if (_cancelled) return;
     _targetText.write(chunk);
     AppLog.info(
-      '${DateTime.now()} render queue: chunk received chars=${chunk.length}',
+      '${DateTime.now()} render queue: chunk chars=${chunk.length} targetLen=${_targetText.length}',
       tag: 'Chat',
     );
     _ensureDrainTimer();
@@ -61,16 +64,14 @@ class StreamingRenderQueue {
   void markBackendComplete() {
     if (_cancelled) return;
     _backendComplete = true;
+    final targetWords = _splitWords(_targetText.toString());
     AppLog.info(
-      '${DateTime.now()} render queue: backend complete, target len=${_targetText.length}',
+      '${DateTime.now()} render queue: backend complete, '
+      'targetLen=${_targetText.length} targetWords=${targetWords.length} '
+      'displayedWords=$_displayedWordCount',
       tag: 'Chat',
     );
     _ensureDrainTimer();
-  }
-
-  /// Update the committed-lines prefix (e.g. when a user turn scrolls in).
-  void updateCommittedLines(List<String> lines) {
-    _committedLines = List<String>.from(lines);
   }
 
   /// Cancel the queue. Stops the drain timer and prevents further sends.
@@ -95,6 +96,11 @@ class StreamingRenderQueue {
     _sendingInProgress = true;
     try {
       await _advanceAndSend();
+    } catch (e) {
+      AppLog.error(
+        '${DateTime.now()} render queue: tick error -> $e',
+        tag: 'Chat',
+      );
     } finally {
       _sendingInProgress = false;
     }
@@ -106,7 +112,6 @@ class StreamingRenderQueue {
     final wordsAvailable = targetWords.length;
 
     if (_displayedWordCount >= wordsAvailable && !_backendComplete) {
-      // Waiting for more text from the backend.
       return;
     }
 
@@ -117,45 +122,23 @@ class StreamingRenderQueue {
     if (newWordCount > _displayedWordCount) {
       _displayedWordCount = newWordCount;
       final displayedText = targetWords.sublist(0, _displayedWordCount).join(' ');
-      _displayedWrappedLines = wrapText('G1: $displayedText', charsPerLine);
-      AppLog.info(
-        '${DateTime.now()} render queue: tick words=$_displayedWordCount '
-        'activeLineLen=${_displayedWrappedLines.isNotEmpty ? _displayedWrappedLines.last.length : 0}',
-        tag: 'Chat',
-      );
+      _wrappedLines = wrapText('G1: $displayedText', charsPerLine);
     }
 
-    // Compute visible window.
-    final combined = <String>[
-      ..._committedLines,
-      ..._displayedWrappedLines,
-    ];
-    final visible = combined.length <= maxVisibleLines
-        ? combined
-        : combined.sublist(combined.length - maxVisibleLines);
+    await _sendVisibleWindow();
 
-    final activeLineIndex = visible.isNotEmpty ? visible.length : null;
-
-    // Send only changed lines.
-    await _sendDirtyLines(visible, activeLineIndex);
-
-    // Check drain-complete condition.
+    // Check drain-complete.
     if (_backendComplete &&
         _displayedWordCount >= wordsAvailable &&
         !_drainedFired) {
-      // Ensure the final full text is displayed (catch any trailing
-      // characters that don't form a complete word).
-      final fullDisplayedText = target.trim();
-      if (fullDisplayedText.isNotEmpty) {
-        _displayedWrappedLines = wrapText('G1: $fullDisplayedText', charsPerLine);
-        final finalCombined = <String>[
-          ..._committedLines,
-          ..._displayedWrappedLines,
-        ];
-        final finalVisible = finalCombined.length <= maxVisibleLines
-            ? finalCombined
-            : finalCombined.sublist(finalCombined.length - maxVisibleLines);
-        await _sendDirtyLines(finalVisible, finalVisible.isNotEmpty ? finalVisible.length : null);
+      // Final full-text render.
+      final fullText = target.trim();
+      if (fullText.isNotEmpty) {
+        _wrappedLines = wrapText('G1: $fullText', charsPerLine);
+        // Force resend all lines for the final frame.
+        _lastSentLines.clear();
+        _lastSentActiveLine = 0;
+        await _sendVisibleWindow();
       }
 
       _drainedFired = true;
@@ -163,7 +146,7 @@ class StreamingRenderQueue {
       _drainTimer = null;
       AppLog.info(
         '${DateTime.now()} render queue: display complete, '
-        'words=$_displayedWordCount lines=${_displayedWrappedLines.length}',
+        'words=$_displayedWordCount/$wordsAvailable wrappedLines=${_wrappedLines.length}',
         tag: 'Chat',
       );
       if (!_cancelled) {
@@ -172,22 +155,40 @@ class StreamingRenderQueue {
     }
   }
 
-  Future<void> _sendDirtyLines(
-    List<String> visible,
-    int? activeLineIndex,
-  ) async {
+  /// Send the current visible window using sequential line filling.
+  ///
+  /// The assistant text starts at line 1 and fills down. When there are
+  /// more wrapped lines than [maxVisibleLines], the window is the last
+  /// N lines. The cursor (active flag) is always on the last line.
+  ///
+  /// This matches the firmware's expectation: line 1 fills, wraps to
+  /// line 2, etc., with the cursor progressing sequentially.
+  Future<void> _sendVisibleWindow() async {
+    if (_wrappedLines.isEmpty || _cancelled) return;
+
+    final visible = _wrappedLines.length <= maxVisibleLines
+        ? _wrappedLines
+        : _wrappedLines.sublist(_wrappedLines.length - maxVisibleLines);
+
+    // The active (cursor) line is always the last displayed line.
+    final activeLineIndex = visible.length;
+
+    AppLog.debug(
+      '${DateTime.now()} render queue: tick words=$_displayedWordCount '
+      'wrappedLines=${_wrappedLines.length} visibleLines=${visible.length} '
+      'activeLine=$activeLineIndex',
+      tag: 'Chat',
+    );
+
     for (int i = 0; i < visible.length; i++) {
       if (_cancelled) return;
       final lineIndex = i + 1; // 1-based for 0x52 protocol
       final lineText = visible[i];
-      final isActive = activeLineIndex != null && lineIndex == activeLineIndex;
-      final previousText = _lastSentLines[lineIndex];
-      final previousActive = _lastSentActiveIndex;
+      final isActive = lineIndex == activeLineIndex;
+      final prevText = _lastSentLines[lineIndex];
+      final wasActive = _lastSentActiveLine == lineIndex;
 
-      // Skip unchanged lines.
-      if (previousText == lineText &&
-          ((isActive && previousActive == activeLineIndex) ||
-           (!isActive && previousActive != lineIndex))) {
+      if (prevText == lineText && isActive == wasActive) {
         continue;
       }
 
@@ -195,7 +196,7 @@ class StreamingRenderQueue {
       _lastSentLines[lineIndex] = lineText;
     }
 
-    // Clear lines that are no longer in the visible window.
+    // Clear stale lines beyond the current visible count.
     final staleKeys = _lastSentLines.keys
         .where((k) => k > visible.length)
         .toList(growable: false);
@@ -205,7 +206,7 @@ class StreamingRenderQueue {
       _lastSentLines.remove(key);
     }
 
-    _lastSentActiveIndex = activeLineIndex;
+    _lastSentActiveLine = activeLineIndex;
   }
 
   // -- Word-boundary text wrapping -----------------------------------------
