@@ -4,9 +4,58 @@ import 'dart:typed_data';
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/evenai_proto.dart';
+import 'package:demo_ai_even/services/nav_icon_generator.dart';
+import 'package:demo_ai_even/services/nav_replay_data.dart';
 import 'package:demo_ai_even/utils/utils.dart';
 
+class _NavReplayLegStats {
+  int packetCount = 0;
+  DateTime? startedAt;
+  DateTime? endedAt;
+}
+
+class _NavReplayPairStats {
+  int pairCount = 0;
+  DateTime? startedAt;
+  DateTime? endedAt;
+}
+
+class _NavTripStatusPayload {
+  const _NavTripStatusPayload({
+    required this.eta,
+    required this.totalDistance,
+    required this.roadName,
+    required this.turnDistance,
+    required this.speed,
+    required this.navIconSource,
+  });
+
+  final String eta;
+  final String totalDistance;
+  final String roadName;
+  final String turnDistance;
+  final String speed;
+  final String navIconSource;
+}
+
 class Proto {
+  static const String navReplayModeBroadcast = 'broadcast';
+  static const String navReplayModeSequentialRightFirst =
+      'sequential-right-first';
+  static const String navReplayModeSequentialLeftFirst =
+      'sequential-left-first';
+  static const String navReplayModeInterleaved = 'interleaved';
+
+  // Toggle this between the constants above while testing the 0x0a replay.
+  static const String _navReplayMode = navReplayModeInterleaved;
+  static const Duration _navReplayInterPacketDelay = Duration(milliseconds: 30);
+  static const Duration _navReplayBurstPause = Duration(milliseconds: 50);
+  static const int _navReplayBurstSize = 10;
+  static const Duration _navReplayInterleavedLegDelay =
+      Duration(milliseconds: 10);
+  static const Duration _navReplayInterleavedPairDelay =
+      Duration(milliseconds: 20);
+
   static String lR() {
     if (BleManager.get().isLegAvailable("R")) return "R";
     return "L";
@@ -126,7 +175,8 @@ class Proto {
   /// Setting persists on the glasses; survives an app uninstall. See
   /// `docs/protocol-reference.md` "Head-up settings" for the full mapping.
   static Future<void> setHeadUpMode(int value) async {
-    final data = Uint8List.fromList([0x08, 0x06, 0x00, 0x00, 0x03, value & 0xff]);
+    final data =
+        Uint8List.fromList([0x08, 0x06, 0x00, 0x00, 0x03, value & 0xff]);
     AppLog.debug(
       '${DateTime.now()} head-up mode TX: value=0x${(value & 0xff).toRadixString(16).padLeft(2, '0')}',
       tag: 'DeviceStatus',
@@ -155,7 +205,8 @@ class Proto {
   static Future<void> setDoubleTapAction(int value) async {
     final seq = _doubleTapSeq & 0xff;
     _doubleTapSeq = (_doubleTapSeq + 1) & 0xff;
-    final data = Uint8List.fromList([0x26, 0x06, 0x00, seq, 0x05, value & 0xff]);
+    final data =
+        Uint8List.fromList([0x26, 0x06, 0x00, seq, 0x05, value & 0xff]);
     AppLog.debug(
       '${DateTime.now()} double-tap action TX: seq=0x${seq.toRadixString(16).padLeft(2, '0')} value=0x${(value & 0xff).toRadixString(16).padLeft(2, '0')}',
       tag: 'DeviceStatus',
@@ -177,12 +228,13 @@ class Proto {
   /// `docs/protocol-reference.md` "Navigation card" and "Display mode
   /// control".
   static Future<void> sendNavModeEnter() async {
-    await BleManager.sendData(
-        Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]));
+    // INIT (sub-cmd 0x00) — enter navigation display mode.
+    // Fire-and-forget: firmware does not ack 0x0a (confirmed by timeout logs).
     final enterSeq = _navSeq & 0xff;
     _navSeq++;
     await BleManager.sendData(
         Uint8List.fromList([0x0a, 0x06, 0x00, enterSeq, 0x00, 0x01]));
+    // SYNC (sub-cmd 0x04) — prepare for card data
     final readySeq = _navSeq & 0xff;
     _navSeq++;
     await BleManager.sendData(
@@ -203,19 +255,27 @@ class Proto {
     required String distance,
     required String roadName,
     required String turnDistance,
+    String speed = '',
   }) async {
     final etaBytes = utf8.encode(eta);
     final distBytes = utf8.encode(distance);
     final roadBytes = utf8.encode(roadName);
     final turnBytes = utf8.encode(turnDistance);
+    final speedBytes = utf8.encode(speed);
 
     const prefix = <int>[0x01, 0x03, 0xc8, 0x00, 0x12, 0x00];
     final fieldsPayload = <int>[
       ...prefix,
-      ...etaBytes, 0x00,
-      ...distBytes, 0x00,
-      ...roadBytes, 0x00,
-      ...turnBytes, 0x00,
+      ...etaBytes,
+      0x00,
+      ...distBytes,
+      0x00,
+      ...roadBytes,
+      0x00,
+      ...turnBytes,
+      0x00,
+      ...speedBytes,
+      0x00,
     ];
 
     final seq = _navSeq & 0xff;
@@ -231,18 +291,172 @@ class Proto {
 
     final data = Uint8List.fromList(packet);
     AppLog.debug(
-      '${DateTime.now()} nav card TX: eta="$eta" dist="$distance" road="$roadName" turn="$turnDistance" len=${data.length}',
+      '${DateTime.now()} nav card TX: eta="$eta" dist="$distance" road="$roadName" turn="$turnDistance" speed="$speed" len=${data.length}',
       tag: 'Navigate',
     );
     await BleManager.sendData(data);
+
+    // Trailing SYNC (sub-cmd 0x04) — commit/render signal.
+    final syncSeq = _navSeq & 0xff;
+    _navSeq++;
+    await BleManager.sendData(
+        Uint8List.fromList([0x0a, 0x06, 0x00, syncSeq, 0x04, 0x01]));
+
+    AppLog.debug(
+      '${DateTime.now()} nav card sent: text + trailing SYNC (no icon/map)',
+      tag: 'Navigate',
+    );
   }
 
-  /// Exit navigation card mode. Sends the display mode control frame
-  /// to return to idle.
+  static Future<void> sendNavTripStatusAndSync({
+    required String eta,
+    required String distance,
+    required String roadName,
+    required String turnDistance,
+    String speed = '0.0km/h',
+    required String navIconSource,
+  }) async {
+    final packet = _buildNavTripStatusPacket(
+      seq: _navSeq & 0xff,
+      payload: _NavTripStatusPayload(
+        eta: eta,
+        totalDistance: distance,
+        roadName: roadName,
+        turnDistance: turnDistance,
+        speed: speed,
+        navIconSource: navIconSource,
+      ),
+    );
+    _navSeq++;
+    await BleManager.sendData(packet);
+    await sendNavSync(logSend: false);
+    AppLog.info(
+      '${DateTime.now().toIso8601String()} nav update sent: TRIP_STATUS+SYNC len=${packet.length}',
+      tag: 'Navigate',
+    );
+  }
+
+  /// Exit navigation card mode using the proper EXIT sub-command (0x05).
+  /// DEBUG: Replay ALL snooped `0x0a` lifecycle packets with selectable
+  /// transport ordering, without changing the captured payload bytes.
+  static Future<void> sendNavCardReplayTest() async {
+    final replayPackets =
+        navReplayHexPackets.map(_decodeHexPacket).toList();
+    final dynamicTripStatus = _pendingReplayTripStatus;
+    _pendingReplayTripStatus = null;
+    final tripStatusReplaced = dynamicTripStatus == null
+        ? false
+        : _replaceReplayTripStatusPacket(replayPackets, dynamicTripStatus);
+    final mapOverviewReplaced = _replaceReplayMapOverviewPackets(
+      replayPackets,
+      dynamicTripStatus?.navIconSource ?? '',
+    );
+    final availableLegs = ['L', 'R']
+        .where((lr) => BleManager.get().isLegAvailable(lr))
+        .toList(growable: false);
+    final totalStartedAt = DateTime.now();
+    final legStats = <String, _NavReplayLegStats>{
+      'L': _NavReplayLegStats(),
+      'R': _NavReplayLegStats(),
+    };
+    final pairStats = _NavReplayPairStats();
+
+    AppLog.info(
+      '${totalStartedAt.toIso8601String()} nav replay mode=$_navReplayMode packetCount=${replayPackets.length} availableLegs=${availableLegs.join(",")} tripStatusReplaced=$tripStatusReplaced mapOverviewReplaced=$mapOverviewReplaced',
+      tag: 'Navigate',
+    );
+
+    if (availableLegs.isEmpty) {
+      AppLog.error(
+        '${DateTime.now().toIso8601String()} nav replay skipped: no available legs',
+        tag: 'Navigate',
+      );
+      return;
+    }
+
+    BleManager.get().suspendHeartbeats(reason: 'nav-replay');
+    try {
+      switch (_navReplayMode) {
+        case navReplayModeBroadcast:
+          final broadcastStartedAt = DateTime.now();
+          for (final lr in availableLegs) {
+            legStats[lr]!.startedAt = broadcastStartedAt;
+          }
+          await _sendNavReplayBroadcast(replayPackets);
+          final broadcastEndedAt = DateTime.now();
+          for (final lr in availableLegs) {
+            final stats = legStats[lr]!;
+            stats.packetCount = replayPackets.length;
+            stats.endedAt = broadcastEndedAt;
+          }
+          break;
+        case navReplayModeSequentialLeftFirst:
+        case navReplayModeSequentialRightFirst:
+          for (final lr in _navReplaySequentialLegOrder(availableLegs)) {
+            await _sendNavReplayToLeg(lr, replayPackets, legStats[lr]!);
+          }
+          break;
+        case navReplayModeInterleaved:
+          await _sendNavReplayInterleaved(
+            replayPackets,
+            availableLegs,
+            legStats,
+            pairStats,
+          );
+          break;
+        default:
+          AppLog.error(
+            '${DateTime.now().toIso8601String()} nav replay aborted: unsupported mode=$_navReplayMode',
+            tag: 'Navigate',
+          );
+          return;
+      }
+    } finally {
+      BleManager.get().resumeHeartbeats(reason: 'nav-replay');
+    }
+
+    for (final lr in ['L', 'R']) {
+      final stats = legStats[lr]!;
+      AppLog.info(
+        '${DateTime.now().toIso8601String()} nav replay leg=$lr packetCount=${stats.packetCount} start=${stats.startedAt?.toIso8601String() ?? "n/a"} end=${stats.endedAt?.toIso8601String() ?? "n/a"}',
+        tag: 'Navigate',
+      );
+    }
+    if (_navReplayMode == navReplayModeInterleaved) {
+      AppLog.info(
+        '${DateTime.now().toIso8601String()} nav replay pairs=${pairStats.pairCount} start=${pairStats.startedAt?.toIso8601String() ?? "n/a"} end=${pairStats.endedAt?.toIso8601String() ?? "n/a"}',
+        tag: 'Navigate',
+      );
+    }
+
+    final totalDurationMs =
+        DateTime.now().difference(totalStartedAt).inMilliseconds;
+    AppLog.info(
+      '${DateTime.now().toIso8601String()} nav replay complete mode=$_navReplayMode totalDurationMs=$totalDurationMs',
+      tag: 'Navigate',
+    );
+  }
+
   static Future<void> sendNavModeExit() async {
+    final seq = _navSeq & 0xff;
+    _navSeq++;
     await BleManager.sendData(
-        Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]));
-    AppLog.debug('${DateTime.now()} nav mode exit sent', tag: 'Navigate');
+        Uint8List.fromList([0x0a, 0x06, 0x00, seq, 0x05, 0x01]));
+    AppLog.debug('${DateTime.now()} nav EXIT sent', tag: 'Navigate');
+  }
+
+  static Future<void> sendNavSync({bool logSend = true}) async {
+    final seq = _navSeq & 0xff;
+    _navSeq++;
+    await BleManager.sendData(
+      Uint8List.fromList([0x0a, 0x06, 0x00, seq, 0x04, 0x01]),
+    );
+    if (logSend) {
+      AppLog.info(
+        '${DateTime.now().toIso8601String()} nav SYNC sent seq=0x${seq.toRadixString(16).padLeft(2, '0')}',
+        tag: 'Navigate',
+      );
+    }
   }
 
   static Future<bool> sendHeartBeat() async {
@@ -304,7 +518,8 @@ class Proto {
   }
 
   static Future<void> sendNewAppWhiteListJson(String whitelistJson) async {
-    AppLog.debug("proto -> sendNewAppWhiteListJson: whitelist = $whitelistJson");
+    AppLog.debug(
+        "proto -> sendNewAppWhiteListJson: whitelist = $whitelistJson");
     final whitelistData = utf8.encode(whitelistJson);
     //  2、转换为接口格式
     final dataList = _getPackList(0x04, whitelistData, count: 180);
@@ -359,5 +574,261 @@ class Proto {
       send.add(pack);
     }
     return send;
+  }
+
+  static Uint8List _decodeHexPacket(String hex) {
+    final bytes = <int>[];
+    for (int i = 0; i < hex.length; i += 2) {
+      bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+    }
+    return Uint8List.fromList(bytes);
+  }
+
+  static List<String> _navReplaySequentialLegOrder(List<String> availableLegs) {
+    final preferredOrder = _navReplayMode == navReplayModeSequentialLeftFirst
+        ? const ['L', 'R']
+        : const ['R', 'L'];
+    return preferredOrder.where(availableLegs.contains).toList(growable: false);
+  }
+
+  static Future<void> _sendNavReplayBroadcast(
+    List<Uint8List> replayPackets,
+  ) async {
+    for (int i = 0; i < replayPackets.length; i++) {
+      await BleManager.sendData(replayPackets[i], secondDelay: 0);
+      await _applyNavReplayPacing(i, replayPackets.length);
+    }
+  }
+
+  static Future<void> _sendNavReplayToLeg(
+    String lr,
+    List<Uint8List> replayPackets,
+    _NavReplayLegStats stats,
+  ) async {
+    stats.startedAt = DateTime.now();
+    for (int i = 0; i < replayPackets.length; i++) {
+      await BleManager.sendData(replayPackets[i], lr: lr);
+      stats.packetCount++;
+      await _applyNavReplayPacing(i, replayPackets.length);
+    }
+    stats.endedAt = DateTime.now();
+  }
+
+  static Future<void> _sendNavReplayInterleaved(
+    List<Uint8List> replayPackets,
+    List<String> availableLegs,
+    Map<String, _NavReplayLegStats> legStats,
+    _NavReplayPairStats pairStats,
+  ) async {
+    const rightFirstOrder = ['R', 'L'];
+    final pairLegOrder =
+        rightFirstOrder.where(availableLegs.contains).toList(growable: false);
+    if (pairLegOrder.isEmpty) {
+      return;
+    }
+
+    pairStats.startedAt = DateTime.now();
+    for (final lr in pairLegOrder) {
+      legStats[lr]!.startedAt = pairStats.startedAt;
+    }
+
+    for (int i = 0; i < replayPackets.length; i++) {
+      final packet = replayPackets[i];
+      for (int legIndex = 0; legIndex < pairLegOrder.length; legIndex++) {
+        final lr = pairLegOrder[legIndex];
+        await BleManager.sendData(packet, lr: lr);
+        final stats = legStats[lr]!;
+        stats.packetCount++;
+        if (legIndex < pairLegOrder.length - 1) {
+          await Future<void>.delayed(_navReplayInterleavedLegDelay);
+        }
+      }
+      pairStats.pairCount++;
+      await _applyNavReplayInterleavedPacing(i, replayPackets.length);
+    }
+
+    pairStats.endedAt = DateTime.now();
+    for (final lr in pairLegOrder) {
+      legStats[lr]!.endedAt = pairStats.endedAt;
+    }
+  }
+
+  static Future<void> _applyNavReplayPacing(
+    int packetIndex,
+    int packetCount,
+  ) async {
+    final isLastPacket = packetIndex >= packetCount - 1;
+    if (isLastPacket) {
+      return;
+    }
+    await Future<void>.delayed(_navReplayInterPacketDelay);
+    if (packetIndex % _navReplayBurstSize == _navReplayBurstSize - 1) {
+      await Future<void>.delayed(_navReplayBurstPause);
+    }
+  }
+
+  static Future<void> _applyNavReplayInterleavedPacing(
+    int packetIndex,
+    int packetCount,
+  ) async {
+    final isLastPacket = packetIndex >= packetCount - 1;
+    if (isLastPacket) {
+      return;
+    }
+    await Future<void>.delayed(_navReplayInterleavedPairDelay);
+    if (packetIndex % _navReplayBurstSize == _navReplayBurstSize - 1) {
+      await Future<void>.delayed(_navReplayBurstPause);
+    }
+  }
+
+  static _NavTripStatusPayload? _pendingReplayTripStatus;
+
+  static void setReplayTripStatus({
+    required String eta,
+    required String totalDistance,
+    required String roadName,
+    required String turnDistance,
+    String speed = '0.0km/h',
+    required String navIconSource,
+  }) {
+    _pendingReplayTripStatus = _NavTripStatusPayload(
+      eta: eta,
+      totalDistance: totalDistance,
+      roadName: roadName,
+      turnDistance: turnDistance,
+      speed: speed,
+      navIconSource: navIconSource,
+    );
+  }
+
+  static int _directionTurnForIconSource(String navIconSource) {
+    return manoeuvreFromIconSource(navIconSource).directionTurnByte;
+  }
+
+  static Uint8List _buildReplayTripStatusPacket({
+    required int seq,
+    required _NavTripStatusPayload payload,
+  }) {
+    return _buildNavTripStatusPacket(seq: seq, payload: payload);
+  }
+
+  static Uint8List _buildNavTripStatusPacket({
+    required int seq,
+    required _NavTripStatusPayload payload,
+  }) {
+    final directionTurn = _directionTurnForIconSource(payload.navIconSource);
+    const x0 = 0xc8;
+    const x1 = 0x00;
+    const y = 0x12;
+
+    final fieldsPayload = <int>[
+      0x01,
+      directionTurn,
+      x0,
+      x1,
+      y,
+      0x00,
+      ...utf8.encode(payload.eta),
+      0x00,
+      ...utf8.encode(payload.totalDistance),
+      0x00,
+      ...utf8.encode(payload.roadName),
+      0x00,
+      ...utf8.encode(payload.turnDistance),
+      0x00,
+      ...utf8.encode(payload.speed),
+      0x00,
+    ];
+    final totalLen = 4 + fieldsPayload.length;
+    final packet = Uint8List.fromList([
+      0x0a,
+      totalLen & 0xff,
+      0x00,
+      seq & 0xff,
+      ...fieldsPayload,
+    ]);
+    AppLog.info(
+      '${DateTime.now().toIso8601String()} dynamic TRIP_STATUS fields: eta="${payload.eta}" dist="${payload.totalDistance}" road="${payload.roadName}" turn="${payload.turnDistance}" speed="${payload.speed}"',
+      tag: 'Navigate',
+    );
+    AppLog.info(
+      '${DateTime.now().toIso8601String()} dynamic TRIP_STATUS DirectionTurn=0x${directionTurn.toRadixString(16).padLeft(2, '0')} len=${packet.length}',
+      tag: 'Navigate',
+    );
+    return packet;
+  }
+
+  static bool _replaceReplayTripStatusPacket(
+    List<Uint8List> replayPackets,
+    _NavTripStatusPayload payload,
+  ) {
+    for (int i = 0; i < replayPackets.length; i++) {
+      final packet = replayPackets[i];
+      if (packet.length > 5 && packet[0] == 0x0a && packet[4] == 0x01) {
+        replayPackets[i] = _buildReplayTripStatusPacket(
+          seq: packet[3],
+          payload: payload,
+        );
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Replace captured MAP_OVERVIEW packets with dynamically generated icon
+  /// packets for the classified manoeuvre. Returns `true` if replacement
+  /// succeeded. On failure the captured bytes remain untouched.
+  static bool _replaceReplayMapOverviewPackets(
+    List<Uint8List> replayPackets,
+    String navIconSource,
+  ) {
+    final manoeuvre = manoeuvreFromIconSource(navIconSource);
+
+    // Find indices of all MAP_OVERVIEW packets (sub-cmd 0x02).
+    final oldIndices = <int>[];
+    for (int i = 0; i < replayPackets.length; i++) {
+      final p = replayPackets[i];
+      if (p.length > 5 && p[0] == 0x0a && p[4] == 0x02) {
+        oldIndices.add(i);
+      }
+    }
+    if (oldIndices.isEmpty) return false;
+
+    // Use the first MAP_OVERVIEW packet's seq as the starting sequence.
+    final startSeq = replayPackets[oldIndices.first][3];
+    final generated = generateMapOverviewPackets(manoeuvre, startSeq);
+    if (generated == null || generated.isEmpty) return false;
+
+    // Replace: remove old MAP_OVERVIEW packets and insert generated ones.
+    // Work backwards to preserve indices while removing.
+    for (int i = oldIndices.length - 1; i >= 0; i--) {
+      replayPackets.removeAt(oldIndices[i]);
+    }
+
+    // Insert generated packets at the position of the first old packet.
+    final insertAt = oldIndices.first;
+    replayPackets.insertAll(insertAt, generated);
+
+    // Renumber seq bytes for all 0x0a packets to keep them consecutive.
+    // The 0x50 mode-control packet (index 0) uses its own seq space.
+    int seq = -1;
+    for (final p in replayPackets) {
+      if (p[0] == 0x0a && p.length >= 4) {
+        if (seq < 0) {
+          seq = p[3]; // preserve the first 0x0a packet's original seq
+        } else {
+          p[3] = seq & 0xff;
+        }
+        seq++;
+      }
+    }
+
+    AppLog.info(
+      'MAP_OVERVIEW replaced: manoeuvre=$manoeuvre '
+      'oldBands=${oldIndices.length} newBands=${generated.length} '
+      'totalPackets=${replayPackets.length}',
+      tag: 'Navigate',
+    );
+    return true;
   }
 }

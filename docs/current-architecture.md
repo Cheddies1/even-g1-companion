@@ -102,13 +102,34 @@ Owns:
 Owns:
 - latest maps-derived guidance model
 - text fallback for startup / waiting states
-- Navigate-only BMP card rendering for real Google Maps guidance
 - suppression / prioritization rules relative to Glance
-- note: the 2026-04-28 layouts capture confirmed a structured `0x0a`
-  navigation card protocol that sends text data slots in one ~48-byte
-  packet, eliminating the BMP sync issues. See
-  [protocol-reference.md](protocol-reference.md) "Navigation card" and
-  [FINDINGS-layouts.md](FINDINGS-layouts.md). Not yet wired in.
+- **now uses the structured `0x0a` navigation card protocol** instead of
+  the previous BMP-per-frame approach. The production target is a dynamic
+  TRIP_STATUS packet built from the current Maps notification, but the
+  current bootstrap path still replays the exact 108 captured official-app
+  packets through
+  [Proto.sendNavCardReplayTest](../lib/services/proto.dart) using an
+  interleaved per-leg fire-and-forget transport. This is the currently
+  successful on-device sync strategy.
+- the bootstrap replay now replaces only the captured `TRIP_STATUS` packet
+  with a live one built from Google Maps fields, while captured
+  `MAP_OVERVIEW` and `PANORAMIC_MAP` bytes remain unchanged
+- owns the real 1-second `0x0a` SYNC poller for active Navigate sessions and
+  the post-bootstrap update-mode switch (`fullLifecycleUpdate` vs
+  `tripStatusOnlyUpdate`)
+- the BMP pipeline ([NavigateBitmapService](../lib/services/navigate_bitmap_service.dart))
+  is preserved in the codebase but no longer called from the main Navigate
+  render path
+- a Unicode direction hint (→ ← ↑ ↩ etc.) is prepended to the road name
+  based on the notification's `navIconSource` label. The bitmap direction
+  icon via `0x0a 02` sub-type is a documented follow-up — the encoding is
+  compressed column-major RLE that needs further analysis
+- `NavigateService.showIdlePrompt()` now delays the idle fallback briefly and
+  cancels it on the first real nav render path so mode entry does not leave
+  the glasses stuck on `Open Google Maps / to start navigation` just as the
+  initial replay is about to start
+- if the text fallback is already visible, `NavigateService` explicitly closes
+  it before the first nav lifecycle begins
 
 ### Device status
 - [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)
@@ -163,11 +184,11 @@ Owns:
 - STT handoff
 - backend request / response handling
 - concise text-state rendering back to the glasses
-- note: the 2026-04-28 layouts capture confirmed a `0x52` streaming text
-  protocol that pushes text word by word with a cursor — the natural fit
-  for streaming LLM responses. See
-  [protocol-reference.md](protocol-reference.md) "Live streaming text" and
-  [FINDINGS-layouts.md](FINDINGS-layouts.md). Not yet wired in.
+- note: a `0x52` streaming text protocol has been confirmed that pushes text
+  word by word with a cursor — the natural fit for streaming LLM responses.
+  See [protocol-reference.md](protocol-reference.md) "Live streaming text".
+  Not yet wired into Chat; documented as the highest-priority rendering
+  upgrade after Navigate.
 
 Current backend seam:
 - `ChatService` depends on the `ChatBackend` abstraction, not a controller-level hardcoded backend
@@ -248,6 +269,8 @@ Current mode-entry idle displays:
 - `capture`: `*`
 - `chat`: `Chat ready` / `Tilt up to talk`
 - `navigate`: `Open Google Maps` / `to start navigation` unless a live instruction is already available
+  - the idle prompt is delayed briefly on mode entry so it does not race the
+    first live Maps notification
 - `glance`: no separate idle title card; content appears only when a Glance item is actually shown
 
 Glance assistant:
@@ -306,6 +329,13 @@ Resync handling:
 - active Navigate content is rerendered through the current Navigate render path
 - active text content is replayed through the shared text renderer
 - this is intended to help left/right displays converge again after one-leg transport degradation
+
+Navigate-specific transport protection:
+- `BleManager` can temporarily suspend `0x25` heartbeats
+- the current Navigate bootstrap replay uses this during the 108-packet
+  interleaved burst, then resumes heartbeats afterwards
+- this is specifically to avoid degraded-leg noise and false transport
+  failures during the large fire-and-forget bootstrap
 
 ## Trusted event routing
 

@@ -279,31 +279,78 @@ Notes:
 Source:
 - 2026-04-28 layouts capture, Phase 4 (Google Maps navigation) — full
   write-up in [FINDINGS-layouts.md](FINDINGS-layouts.md)
+- Cross-referenced against Gadgetbridge `G1Constants.java`
+  (`NavigationSubcommand` names) and `ayroblu/bazel-demo` Swift
+  implementation (`commands+device.swift` directionsData structure).
+  See [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
 
 Observed reality (`Confirmed`):
 
 - TX `0x0a` pushes structured navigation card data to the glasses. The
   firmware has a built-in card template; the host fills text fields and
   optionally supplies icon + map bitmaps.
+- Sub-command names (from Gadgetbridge `G1Constants.NavigationSubcommand`):
+  - `0x00` = INIT — enter navigation display mode
+  - `0x01` = TRIP_STATUS — the text/direction data card
+  - `0x02` = MAP_OVERVIEW — direction icon bitmap (136×136, RLE encoded)
+  - `0x03` = PANORAMIC_MAP — route map bitmap (488×136, unencoded)
+  - `0x04` = SYNC — commit/render signal (sent BEFORE and AFTER card data)
+  - `0x05` = EXIT — properly leave navigation mode
+  - `0x06` = ARRIVED — navigation complete
+
 - Control frames:
-  - `0a 06 00 <seq> 00 01` — enter navigation display mode
-  - `0a 06 00 <seq> 04 01` — status ready / prepare for card data
-- **Sub-type 1 — structured text** (one packet per card update):
+  - `0a 06 00 <seq> 00 01` — INIT (enter navigation display mode)
+  - `0a 06 00 <seq> 04 01` — SYNC (prepare / commit)
+  - `0a 06 00 <seq> 05 01` — EXIT (leave navigation mode)
+  - `0a 06 00 <seq> 06 01` — ARRIVED (navigation complete)
+
+- Official app sequence per update:
+  INIT → SYNC → TRIP_STATUS → MAP_OVERVIEW ×13 → PANORAMIC_MAP ×90 → SYNC
+- **Sub-type 1 — TRIP_STATUS** (one packet per card update):
   ```
-  0a <len> 00 <seq> 01 03 c8 00 12 00
-    <eta_utf8> 00 <distance_utf8> 00 <road_name_utf8> 00 <turn_distance_utf8> 00
+  0a <len> 00 <seq> 01 <DirectionTurn> <x0> <x1> <y> 00
+    <totalDuration_utf8> 00 <totalDistance_utf8> 00 <roadName_utf8> 00 <turnDistance_utf8> 00 <speed_utf8> 00
   ```
-  Observed: `"26 min" \0 "2.2km" \0 "Church Road " \0 "46m" \0` — ~48 bytes.
-- **Sub-type 2 — direction icon bitmap** (`02 0d`):
-  `0a c2 00 <seq> 02 0d 00 <row> <~188 bytes>` — ~13 rows of icon data.
-- **Sub-type 3 — route map bitmap** (`03 5a`):
-  `0a c3 00 <seq> 03 5a 00 <row> <~190 bytes>` — ~30–50 rows of map data.
+  Decoded prefix from snoop: `01 03 c8 00 12 00` = sub-cmd TRIP_STATUS,
+  DirectionTurn=Right(0x03), x=[0xc8,0x00], y=0x12, null separator.
+  Five null-separated text fields follow (the Swift implementation confirms
+  the 5th field is speed).
+  Observed: `"26 min" \0 "2.2km" \0 "Church Road " \0 "46m" \0 "0.0km/h" \0`
+  — 48 bytes total.
+
+  DirectionTurn enum values (from ayroblu Swift implementation, 0x01–0x23):
+  StraightDot=0x01, Straight=0x02, Right=0x03, Left=0x04,
+  SlightRight/SlightLeft/SharpRight/SharpLeft/UTurnLeft/UTurnRight, plus
+  multiple roundabout variants. Full list in
+  [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
+- **Sub-type 2 — MAP_OVERVIEW (direction icon)** (`02 0d`):
+  `0a c2 00 <seq> 02 0d 00 <band> <~186 bytes RLE data>` — 13 bands for a
+  136×136 pixel icon. Data is **run-length encoded** (confirmed by the ayroblu
+  Swift implementation). The `0d` = 13 (band count). The last band is slightly
+  shorter (179 vs 194 bytes).
+- **Sub-type 3 — PANORAMIC_MAP (route map)** (`03 5a`):
+  `0a c3 00 <seq> 03 5a 00 <row> <~187 bytes>` — 90 rows (`5a` = 90) for a
+  488×136 pixel map. Data is **unencoded** raw bitmap (not RLE).
 
 Notes:
-- the text sub-type alone is sufficient for a useful navigation card — the
-  icon and map bitmaps are optional enhancements
-- replaces the current BMP-per-frame Navigate path: payload drops from
-  ~5 KB to ~48 bytes per update, eliminating the split-eye sync issue
+- all three sub-types (TRIP_STATUS + MAP_OVERVIEW + PANORAMIC_MAP) are
+  **required** for the firmware to render a card — text-only or dummy-data
+  cards are rejected with "Navigation service lost"
+- the firmware requires a **continuous 1-second SYNC poller** (`0x04`)
+  running for the entire navigation session. Without it, the firmware
+  times out after a few seconds. The official app sends 86 SYNC packets
+  over a 70-second nav session at exactly 1-second intervals.
+- `0x50` mode control is required before the first INIT
+- fire-and-forget writes (`sendData`) are the correct transport — the
+  firmware does not ack `0x0a` commands
+- sending 108 packets (~20KB) to both legs simultaneously requires pacing
+  and per-leg transport care to avoid BLE buffer overflow and connection drops
+- the current confirmed debug transport in the companion app is an
+  **interleaved per-leg fire-and-forget replay**:
+  packet `i` to right, wait 10 ms, packet `i` to left, wait 20 ms, and
+  pause 50 ms every 10 packet pairs. Broadcast mode could starve a leg;
+  full sequential per-leg replay was stable but introduced a visible
+  multi-second eye gap
 
 ## Dashboard data slots: `0x1e` TX
 

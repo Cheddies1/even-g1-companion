@@ -34,6 +34,12 @@ the documents to read first:
 - [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md) —
   comparison against the public Python SDK, including the places where its
   labels are stale relative to current firmware.
+- [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md) —
+  comparison against three external protocol sources: the JohnRThomas wiki,
+  the Gadgetbridge `even-g1-custom-drawing-experiment` branch (which names
+  all navigation sub-commands), and the ayroblu/bazel-demo Swift
+  implementation (which decodes the TRIP_STATUS packet structure and
+  confirms the icon/map bitmap dimensions and encoding).
 - [docs/current-behaviour.md](docs/current-behaviour.md) — how the companion
   app behaves at runtime; useful as a reference for what a host app is
   expected to do for each gesture / event.
@@ -95,8 +101,11 @@ far. Each item is detailed in the docs above.
   transcription; the companion app can use it for streaming Chat responses.
 - **Navigation structured card (`0x0a`).** One ~48-byte packet with
   null-separated text fields (ETA, distance, road name, turn distance) plus
-  optional direction-icon and route-map bitmap chunks. Replaces the
-  full-screen BMP approach and eliminates the split-eye sync issue.
+  optional direction-icon and route-map bitmap chunks. The companion app's
+  current debug path replays the full 108-packet official lifecycle using an
+  **interleaved per-leg fire-and-forget transport** (right packet N, left
+  packet N, then next pair), which is now the stable way to get both eyes to
+  render together without starving one leg.
 - **Dashboard data slot injection (`0x1e` TX).** Pushes titled content (note
   title + body) into the firmware's built-in dashboard grid layout.
 - **Note management.** Delete and reorder of saved notes use a three-step
@@ -121,9 +130,14 @@ general-purpose product.
   Practically usable; stop / save reliability is still an open validation
   item.
 - `Navigate` — consumes Google Maps navigation notifications and renders
-  concise turn guidance to the glasses. Real maps cards use the Maps-provided
-  manoeuvre icon composed into a custom BMP. Working for walking navigation
-  but still being shaken out.
+  concise turn guidance to the glasses using the firmware's structured `0x0a`
+  navigation card protocol. Current working shape:
+  - full 108-packet interleaved replay for the initial bootstrap
+  - live dynamic `TRIP_STATUS` injected into that bootstrap
+  - captured icon/map bytes still reused from the official app
+  - 1-second `0x0a` `SYNC` poller to keep the session alive
+  - post-bootstrap updates currently experimenting with `TRIP_STATUS + SYNC`
+  Still under active device validation.
 - `Chat` — voice loop. Tilt up to start listening, tilt down to submit,
   transcript handed to an OpenAI-compatible backend, the response is
   rendered back to the glasses. Follow-up turns share an in-memory session
@@ -343,10 +357,15 @@ Working well:
 
 In progress / needs more device validation:
 
+- Navigate mode via `0x0a` structured card — the interleaved 108-packet
+  bootstrap, live `TRIP_STATUS`, and 1-second `SYNC` keepalive are now
+  working, but the implementation still needs startup hardening, better field
+  extraction, a final decision on post-bootstrap update shape, and a real
+  icon/map production path
 - Capture mode end-to-end recording reliability
-- Navigate mode longer real-world Google Maps walking behaviour
 - background behaviour polish
-- left/right render synchronisation under heavy notification churn
+- left/right render synchronisation under heavy notification churn in
+  non-Navigate flows
 
 ## What this repo is not
 

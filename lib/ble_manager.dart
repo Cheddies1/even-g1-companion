@@ -103,6 +103,7 @@ class BleManager {
   int? _lastCmd22EventMs;
   int? _lastRightCmd21EventMs;
   bool _resyncInFlight = false;
+  int _heartbeatPauseDepth = 0;
   final Map<String, LegConnectionState> _legStates =
       <String, LegConnectionState>{
     'L': const LegConnectionState(lr: 'L'),
@@ -216,6 +217,13 @@ class BleManager {
     _reconnectMonitorTimer = null;
 
     beatHeartTimer = Timer.periodic(const Duration(seconds: 8), (timer) async {
+      if (_heartbeatPauseDepth > 0) {
+        AppLog.info(
+          '${DateTime.now()} Transport: heartbeat tick skipped while paused depth=$_heartbeatPauseDepth',
+          tag: 'Transport',
+        );
+        return;
+      }
       for (final lr in ['L', 'R']) {
         final state = legState(lr);
         if (!state.connected) {
@@ -972,6 +980,9 @@ class BleManager {
   }
 
   void _monitorLegHealth() {
+    if (_heartbeatPauseDepth > 0) {
+      return;
+    }
     final now = DateTime.now();
     for (final lr in ['L', 'R']) {
       final state = legState(lr);
@@ -1085,6 +1096,25 @@ class BleManager {
       return 'Not connected';
     }
     return 'Connected:\n${describe('L', left)}\n${describe('R', right)}';
+  }
+
+  void suspendHeartbeats({required String reason}) {
+    _heartbeatPauseDepth++;
+    AppLog.info(
+      '${DateTime.now()} Transport: heartbeat paused reason=$reason depth=$_heartbeatPauseDepth',
+      tag: 'Transport',
+    );
+  }
+
+  void resumeHeartbeats({required String reason}) {
+    if (_heartbeatPauseDepth <= 0) {
+      return;
+    }
+    _heartbeatPauseDepth--;
+    AppLog.info(
+      '${DateTime.now()} Transport: heartbeat resumed reason=$reason depth=$_heartbeatPauseDepth',
+      tag: 'Transport',
+    );
   }
 }
 

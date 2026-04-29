@@ -230,12 +230,53 @@ Navigate is intentionally lean and notification-driven.
 - only real turn-by-turn Google Maps notifications are now eligible input
 - startup and waiting states stay text-rendered
 - idle state shows `Open Google Maps` / `to start navigation`
-- real navigation instructions use a custom BMP card with the Maps-provided maneuver icon and text fields
-- updates are throttled and serialized to reduce unstable overlapping BMP uploads
+- real navigation instructions are currently debug-driven by a full
+  **108-packet `0x0a` replay** of the official app's lifecycle
+  (INIT + SYNC + TRIP_STATUS + icon + map + trailing SYNC), sent with an
+  **interleaved per-leg fire-and-forget transport** that has now proven fast
+  and stable on device for the initial bootstrap
+- the replayed bootstrap now replaces only the `TRIP_STATUS` packet with a
+  live packet built from the current Google Maps notification fields
+- after bootstrap, Navigate runs a real **1-second `0x0a` SYNC poller**
+  while the session remains active
+- post-bootstrap updates now default to **dynamic `TRIP_STATUS + SYNC`**
+  instead of resending the full 108-packet lifecycle on every guidance change
+- the production target remains a structured TRIP_STATUS packet with four
+  visible null-separated text fields (ETA, total distance, road name, turn
+  distance) that the firmware renders using its own built-in card template
+  and font
+- a Unicode direction arrow (→ ← ↑ ↩ etc.) is prepended to the road name
+  based on the Maps notification's `navIconSource` label
+- the previous BMP-per-frame approach has been replaced; the BMP pipeline
+  is preserved in the codebase for potential future use but is no longer
+  called from Navigate
+- the rate limit between updates has been reduced from 2200 ms (BMP) to
+  500 ms (the structured text packet is tiny and atomic)
+- on first switch into Navigate with no live instruction yet, the idle prompt
+  is intentionally delayed briefly so it does not override the first real nav
+  replay if a Google Maps navigation notification arrives immediately after
+  the mode switch
+- if the stale text fallback is already visible, Navigate now explicitly
+  closes it before starting the first `0x0a` lifecycle so the glasses do not
+  stay stuck on `Open Google Maps / to start navigation`
 
-### Current caveat
+### Current caveats
 
-Navigate v1 depends on how stable Google Maps notification updates are on the real phone/device configuration during longer walks.
+- **The `0x0a` nav card protocol is confirmed working** and current session
+  keepalive is behaving well on longer routes, but the implementation still
+  depends on captured icon/map bytes from the official app.
+- The current bootstrap is still a replay-based path around captured snoop
+  bytes rather than a fully generated production card.
+- Some Google Maps updates still map the wrong source text into the
+  `turnDistance` field, so payload extraction needs cleanup.
+- Startup robustness still needs observation when one leg begins degraded or
+  reconnecting.
+- Navigate depends on how stable Google Maps notification updates are on
+  the real phone/device configuration during longer walks.
+- The `0x0a` code still contains replay scaffolding and captured
+  `MAP_OVERVIEW` / `PANORAMIC_MAP` data. The next production step is
+  replacing those captured bytes with real icon/map generation or a turn-icon
+  library once lifecycle/update behavior is fully trusted.
 
 ## Chat mode
 

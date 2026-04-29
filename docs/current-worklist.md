@@ -13,34 +13,88 @@ Use this with:
 Working well:
 - Glance mode is a real daily-use feature
 - Chat mode works end-to-end with OpenAI-backed STT + assistant responses
-- Navigate mode works with Google Maps notification-driven BMP cards
+- Navigate mode now boots and stays alive on the firmware `0x0a` card path
+  using:
+  - interleaved per-leg bootstrap replay
+  - live dynamic `TRIP_STATUS`
+  - a 1-second `0x0a` SYNC poller
+  - post-bootstrap `TRIP_STATUS + SYNC` updates
 - Quick mode switching works from app UI and persistent notification
 - Right-hold QuickNote POC exists for idle-only mode switching
 - Per-leg BLE health and reconnect logic exists
 
 Working, but still needs real-world observation:
-- Navigate left/right BMP synchronisation under stress
+- Navigate mode startup robustness on first entry / degraded-leg recovery
+- Navigate mode post-bootstrap update behavior on longer real walks
 - Capture mode stop/save reliability on device
 - Protected notification handling for special ongoing items on Samsung/Android variants
 
 ## Current Priority Areas
 
-1. Navigate BMP reliability
-- True 1bpp BMP generation is confirmed
-- Real issue is per-leg transport integrity during bulk BMP send
-- Split-eye divergence happens when one leg commits a frame and the other fails CRC
-- Navigate scheduler already keeps:
-  - one frame in flight per leg
-  - one latest pending frame per leg
-  - stale pending frames overwritten
-- A recovery pass was added:
-  - per-leg Navigate transport degraded state
-  - out-of-sync detection
-  - targeted resync to failed leg
-  - modest per-leg pacing/coalescing
-- This still needs more device validation
+1. Navigate via `0x0a` structured card (protocol confirmed, implementation in progress)
+- **The full `0x0a` lifecycle renders successfully.** The 108-packet
+  official lifecycle is now the known-good bootstrap path.
+- **Interleaved per-leg replay is the current stable bootstrap transport.**
+  Current successful mode: packet `i` to right, short delay, packet `i`
+  to left, short delay, with a 50 ms pause every 10 pairs. Broadcast could
+  starve a leg; full sequential replay created a large eye gap.
+- **Dynamic live `TRIP_STATUS` is now injected.** The current code replaces
+  only the replayed `0x0a 01` packet using live Google Maps notification
+  fields. Captured `MAP_OVERVIEW` and `PANORAMIC_MAP` bytes remain unchanged.
+- **The 1-second SYNC poller is now implemented and working.** Navigate stays
+  alive for full routes as long as the poller is running and the session is
+  not explicitly closed.
+- **Post-bootstrap updates now default to `TRIP_STATUS + SYNC`.** This is the
+  current experiment to reduce the occasional right-eye text loss seen when
+  replaying the full 108-packet lifecycle on every guidance update.
+- **Navigate mode entry is guarded against stale text fallback.** The idle
+  prompt is delayed, cancelled on real render paths, and the on-glasses
+  `Open Google Maps / to start navigation` fallback is explicitly closed
+  before the first nav lifecycle begins.
+- **Heartbeat collisions during bootstrap are currently handled.** `0x25`
+  heartbeats are paused during the interleaved 108-packet burst and resumed
+  afterwards to avoid degraded-leg noise during replay.
+- **All three sub-types are required** for bootstrap cards: TRIP_STATUS
+  (text) + MAP_OVERVIEW (13 RLE icon bands) + PANORAMIC_MAP (90 map rows).
+  Text-only bootstrap cards are rejected.
+- **Next steps (incremental, each testable independently):**
+  1. **Watch startup robustness** — keep testing first-entry Navigate starts,
+     especially cases where one leg begins degraded or reconnecting. The
+     current logs suggest lifecycle keepalive is good, but startup recovery
+     still needs observation.
+  2. **Validate `TRIP_STATUS + SYNC` updates on longer walks** — determine
+     whether post-bootstrap updates are now visually solid on both eyes, or
+     whether some updates still require a full lifecycle resend.
+  3. **Clean up field extraction** — some Google Maps updates are still
+     populating `turnDistance` with road text like `towards Milton Rd` or
+     `Home (36 Campbell Rd)`. Fix the text model before treating the payload
+     shape as final.
+  4. **Build real icon/map production paths** — either capture a reusable
+     turn-icon library for `MAP_OVERVIEW` or implement the RLE encoder for
+     the 136×136 icon. Replace captured Church Road replay bytes only after
+     lifecycle/update behavior is settled.
+  5. **Production cleanup** — once bootstrap and update behavior are trusted,
+     remove the replay-only scaffolding, implement proper EXIT / ARRIVED
+     handling, and decide what final lifecycle shape production Navigate
+     should use.
+- BMP pipeline preserved in the codebase as fallback.
+- The debug replay path and `lib/services/nav_replay_data.dart` remain in use
+  for icon/map bootstrap data and should not be removed yet.
 
-2. Notification quality
+2. Streaming text for Chat via `0x52` (next rendering upgrade)
+- The `0x52` protocol streams text word-by-word with a cursor and live clock.
+  Proto methods (`sendNavModeEnter` pattern) are the template.
+- Wiring into Chat mode would replace the current "wait then dump text block"
+  experience with a live typewriter effect as LLM tokens arrive.
+- `0x53` keepalive every ~5 s needed while streaming.
+
+3. QuickNote via hosted transcription (future feature)
+- Right-hold → `0xf1` mic audio during hold → `0x1e c8` chunked post-release
+  stream (likely LC3) → existing LC3 decode path → OpenAI STT → `0x1e` TX
+  note push to dashboard slots.
+- All pieces exist individually; the integration is the work.
+
+4. Notification quality
 - Notification policy now supports:
   - `blocked`
   - `suppressed`
@@ -108,8 +162,11 @@ Rendering protocols (layouts capture):
     LLM responses instead of dumping finished text blocks.
   - **`0x0a` navigation card** — structured text data slots in one ~48-byte
     packet (ETA, distance, road, turn distance) plus optional icon/map
-    bitmap chunks. Replaces BMP-per-frame Navigate, eliminates the
-    split-eye sync issue.
+    bitmap chunks. The current Navigate implementation uses:
+    - full 108-packet interleaved replay for bootstrap
+    - dynamic live `TRIP_STATUS` replacement inside that replay
+    - 1-second `SYNC` keepalive while the session is active
+    - post-bootstrap `TRIP_STATUS + SYNC` updates as the current experiment
   - **`0x1e` TX dashboard data slots** — pushes titled content into the
     firmware's grid layout. Enables companion-app quicknote and dashboard
     injection features.

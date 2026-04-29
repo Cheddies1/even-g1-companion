@@ -125,6 +125,46 @@ Current best model:
 
 This remains an investigative area, not a finished app feature.
 
+## External references
+
+### JohnRThomas wiki
+
+The `JohnRThomas/EvenDemoApp` wiki at GitHub has a protocol page covering
+some of the same families. A comparison is captured in
+[external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
+
+Areas where the wiki adds value beyond our docs:
+- `0x22` status packet field-layout hypotheses we haven't decoded
+- `0x29` brightness GET (readback) — we currently only SET
+- Additional `0x26` touch-settings subcommand labels
+
+Areas where our docs are ahead:
+- `0x52` live streaming text, `0x0a` navigation card, `0x1e` TX dashboard
+  injection, `0x50` mode control — all absent from the wiki
+- the entire taps/double-tap/settings capture-backed evidence base
+
+### Gadgetbridge `even-g1-custom-drawing-experiment` branch
+
+Source: `codeberg.org/jrthomas270/Gadgetbridge` branch
+`even-g1-custom-drawing-experiment`. Contains `G1Constants.java` with
+comprehensive named constants for all command/event families. Critical for
+naming the `0x0a` navigation sub-commands (INIT, TRIP_STATUS, MAP_OVERVIEW,
+PANORAMIC_MAP, SYNC, EXIT, ARRIVED) and confirming the dashboard, hardware,
+and quicknote sub-command enumerations. Also reveals opcodes we haven't
+explored: `TELEPROMPTER_CONTROL (0x09)`, `TRANSCRIBE_CONTROL (0x0D)`,
+`TRANSLATE_CONTROL (0x0F)`. Full comparison in
+[external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
+
+### ayroblu/bazel-demo Swift G1 protocol implementation
+
+Source: `github.com/ayroblu/bazel-demo` path `g1-app/g1protocol/`. Contains
+a working Swift implementation of the navigation protocol with the decoded
+TRIP_STATUS packet structure: the prefix bytes include a DirectionTurn enum
+(0x01–0x23 for turn types), x/y coordinates, and then the five
+null-separated text fields. Also confirms MAP_OVERVIEW is 136×136 RLE-encoded
+and PANORAMIC_MAP is 488×136 unencoded. Full comparison in
+[external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
+
 ## Python SDK role
 
 The sibling Python SDK is useful as:

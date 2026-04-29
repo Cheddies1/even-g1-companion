@@ -251,6 +251,111 @@ know, with sub-commands for each field).
 
 ## What this means for the companion app
 
+---
+
+## Navigation card debugging results (2026-04-28 evening session)
+
+### What we confirmed working
+
+**The full official lifecycle renders successfully on the glasses.** A replay
+of all 108 packets from the official app's snoop — including `0x50` mode
+control, INIT, SYNC, TRIP_STATUS, all 13 RLE icon bands, all 90 map rows,
+and trailing SYNC — produced a visible "Church Road / 46m / 26 min / 2.2km"
+card on the right eye. The left eye lagged but eventually caught up.
+
+**The firmware requires a continuous 1-second SYNC poller** to keep the
+navigation session alive. The official app sends `0x0a 06 00 <seq> 04 01`
+every 1 second for the entire duration of the navigation session. When the
+poller stops (or runs too slowly), the firmware times out and shows
+"Navigation service lost" after a few seconds.
+
+### What failed and why
+
+1. **Text-only cards (no icon/map):** "Navigation service lost" — the firmware
+   requires all three sub-types (TRIP_STATUS + MAP_OVERVIEW + PANORAMIC_MAP)
+   to consider a card "complete" before rendering.
+
+2. **Dummy all-zero icon/map data:** Also "Navigation service lost" — the
+   firmware validates the icon data (it's RLE-encoded, not raw bitmap).
+   All-zero payloads are not valid RLE.
+
+3. **Fire-and-forget (`sendData`) vs acked (`sendBoth`):** The firmware does
+   NOT ack `0x0a` commands (confirmed: `send Timeout R0a of 250` on every
+   attempt). `sendData` (fire-and-forget) is the correct transport.
+
+4. **Removing `0x50` mode control:** The successful replay INCLUDED `0x50`.
+   The Gadgetbridge project labels it `UNKNOWN` but it appears to be required
+   as a display-mode preparation signal.
+
+5. **3-second poller cadence:** Too slow. The firmware expects ~1-second
+   cadence (86 SYNC packets over ~70 seconds in the snoop).
+
+6. **BLE flooding:** Sending 108 packets with no pacing crashed the BLE
+   connection (one leg disconnected). Adding 10ms delays every 10 packets
+   resolved this.
+
+### Left/right sync issue (open)
+
+The replay sends to both legs simultaneously via `BleManager.sendData`
+(which calls the native `requestData` broadcasting to both). With 108
+packets in ~10 seconds, the right eye rendered first while the left lagged
+significantly. Both eventually showed the card, but the left eye was
+~5 seconds behind.
+
+Possible causes to investigate:
+- BLE write buffer contention: broadcasting 108 packets to both legs
+  simultaneously may starve one side
+- Per-leg sequential sending (right burst then left, or vice versa) might
+  produce more reliable dual-eye sync
+- The official app may send to each leg with its own pacing/flow control
+
+### Replay transport experiments (2026-04-29 follow-up)
+
+Three transport strategies were tested in the companion app without changing
+the captured packet bytes:
+
+1. **Broadcast** — unstable under the full 108-packet burst. Could starve or
+   break one leg.
+2. **Full sequential right-first / left-first** — stable, but each leg took
+   roughly 4 seconds, so the second eye visibly rendered several seconds late.
+3. **Interleaved per-leg replay** — current successful strategy. For each
+   packet index `i`, send packet `i` to the right leg, wait 10 ms, send the
+   same packet `i` to the left leg, wait 20 ms, and pause 50 ms every 10
+   packet pairs. This proved both **fast and stable** in live testing.
+
+Additional implementation notes from that follow-up:
+
+- the replay path remains **fire-and-forget per leg**; `0x0a` commands are
+  still unacked and should not use `sendBoth`
+- `NavigateService` now guards against duplicate replay triggers while a replay
+  is already in flight
+- the Navigate idle prompt (`Open Google Maps / to start navigation`) is now
+  delayed briefly on mode entry so it does not override the first real nav
+  replay when the initial Maps notification arrives immediately after the mode
+  switch
+
+### What we now know the production implementation needs
+
+1. **Full lifecycle per card update:** 0x50 + INIT + SYNC + TRIP_STATUS +
+   MAP_OVERVIEW ×13 + PANORAMIC_MAP ×90 + SYNC (108 packets, ~20KB)
+2. **1-second SYNC poller** running continuously while Navigate mode is active
+3. **Proper per-leg pacing:** interleaved per-leg replay is now the confirmed
+   debug transport; production code should preserve the same "do not starve a
+   leg" principle when the replay bytes are replaced with dynamic packet
+   building
+4. **Real icon/map data** — dummy zeros don't work. Either:
+   - replay captured icon data matched by turn direction, or
+   - implement the RLE encoder (icon is 136×136, map is 488×136)
+5. **The 0x50 mode control** is needed before the first INIT
+
+### Investigation backlog for next session
+
+- Determine the minimum icon/map data the firmware accepts (can we send a
+  valid but simple RLE-encoded icon instead of the full captured data?)
+- Check whether TRIP_STATUS updates (subsequent instructions) need the full
+  lifecycle or just TRIP_STATUS + SYNC
+- Implement the 1-second SYNC poller as a proper Timer in NavigateService
+
 ### Priority 1 — Navigation via `0x0a` text data
 
 Replace the current BMP-per-frame Navigate path with a single structured
@@ -265,6 +370,28 @@ Replace the current "render a block of text" Chat response path with
 word-by-word streaming. The user already described this as desirable
 ("like my current chatmode where I currently just pass a block of text").
 The `0x52` protocol maps directly to streaming LLM output.
+
+### External cross-references (found during implementation)
+
+Two additional open-source projects have partial Even G1 protocol
+implementations that cross-validate and extend these findings:
+
+- **Gadgetbridge** (`codeberg.org/jrthomas270/Gadgetbridge` branch
+  `even-g1-custom-drawing-experiment`): `G1Constants.java` names all
+  navigation sub-commands (INIT, TRIP_STATUS, MAP_OVERVIEW, PANORAMIC_MAP,
+  SYNC, EXIT, ARRIVED) and confirms dashboard, hardware, and quicknote
+  sub-command enumerations. Also reveals that `0x50` is labelled `UNKNOWN`
+  by them too.
+
+- **ayroblu/bazel-demo** (`github.com/ayroblu/bazel-demo` path
+  `g1-app/g1protocol/`): working Swift navigation implementation confirming
+  the TRIP_STATUS prefix bytes are `[sub-cmd, DirectionTurn_enum, x0, x1,
+  y, null]` followed by five null-separated text fields (totalDuration,
+  totalDistance, direction, distance, speed). MAP_OVERVIEW is 136×136
+  RLE-encoded; PANORAMIC_MAP is 488×136 unencoded.
+
+Full comparison in
+[external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
 
 ### Priority 3 — Dashboard content injection via `0x1e`
 
