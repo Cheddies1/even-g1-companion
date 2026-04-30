@@ -193,19 +193,23 @@ Owns:
 - **Paced streaming via `StreamingRenderQueue`:** Backend chunks are
   decoupled from display updates. The backend appends raw text to a target
   buffer; a separate `StreamingRenderQueue` drains that buffer at a paced
-  cadence (~2 words every 150 ms), wraps text deterministically at ~48
-  chars/line, and sends only changed `0x52` lines. The queue fills lines
-  1-4 sequentially with assistant text only (no committed user context),
-  matching the firmware's expected cursor-progressive line model.
+  cadence (~2 words every 150 ms) and sends line 1 (empty cursor marker) +
+  line 2 (all text, growing word by word) on every tick. The firmware
+  handles all wrapping and scrolling internally. If text exceeds ~230
+  chars, only the tail is sent. The `_charsPerLine` constant and
+  `maxVisibleLines` are removed — the firmware handles wrapping. The
+  `wrapText()` static method still exists on `StreamingRenderQueue` for
+  non-queue `0x4E` renders.
   The queue keeps draining after the backend stream completes until all
   text is displayed, then signals completion.
-- **Firmware cursor-proximity rendering:** live testing confirmed that the
-  `0x52` firmware only reliably renders lines at or near the cursor (active)
-  position. Lines sent as `confirmed` without ever having been `active` may
-  not display. The render queue works around this by always keeping the
-  cursor on the last used line and filling lines sequentially from 1. Non-
-  queue renders (user turn, Thinking, final committed view) always send
-  their last visible line as active.
+- **Official app line model (confirmed from BLE capture analysis):** the
+  official Even Realities app uses only two `0x52` line indices: line 1 as
+  an empty cursor/status marker, and line 2 for all text content. The
+  firmware wraps at its display width and scrolls oldest rows off the top.
+  New paragraphs use embedded `\n` within line 2. No confirmed-flag
+  management is needed. The previous multi-line-index approach (lines 1-4
+  with host-side `TextPainter` wrapping and committed-line buffers) only
+  rendered 1-2 visible lines due to firmware cursor-proximity behaviour.
 - Chat keeps a **display buffer** separate from backend message history.
   The display buffer is the on-glasses conversation surface (`You:` / `G1:`),
   with committed wrapped lines. During assistant streaming the queue takes

@@ -98,14 +98,21 @@ companion app would need to emit these while streaming.
 paced `StreamingRenderQueue`. The protocol steps:
 1. Send `50 06 00 00 01 01` to prime the display
 2. Send `52 06 00 00 01 01` to enter streaming mode
-3. For each word/phrase update, send a `0x52` text frame for the current line
-4. Interleave cursor-update frames (the 14-byte `0x52 0e ...` pattern)
-5. Send `0x53` keepalives every ~5 s while active
+3. For each word/phrase update, send a line-1 empty marker + line-2 text
+   frame (all text on a single line index; firmware wraps and scrolls)
+4. Send `0x53` keepalives every ~5 s while active
 
-**Firmware note (discovered during implementation):** the firmware only
-reliably renders lines at or near the cursor position. Lines must be filled
-sequentially (1 → 2 → 3 → 4) with the cursor progressing. Sending
-pre-filled confirmed content to non-cursor lines does not render reliably.
+**Official app line model (confirmed from BLE capture analysis):** the
+official app uses only two line indices: line 1 as an empty cursor/status
+marker (always `\n`), and line 2 for ALL text content. The firmware handles
+wrapping at its display width and scrolls oldest rows off the top. New
+paragraphs are embedded as `\n` within line 2. No confirmed-flag
+management is needed. The companion app mirrors this model — the
+`StreamingRenderQueue` sends line 1 (marker) + line 2 (growing text) on
+every tick, and the firmware handles layout natively. If text exceeds ~230
+chars, only the tail is sent. The previous multi-line-index approach
+(lines 1-4 with host-side wrapping) only showed 1-2 visible lines due to
+the firmware's cursor-proximity rendering.
 
 ---
 
@@ -375,8 +382,10 @@ a 1-second SYNC poller. The BMP pipeline is preserved but no longer active.
 ### Priority 2 — Chat streaming via `0x52` — DONE
 
 Chat now streams assistant replies word by word via a paced
-`StreamingRenderQueue`. The queue fills lines 1-4 sequentially with the
-cursor progressing, matching the firmware's expected line model.
+`StreamingRenderQueue`. The queue sends line 1 (empty cursor marker) +
+line 2 (all text, growing word by word) on every tick. The firmware
+handles wrapping and scrolling natively. If text exceeds ~230 chars,
+only the tail is sent.
 
 ### External cross-references (found during implementation)
 

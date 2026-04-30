@@ -4,20 +4,12 @@ import 'package:demo_ai_even/services/app_log.dart';
 
 /// Paced display queue for streaming assistant text to the glasses.
 ///
-/// The backend appends raw text chunks via [appendText]. A periodic drain
-/// timer reveals 1-2 words at a time and sends 0x52 lines to the glasses.
-///
-/// The queue fills line 1 first, then wraps to line 2, 3, 4 — matching the
-/// firmware's expected sequential line progression. When line 4 fills, the
-/// window scrolls: all 4 lines are resent with the new content, and the
-/// cursor stays on line 4.
-///
-/// The queue keeps draining after the backend finishes until all text has
-/// been displayed, then fires [onDrained].
+/// Matches the official app's 0x52 protocol usage discovered from the BLE
+/// capture: line 1 is a cursor marker (empty), line 2 carries ALL the text.
+/// Every update sends both packets. The firmware handles wrapping and
+/// scrolling of line 2's content natively.
 class StreamingRenderQueue {
   StreamingRenderQueue({
-    required this.maxVisibleLines,
-    required this.charsPerLine,
     required Future<void> Function(int line, String text, {required bool isActive}) sendLine,
     required void Function() onDrained,
   })  : _sendLine = sendLine,
@@ -27,18 +19,19 @@ class StreamingRenderQueue {
   static const int wordsPerTick = 2;
   static const Duration drainInterval = Duration(milliseconds: 150);
 
+  /// Max text bytes in a single 0x52 packet (length byte is 1 byte, minus
+  /// header overhead). If the text exceeds this, only the tail is sent.
+  static const int _maxTextBytes = 230;
+
   // -- Configuration -------------------------------------------------------
-  final int maxVisibleLines;
-  final int charsPerLine;
   final Future<void> Function(int line, String text, {required bool isActive}) _sendLine;
   final void Function() _onDrained;
 
   // -- State ---------------------------------------------------------------
   final StringBuffer _targetText = StringBuffer();
   int _displayedWordCount = 0;
-  List<String> _wrappedLines = const <String>[];
-  final Map<int, String> _lastSentLines = <int, String>{};
-  int _lastSentActiveLine = 0;
+  String _displayedText = '';
+  String _lastSentText = '';
   Timer? _drainTimer;
   bool _backendComplete = false;
   bool _cancelled = false;
@@ -47,8 +40,7 @@ class StreamingRenderQueue {
 
   bool get isDraining => _drainTimer != null && !_cancelled;
 
-  /// Feed a backend chunk into the target buffer. Starts the drain timer
-  /// on first non-empty chunk.
+  /// Feed a backend chunk into the target buffer.
   void appendText(String chunk) {
     if (_cancelled) return;
     _targetText.write(chunk);
@@ -59,8 +51,7 @@ class StreamingRenderQueue {
     _ensureDrainTimer();
   }
 
-  /// Signal that the backend stream has ended. The queue keeps draining
-  /// until all target text is displayed.
+  /// Signal that the backend stream has ended.
   void markBackendComplete() {
     if (_cancelled) return;
     _backendComplete = true;
@@ -74,7 +65,7 @@ class StreamingRenderQueue {
     _ensureDrainTimer();
   }
 
-  /// Cancel the queue. Stops the drain timer and prevents further sends.
+  /// Cancel the queue.
   void cancel() {
     if (_cancelled) return;
     _cancelled = true;
@@ -121,24 +112,37 @@ class StreamingRenderQueue {
 
     if (newWordCount > _displayedWordCount) {
       _displayedWordCount = newWordCount;
-      final displayedText = targetWords.sublist(0, _displayedWordCount).join(' ');
-      _wrappedLines = wrapText('G1: $displayedText', charsPerLine);
+      _displayedText =
+          'G1: ${targetWords.sublist(0, _displayedWordCount).join(' ')}';
     }
 
-    await _sendVisibleWindow();
+    // Send if text changed.
+    final textToSend = _capForPacket(_displayedText);
+    if (!_cancelled && textToSend != _lastSentText) {
+      // Line 1: cursor marker (matches official app pattern).
+      await _sendLine(1, '', isActive: false);
+      // Line 2: all text content — firmware wraps and scrolls.
+      await _sendLine(2, textToSend, isActive: true);
+      _lastSentText = textToSend;
+    }
+
+    AppLog.debug(
+      '${DateTime.now()} render queue: tick words=$_displayedWordCount/$wordsAvailable '
+      'textLen=${_displayedText.length}',
+      tag: 'Chat',
+    );
 
     // Check drain-complete.
     if (_backendComplete &&
         _displayedWordCount >= wordsAvailable &&
         !_drainedFired) {
-      // Final full-text render.
-      final fullText = target.trim();
-      if (fullText.isNotEmpty) {
-        _wrappedLines = wrapText('G1: $fullText', charsPerLine);
-        // Force resend all lines for the final frame.
-        _lastSentLines.clear();
-        _lastSentActiveLine = 0;
-        await _sendVisibleWindow();
+      // Final: ensure the full text is displayed.
+      final fullText = 'G1: ${target.trim()}';
+      final finalToSend = _capForPacket(fullText);
+      if (!_cancelled && finalToSend != _lastSentText) {
+        await _sendLine(1, '', isActive: false);
+        await _sendLine(2, finalToSend, isActive: true);
+        _lastSentText = finalToSend;
       }
 
       _drainedFired = true;
@@ -146,7 +150,7 @@ class StreamingRenderQueue {
       _drainTimer = null;
       AppLog.info(
         '${DateTime.now()} render queue: display complete, '
-        'words=$_displayedWordCount/$wordsAvailable wrappedLines=${_wrappedLines.length}',
+        'words=$_displayedWordCount/$wordsAvailable textLen=${fullText.length}',
         tag: 'Chat',
       );
       if (!_cancelled) {
@@ -155,64 +159,22 @@ class StreamingRenderQueue {
     }
   }
 
-  /// Send the current visible window using sequential line filling.
-  ///
-  /// The assistant text starts at line 1 and fills down. When there are
-  /// more wrapped lines than [maxVisibleLines], the window is the last
-  /// N lines. The cursor (active flag) is always on the last line.
-  ///
-  /// This matches the firmware's expectation: line 1 fills, wraps to
-  /// line 2, etc., with the cursor progressing sequentially.
-  Future<void> _sendVisibleWindow() async {
-    if (_wrappedLines.isEmpty || _cancelled) return;
-
-    final visible = _wrappedLines.length <= maxVisibleLines
-        ? _wrappedLines
-        : _wrappedLines.sublist(_wrappedLines.length - maxVisibleLines);
-
-    // The active (cursor) line is always the last displayed line.
-    final activeLineIndex = visible.length;
-
-    AppLog.debug(
-      '${DateTime.now()} render queue: tick words=$_displayedWordCount '
-      'wrappedLines=${_wrappedLines.length} visibleLines=${visible.length} '
-      'activeLine=$activeLineIndex',
-      tag: 'Chat',
-    );
-
-    for (int i = 0; i < visible.length; i++) {
-      if (_cancelled) return;
-      final lineIndex = i + 1; // 1-based for 0x52 protocol
-      final lineText = visible[i];
-      final isActive = lineIndex == activeLineIndex;
-      final prevText = _lastSentLines[lineIndex];
-      final wasActive = _lastSentActiveLine == lineIndex;
-
-      if (prevText == lineText && isActive == wasActive) {
-        continue;
-      }
-
-      await _sendLine(lineIndex, lineText, isActive: isActive);
-      _lastSentLines[lineIndex] = lineText;
-    }
-
-    // Clear stale lines beyond the current visible count.
-    final staleKeys = _lastSentLines.keys
-        .where((k) => k > visible.length)
-        .toList(growable: false);
-    for (final key in staleKeys) {
-      if (_cancelled) return;
-      await _sendLine(key, '', isActive: false);
-      _lastSentLines.remove(key);
-    }
-
-    _lastSentActiveLine = activeLineIndex;
+  /// If text exceeds the max 0x52 packet payload, send only the tail.
+  /// The firmware scrolls, so the user sees the most recent content.
+  String _capForPacket(String text) {
+    if (text.length <= _maxTextBytes) return text;
+    return text.substring(text.length - _maxTextBytes);
   }
 
-  // -- Word-boundary text wrapping -----------------------------------------
+  /// Split text into words.
+  static List<String> _splitWords(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return const <String>[];
+    return trimmed.split(RegExp(r'\s+'));
+  }
 
   /// Wrap [text] into lines of at most [maxChars] characters, breaking at
-  /// word boundaries. Pure function, no side effects.
+  /// word boundaries. Used by ChatService for non-queue renders (0x4E).
   static List<String> wrapText(String text, int maxChars) {
     final paragraphs = text
         .split('\n')
@@ -242,12 +204,5 @@ class StreamingRenderQueue {
       }
     }
     return result;
-  }
-
-  /// Split text into words. Returns an empty list for empty/whitespace text.
-  static List<String> _splitWords(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return const <String>[];
-    return trimmed.split(RegExp(r'\s+'));
   }
 }

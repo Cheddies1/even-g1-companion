@@ -31,10 +31,14 @@ Recently implemented:
   prepended to road name.
 - **Chat `0x52` paced streaming** — assistant replies now render word-by-word
   via a `StreamingRenderQueue` that decouples backend chunk arrival from
-  display cadence (~2 words / 150 ms). During streaming the queue owns the
-  glasses display (lines 1-4, assistant text only). The user question is
-  shown before and after streaming but not during. The `TextPainter`-based
-  wrapping and old 80 ms flush timer are removed.
+  display cadence (~2 words / 150 ms). The queue sends line 1 (empty cursor
+  marker) + line 2 (all text, growing word by word) on every tick — matching
+  the official Even Realities app's line model discovered from BLE capture
+  analysis. The firmware handles wrapping and scrolling natively. If text
+  exceeds ~230 chars, only the tail is sent. The `_charsPerLine`,
+  `maxVisibleLines`, `TextPainter`-based wrapping, committed-line buffer,
+  and multi-line-index approach are all removed. `wrapText()` still exists
+  for non-queue `0x4E` renders.
 
 Under active development:
 - Navigate `0x0a` structured card — **protocol confirmed working** (full

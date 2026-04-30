@@ -63,6 +63,7 @@ class Proto {
   static int _streamTextSeq = 0;
   static Timer? _streamingKeepAliveTimer;
   static bool _streamingTextActive = false;
+  static bool get isStreamingTextActive => _streamingTextActive;
   static String _lastStreamingText = '';
   static int _lastStreamingLine = 2;
 

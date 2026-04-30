@@ -296,8 +296,8 @@ Chat mode is now a working v1 feature.
 - the transcribed user question and a `G1: Thinking...` placeholder are
   shown in the `0x52` surface while waiting for the backend
 - when the assistant reply starts streaming, the render queue takes over
-  the glasses display and fills it with the reply word by word (lines 1-4,
-  assistant text only, pulsing cursor on the growing line)
+  the glasses display and sends the reply word by word (line 1 empty marker
+  + line 2 growing text; the firmware wraps and scrolls natively)
 - follow-up turns continue in the same session while Chat mode stays active
 - leaving Chat mode resets and discards the session
 - `F5 00` / close-active while a reply is visible now clears only the visible
@@ -320,13 +320,14 @@ Chat mode is now a working v1 feature.
 - assistant reply rendering is paced by a `StreamingRenderQueue`:
   - backend chunks only append to a target text buffer
   - the queue drains ~2 words every 150 ms at its own cadence
-  - the queue fills lines 1-4 sequentially with assistant text only
-    (no interleaved user context — the firmware only reliably renders
-    lines at or near the cursor position)
-  - only changed 0x52 lines are sent (dirty-line diffing)
+  - the queue sends line 1 (empty cursor marker) + line 2 (all text,
+    growing word by word) on every tick — this mirrors the official Even
+    Realities app's line model discovered from BLE capture analysis
+  - the firmware handles all wrapping and scrolling internally; the host
+    does not manage line breaks or visible windows
+  - if text exceeds ~230 chars, only the tail is sent
   - the queue keeps draining after the backend stream completes until
     all text is displayed, then signals completion
-  - line wrapping is deterministic at ~48 chars/line (word-boundary wrap)
 - the visible Chat surface is now a trimmed conversation buffer separate from
   backend history, using compact labels (`You:` / `G1:`) and preserving recent
   turns across follow-up questions while Chat mode remains active
@@ -416,12 +417,12 @@ Richer technical detail is kept in app logs rather than dumped into the glasses 
 
 - Chat mode depends on network reachability and a valid API key
 - long conversations are lightly windowed if they exceed the recent-history cap
-- the `0x52` render path now uses a paced `StreamingRenderQueue` to decouple
-  backend chunk arrival from display updates; still needs live validation of
-  reading pace and long-answer scrolling behaviour
+- the `0x52` render path now uses a paced `StreamingRenderQueue` sending
+  line 1 (marker) + line 2 (all text) on every tick, with the firmware
+  handling wrapping and scrolling; still needs live validation of reading
+  pace and long-answer behaviour
 - during assistant streaming the glasses show only the assistant reply
-  (lines 1-4), not the user question as context — this is a firmware
-  constraint (cursor-proximity rendering, see `protocol-reference.md`)
+  (all on line 2), not the user question as context
 - the user question is visible during the "Thinking..." phase and again
   in the final committed view after streaming completes
 - there is no spoken TTS reply in this phase

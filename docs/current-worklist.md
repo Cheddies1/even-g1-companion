@@ -88,32 +88,35 @@ Working, but still needs real-world observation:
   `ChatService` and `Proto`.
 - **Paced streaming via `StreamingRenderQueue`:** Backend chunks are
   decoupled from display updates. The backend appends raw text to a target
-  buffer; the queue drains ~2 words every 150 ms, wraps deterministically
-  at ~48 chars/line, and sends only changed 0x52 lines (dirty-line diffing).
-  The queue keeps draining after the backend stream completes until all text
-  is displayed. The old `TextPainter`-based wrapping and 80 ms flush timer
-  are removed.
-- **Firmware cursor-proximity finding:** live testing (2026-04-29) confirmed
-  that the `0x52` firmware only reliably renders lines at or near the cursor
-  (active) position. Lines sent as `confirmed` without ever having been
-  `active` may not display. The queue now fills lines 1-4 sequentially with
-  assistant text only (no interleaved user context). Non-queue renders
-  (user turn, Thinking, final committed view) always send their last line
-  as active. This finding is also documented in `protocol-reference.md`.
+  buffer; the queue drains ~2 words every 150 ms and sends line 1 (empty
+  cursor marker) + line 2 (all text, growing word by word) on every tick.
+  The firmware handles all wrapping and scrolling natively. If text exceeds
+  ~230 chars, only the tail is sent. The queue keeps draining after the
+  backend stream completes until all text is displayed. The old
+  `TextPainter`-based wrapping, committed-line buffer, multi-line-index
+  approach (lines 1-4), and 80 ms flush timer are all removed. The
+  `_charsPerLine` constant and `maxVisibleLines` are removed — the firmware
+  handles wrapping. `wrapText()` still exists on `StreamingRenderQueue` for
+  non-queue `0x4E` renders.
+- **Official app line model (confirmed from BLE capture analysis):** the
+  official Even Realities app uses only two line indices: line 1 as an
+  empty cursor/status marker (always `\n`), and line 2 for ALL text
+  content. Every update sends both packets. The firmware wraps at its
+  display width and scrolls oldest rows off the top. New paragraphs use
+  embedded `\n` within line 2. No confirmed-flag management is needed.
+  The previous multi-line-index approach only showed 1-2 visible lines due
+  to firmware cursor-proximity rendering. This finding is also documented
+  in `protocol-reference.md`.
 - **Recent fix:** `F5 00` while a Chat reply is visible now clears only the
   visible Chat display and preserves the in-memory Chat session for follow-up
   turns.
 - **Next steps:**
   1. Live-validate reading pace on device — tune `wordsPerTick` (currently 2)
      and `drainInterval` (currently 150 ms) if the pace feels too fast or slow.
-  2. Validate long-answer overflow behaviour and confirm the rolling visible
-     window scrolls smoothly line by line.
-  3. Validate follow-up turns still append below previous context correctly.
-  4. Tune `charsPerLine` (currently 48) if line wrapping does not match the
-     firmware's own wrapping behaviour at the `0x52` font size.
-  5. Consider whether user context can be shown during streaming via a
-     different approach (e.g. sending user question as the initial active
-     line before switching to assistant text).
+  2. Validate long-answer behaviour and confirm the firmware's native
+     scrolling works well for extended replies.
+  3. Validate follow-up turns still render correctly after the line-model
+     change.
 
 3. QuickNote via hosted transcription (future feature)
 - Right-hold → `0xf1` mic audio during hold → `0x1e c8` chunked post-release

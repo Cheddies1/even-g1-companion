@@ -276,16 +276,32 @@ Implementation:
   prime the display (see "Display mode control" below)
 - if streaming is unavailable, Chat can fall back to `0x4E` text blocks
 
-Firmware cursor-proximity rendering (`Confirmed`, 2026-04-29):
-- the firmware only reliably renders `0x52` lines at or near the cursor
-  (active flag = `00 00`) position
-- lines sent as `confirmed` (flag `01 00`) without ever having been `active`
-  at that line index may not display
-- the official app fills lines sequentially: line 1 active → line 1
-  confirmed + line 2 active → etc. The companion app mirrors this by
-  filling lines 1-4 with the cursor always on the last used line
-- sending pre-filled confirmed content to lines 1-3 and active only on
-  line 4 results in only ~2 visible lines (tested and logged)
+Official app line model (`Confirmed`, 2026-04-29, from BLE capture analysis):
+- the official Even Realities app uses only **two line indices**:
+  - **line 1** = cursor/status marker. Always sent with empty content
+    (just `\n`). Marks "cursor is here" for the firmware.
+  - **line 2** = ALL text content. The full growing text goes to a single
+    line index. The firmware handles all wrapping and scrolling internally.
+- every update sends **both packets**: a line-1 marker (`sendStreamingLine`),
+  then a line-2 text update (`sendStreamingText` with cursor + text)
+- the firmware wraps text at its own display width and scrolls oldest rows
+  off the top — the host does not manage line breaks or visible windows
+- text on line 2 can be hundreds of characters; the firmware handles it
+- when a new paragraph starts, the text includes embedded `\n` newlines —
+  both paragraphs stay in line 2
+- no confirmed-flag management is needed — there is only ever line 1
+  (marker) and line 2 (growing text)
+- the companion app now mirrors this model: `StreamingRenderQueue` sends
+  line 1 (empty marker) + line 2 (all text, growing word by word) on every
+  tick. If text exceeds ~230 chars, only the tail is sent. The
+  `_charsPerLine` constant and `maxVisibleLines` are removed — the firmware
+  handles wrapping.
+
+Previous incorrect approach (superseded):
+- we previously tried using multiple line indices (1-4) with our own
+  wrapping and confirmed/active flag management. The firmware only reliably
+  renders lines near the cursor, so this approach showed only 1-2 lines
+  and lost text.
 
 ## Navigation card: `0x0a`
 

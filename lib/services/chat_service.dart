@@ -15,8 +15,6 @@ import 'package:demo_ai_even/services/text_service.dart';
 class ChatService {
   static const _closeGestureGraceWindow = Duration(milliseconds: 1500);
   static const _maxGlassesResponseChars = 900;
-  static const _maxVisibleWrappedLines = 4;
-  static const _charsPerLine = 48;
 
   static ChatService? _instance;
   static ChatService get get => _instance ??= ChatService._();
@@ -140,6 +138,17 @@ class ChatService {
     }
     if (_isListening) {
       return 'Already listening';
+    }
+
+    // Clean exit from any active 0x52 streaming surface from a previous
+    // turn. The firmware needs 0x18 before mic audio routes correctly
+    // after a 0x52 session. Skip if nothing is active to avoid unnecessary
+    // BLE round-trips that can destabilise a marginal connection.
+    if (_renderQueue != null || Proto.isStreamingTextActive) {
+      _cancelRenderQueue();
+      await Proto.stopStreamingText(sendFinalFrame: false);
+      await TextService.get.stopTextSendingByOS();
+      await Proto.exit();
     }
 
     final started = await BleManager.invokeMethod<bool>('startGlassesCapture');
@@ -310,8 +319,6 @@ class ChatService {
 
     _renderQueueDrainedCompleter = Completer<void>();
     _renderQueue = StreamingRenderQueue(
-      maxVisibleLines: _maxVisibleWrappedLines,
-      charsPerLine: _charsPerLine,
       sendLine: _sendQueuedLine,
       onDrained: _onRenderQueueDrained,
     );
