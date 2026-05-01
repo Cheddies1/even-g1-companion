@@ -1,9 +1,13 @@
 # Even G1 Event Mapping
 
-This file captures the current working understanding of `F5` gesture and state
-events observed from the Even G1 glasses while testing this app.
+> **Document type:** G1 reference
+> **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6
 
-It is intentionally split by behavior category and confidence so we do not
+This file captures the current working understanding of `F5` gesture and state
+events observed from the Even G1 glasses.
+
+It is intentionally split by behaviour category and confidence so we do not
 overstate what has been confirmed.
 
 ## Document role
@@ -11,7 +15,7 @@ overstate what has been confirmed.
 This is the current event-behaviour mapping document.
 
 It is intentionally separate from:
-- [protocol-reference.md](protocol-reference.md): raw vendor/demo command reference
+- [protocol-reference.md](protocol-reference.md): wire-level BLE command catalogue
 - [investigation-notes.md](investigation-notes.md): broader exploratory notes and hypotheses
 - [python-sdk-comparison-notes.md](python-sdk-comparison-notes.md): comparison/reference only
 
@@ -20,56 +24,32 @@ It is intentionally separate from:
 - Source of truth is currently:
   - isolated manual test runs
   - Flutter/native debug logs
-  - observed behavior on the glasses
+  - observed behaviour on the glasses
 - This is a working mapping, not a finished protocol specification.
 - Event meanings may be firmware-dependent.
 
-## Firmware Vs App Behavior Model
+## Confidence labels used here
 
-We now have strong evidence that the glasses operate in three layers:
+Three tiers, consistent with [protocol-reference.md](protocol-reference.md):
 
-1. firmware-native behavior
-2. persisted configuration
-3. app-driven behavior over BLE
+- `Confirmed`: observed in current app/device testing or HCI snoop captures
+- `Suspected`: plausible and partially aligned with testing, but not fully pinned down
+- `Vendor-claimed only`: preserved from demo/vendor material or Python SDK labels; not confirmed against current firmware
 
-### 1. Firmware-native behavior
+## Firmware vs App behaviour model
 
-This is behavior that appears to exist on the glasses even without an active
-phone connection.
+The G1 operates in three layers: (1) firmware-native behaviour that exists
+even without a phone connection (tilt detection, QuickNote, some touch
+semantics); (2) persisted configuration written by the official app and stored
+on-device across disconnects (e.g. "dashboard on tilt"); and (3) app-driven
+BLE behaviour where the connected app acts as transport layer, content
+provider, and feature-override layer (text rendering, bitmap rendering,
+notification rendering, voice paths).
 
-Confirmed examples:
+For the full model with examples and evidence, see
+[investigation-notes.md § System model](investigation-notes.md#system-model).
 
-- touch and hold gestures still do something when disconnected
-- tilt detection exists on-device
-- some feature entry points appear to be owned by firmware rather than created
-  by the demo app
-
-### 2. Persisted configuration
-
-Some settings appear to be written by the official app and stored on the device
-itself, persisting across disconnects.
-
-Confirmed example:
-
-- "dashboard on tilt" is a persisted device setting
-- when disabled in the official app, it stays disabled even while disconnected
-- when disabled, tilt produces no visible dashboard behavior
-- disabling dashboard-on-tilt suppresses the firmware UI reaction, not the
-  underlying tilt event emission
-
-### 3. App-driven behavior
-
-The Flutter demo app acts as a transport layer and content provider on top of
-the device's own firmware behavior.
-
-Confirmed examples:
-
-- text rendering
-- notification rendering
-- bitmap rendering
-- the app's current voice path labeled "Even AI"
-
-## Confirmed Behavior
+## Confirmed behaviour
 
 - tilt detection is firmware-side
 - "dashboard on tilt" is a persisted device setting
@@ -82,7 +62,7 @@ Confirmed examples:
   - is not currently implemented in the demo app
 - double left tap:
   - when a feature is active, it produces `F5 00`
-  - behavior matches close active feature / return home
+  - behaviour matches close active feature / return home
 - `F5 02`:
   - high-confidence tilt up / head-up trigger
   - still emitted even when dashboard-on-tilt is disabled
@@ -99,7 +79,7 @@ Confirmed examples:
 #### `F5 17`
 
 - Meaning: connected left-hold entry into the app's current voice path
-- Confidence: medium-high
+- Confidence: Suspected
 - Evidence:
   - during isolated left-hold testing while connected, `F5 17` is followed by:
   - `EvenAI.get.toStartEvenAIByOS()`
@@ -112,7 +92,7 @@ Confirmed examples:
 #### `F5 18`
 
 - Meaning: left long-press release (voice / Even AI stop)
-- Confidence: high (`Confirmed`)
+- Confidence: Confirmed
 - Evidence:
   - during isolated left-hold testing, `F5 18` is followed by
     `EvenAI.get.recordOverByOS()`
@@ -127,7 +107,7 @@ Confirmed examples:
 ### `F5 00`
 
 - Meaning: close active feature / return home
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - when a feature is visibly active on the glasses
   - sending `Hello from EvenDemoApp`
@@ -138,7 +118,7 @@ Confirmed examples:
 
 - Meaning: app-routed paging event in code, but not confirmed from current
   device testing
-- Confidence: low for real firmware behavior, high for current code path
+- Confidence: Vendor-claimed only for real firmware behaviour; the current app code does route it (see Notes)
 - Evidence:
   - in Flutter, [lib/ble_manager.dart](../lib/ble_manager.dart#L182)
     routes:
@@ -163,10 +143,10 @@ Confirmed examples:
 #### Right-hold QuickNote path
 
 - Meaning: firmware-native QuickNote flow
-- Confidence: high for firmware-native behavior, medium for packet interpretation
+- Confidence: Confirmed for firmware-native behaviour; Suspected for packet interpretation
 - Evidence:
   - right hold works even while disconnected and reports a note/listening style
-    behavior on-device
+    behaviour on-device
   - in this demo app, right hold does not trigger the implemented Even AI start
     path
   - repeated connected runs show the strongest app-visible signal on release as
@@ -177,7 +157,7 @@ Confirmed examples:
 #### `R21`
 
 - Meaning: likely QuickNote metadata/history or note-session summary packet
-- Confidence: medium
+- Confidence: Suspected
 - Evidence:
   - appears consistently after right-hold release in repeated runs
   - earlier captures observed packet length `42`
@@ -211,7 +191,7 @@ Confirmed examples:
     note — see "Note management" in
     [protocol-reference.md](protocol-reference.md).
 - Notes:
-  - `R21` likely does not contain raw recognized speech transcript text
+  - `R21` likely does not contain raw recognised speech transcript text
   - more likely candidates are metadata, identifiers, timestamps, or note record
     summaries
   - a small counter/index-looking field appears to increment across captures
@@ -219,7 +199,7 @@ Confirmed examples:
 #### `F5 04`
 
 - Meaning: triple-tap silent-mode enable
-- Confidence: high (`Confirmed`)
+- Confidence: Confirmed
 - Evidence:
   - observed during triple-tap testing
   - 2026-04-28 taps capture: `F5 04` at `14:07:48` correlates with the user's
@@ -229,7 +209,7 @@ Confirmed examples:
 #### `F5 05`
 
 - Meaning: triple-tap silent-mode disable
-- Confidence: high (`Confirmed`)
+- Confidence: Confirmed
 - Evidence:
   - observed during triple-tap testing in the same family as `F5 04`
   - 2026-04-28 taps capture: paired with the matching `F5 04` enable
@@ -240,7 +220,7 @@ Confirmed examples:
 - Meaning: double-tap delegates to the host because the configured action is
   host-handled — fires for either temple when the official Even Realities
   app's "double-tap action" is set to a host-driven feature
-- Confidence: high (`Confirmed`)
+- Confidence: Confirmed
 - Evidence:
   - 2026-04-28 taps capture: two clean `F5 20` samples (one per temple), both
     correlated with a double-tap that opened transcribe-mode while the
@@ -279,19 +259,19 @@ Confirmed examples:
 #### `F5 00`
 
 - Meaning: close active feature / return home
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - repeated clean feature-close runs after text rendering
 
 ## Sensor / State Events
 
-### Confirmed behavior without fixed event ID
+### Confirmed behaviour without fixed event ID
 
 - tilt detection is firmware-side
 - dashboard-on-tilt is controlled by a persisted device setting
 - when that setting is disabled in the official app, tilt can produce no visible
-  dashboard behavior even without a phone connection
-- disabling dashboard-on-tilt suppresses visible firmware UI behavior, not the
+  dashboard behaviour even without a phone connection
+- disabling dashboard-on-tilt suppresses visible firmware UI behaviour, not the
   underlying tilt event emission
 
 ### Battery and wear state (confirmed via official-app HCI snoop)
@@ -311,7 +291,7 @@ fed from the existing F5 dispatch in
 #### `F5 06`
 
 - Meaning: glasses are being worn
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - emitted exactly when the glasses come out of the cradle and are donned
   - paired with a subsequent burst of `F5 0A` battery pushes while worn
@@ -319,7 +299,7 @@ fed from the existing F5 dispatch in
 #### `F5 07`
 
 - Meaning: transitioning between worn and cradled (or vice versa)
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - consistently appears between `F5 06` and `F5 08`/`F5 0B` boundary events
 - Notes:
@@ -329,7 +309,7 @@ fed from the existing F5 dispatch in
 #### `F5 08`
 
 - Meaning: in cradle, lid open
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - emitted on cradle-open transitions and on initial connect when the glasses
     are sitting in an open cradle
@@ -337,7 +317,7 @@ fed from the existing F5 dispatch in
 #### `F5 0A <pct>`
 
 - Meaning: glasses battery percentage push
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - byte 2 carries a 0–100 value
   - matched the on-screen value in the official app exactly (100% during the
@@ -350,14 +330,14 @@ fed from the existing F5 dispatch in
 #### `F5 0B`
 
 - Meaning: in cradle, lid closed
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - emitted on cradle-close transitions
 
 #### `F5 0E <flag>`
 
 - Meaning: cradle charging cable state
-- Confidence: medium
+- Confidence: Suspected
 - Evidence:
   - byte 2 toggles between `0x00` and `0x01` paired with `F5 09` events
   - aligns with the Python SDK label "Cradle charging cable state changed"
@@ -368,7 +348,7 @@ fed from the existing F5 dispatch in
 #### `F5 0F <pct>`
 
 - Meaning: case (cradle) battery percentage push
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - byte 2 carries a 0–100 value
   - matched the on-screen "Case 60%" value in the official app exactly
@@ -378,7 +358,7 @@ fed from the existing F5 dispatch in
 #### `F5 12 <level>`
 
 - Meaning: brightness state push (echoes the most recent brightness level)
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - byte 2 mirrored the value most recently sent via the brightness command
     `0x01 <level> <auto>`
@@ -396,7 +376,7 @@ fed from the existing F5 dispatch in
 #### `F5 02`
 
 - Meaning: dashboard open / tilt-up start
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - isolated Run 5 with dashboard-on-tilt disabled
   - repeated pattern of tilt up followed by `F5 02`
@@ -404,7 +384,7 @@ fed from the existing F5 dispatch in
 - Notes:
   - event still emits even when dashboard-on-tilt is disabled
   - observed on the right leg in current logs
-  - the right-leg-only observation may reflect firmware reporting behavior
+  - the right-leg-only observation may reflect firmware reporting behaviour
     rather than a truly right-only physical capability
   - current best model is that this is the gesture/start edge, not the full
     dashboard-open confirmation by itself
@@ -412,13 +392,13 @@ fed from the existing F5 dispatch in
 #### `F5 03`
 
 - Meaning: dashboard close / tilt-down start
-- Confidence: high
+- Confidence: Confirmed
 - Evidence:
   - isolated Run 5
   - repeatedly follows `F5 02` after the head returns from the raised position
 - Notes:
   - observed on the right leg in current logs
-  - the right-leg-only observation may reflect firmware reporting behavior
+  - the right-leg-only observation may reflect firmware reporting behaviour
     rather than a truly right-only physical capability
   - current best model is that this is the gesture/start edge, not the full
     dashboard-close confirmation by itself
@@ -428,7 +408,7 @@ fed from the existing F5 dispatch in
 #### `F5 09`
 
 - Meaning: cradle/charge substate paired with `F5 0E` cable state
-- Confidence: low-medium
+- Confidence: Vendor-claimed only
 - Evidence:
   - byte 2 toggles between `0x00` and `0x01`
   - emitted ~1 s before each `F5 0E` cable-state event with the matching value
@@ -440,7 +420,7 @@ fed from the existing F5 dispatch in
 #### `F5 10`
 
 - Meaning: secondary tilt/head-up state event or tilt payload update
-- Confidence: medium
+- Confidence: Suspected
 - Evidence:
   - recurring in idle runs
   - often carries a nontrivial payload such as `64 00 00 00 00 00`
@@ -448,7 +428,7 @@ fed from the existing F5 dispatch in
 #### `F5 30`
 
 - Meaning: dashboard open confirmed / state-up follow-on event
-- Confidence: medium-high
+- Confidence: Suspected
 - Evidence:
   - repeatedly follows `F5 02` in isolated dashboard-up runs
   - appears on both legs shortly after the tilt-up start event
@@ -461,7 +441,7 @@ fed from the existing F5 dispatch in
 #### `F5 31`
 
 - Meaning: dashboard close confirmed / state-down follow-on event
-- Confidence: medium-high
+- Confidence: Suspected
 - Evidence:
   - repeatedly follows `F5 03` in isolated dashboard-down runs
   - appears on both legs shortly after the tilt-down start event
@@ -474,7 +454,7 @@ fed from the existing F5 dispatch in
 #### `0x22`
 
 - Meaning: dashboard-related packet family
-- Confidence: medium
+- Confidence: Suspected
 - Evidence:
   - observed during isolated firmware-dashboard runs with the custom BMP
     dashboard disabled
@@ -543,7 +523,7 @@ Important caveat:
 - the current diagnostic labels in [lib/ble_manager.dart](../lib/ble_manager.dart#L213)
   are still provisional
 - they should not be treated as protocol truth
-- runtime behavior and isolated logs are more trustworthy than the current label
+- runtime behaviour and isolated logs are more trustworthy than the current label
   names
 
 There is now a narrow QuickNote-related POC in the app codebase:
@@ -563,7 +543,7 @@ There is now a narrow QuickNote-related POC in the app codebase:
 - single left/right taps did not produce app-visible navigation events during
   dashboard testing
 - current best hypothesis is that dashboard tap navigation, when it exists in
-  official firmware behavior, is firmware-local and not forwarded in this demo
+  official firmware behaviour, is firmware-local and not forwarded in this demo
   mode
 
 ## Text Rendering Notes
@@ -620,14 +600,14 @@ High-value remaining runs:
 
 Goal:
 
-- determine whether disabling dashboard stops only visible UI behavior
+- determine whether disabling dashboard stops only visible UI behaviour
 - or also stops the underlying `F5` event emission
 
 Why:
 
 - we now know dashboard-on-tilt is a persisted device setting
 - the next question is whether tilt remains observable to the app after the UI
-  behavior is disabled
+  behaviour is disabled
 
 Method:
 
@@ -642,7 +622,7 @@ Goal:
 
 - identify the event mapping for the QuickNote trigger
 - determine whether the event is emitted to the app at all
-- or whether the behavior is handled entirely in firmware
+- or whether the behaviour is handled entirely in firmware
 
 Why:
 
@@ -662,7 +642,7 @@ Goal:
 
 - confirm whether left hold and right hold share a protocol path or diverge
 - validate the separation between the app's Even AI flow and firmware-native
-  QuickNote behavior
+  QuickNote behaviour
 
 Why:
 
@@ -675,6 +655,6 @@ Method:
 2. run a clean right-hold sequence
 3. compare:
    - `F5` events
-   - mic-open behavior
+   - mic-open behaviour
    - audio streaming presence
-   - feature-visible behavior on the glasses
+   - feature-visible behaviour on the glasses

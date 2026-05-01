@@ -1,5 +1,9 @@
 # Even G1 Companion - Agent Context
 
+> **Document type:** App implementation
+> **Audience:** AI agents working on the EvenDemoApp codebase
+> **Evidence basis:** App source code + capture-driven design decisions
+
 ## What this is
 Personal companion app for Even G1 smart glasses, evolved from the old Flutter demo/harness. Also a reverse-engineered BLE behaviour/protocol knowledge base — see `docs/` and `docs/FINDINGS-*.md`.
 

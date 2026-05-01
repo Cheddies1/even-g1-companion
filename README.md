@@ -51,6 +51,9 @@ The per-topic write-ups live alongside the other docs:
 - [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md)
 - [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md)
 - [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
+- [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md) — display layout protocol
+  (`0x50`, `0x52`/`0x53` live streaming text, `0x0a` navigation card, `0x1e`
+  dashboard injection); the most comprehensive single-session capture to date.
 
 The raw captures and parser scripts that produced them live under
 `logs/bluetooth/` in the working tree (`btsnoop_hci_*.log` files,
@@ -171,10 +174,10 @@ Mode changes can come from any of:
   "Companion app mode switch", which makes the firmware emit `F5 20` on
   double-tap and the companion app cycles through `Glance` → `Navigate` →
   `Chat` → `Capture` → `Glance`. Cycle is debounced at 1500 ms.
-- a narrow idle-only right-hold POC via `R21` that pre-dates the `F5 20`
-  path. The packet length gate (`len == 42`) may no longer match current
-  firmware, which emits `R21` at length 15 — this POC is not currently
-  active user-facing functionality.
+- *(inactive)* a narrow idle-only right-hold POC via `R21` that pre-dates
+  the `F5 20` path. The packet length gate (`len == 42`) does not match
+  current firmware, which emits `R21` at length 15 — superseded by the
+  `F5 20` host-handled double-tap path.
 
 ### Glasses display rule
 
@@ -378,16 +381,33 @@ In progress / needs more device validation:
 
 ## Documentation
 
+### How this README is organised
+
+This README serves two audiences. The first half (up to "Personal companion app")
+is for anyone investigating the G1 BLE protocol — it covers confirmed findings,
+evidence basis, and links to the reference documentation. The second half is for
+anyone who wants to understand or run the personal Flutter companion app.
+
 The full document map:
+
+G1 reference layer (public findings):
+
+- [docs/protocol-reference.md](docs/protocol-reference.md)
+- [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md)
+- [docs/investigation-notes.md](docs/investigation-notes.md)
+- [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md)
+- [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md)
+- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md)
+- [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md)
+- [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
+- [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md)
+
+App implementation layer (private):
 
 - [AGENTS.md](AGENTS.md)
 - [docs/current-architecture.md](docs/current-architecture.md)
 - [docs/current-behaviour.md](docs/current-behaviour.md)
 - [docs/current-worklist.md](docs/current-worklist.md)
-- [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md)
-- [docs/protocol-reference.md](docs/protocol-reference.md)
-- [docs/investigation-notes.md](docs/investigation-notes.md)
-- [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md)
 - [docs/archive/](docs/archive/)
 
 ---

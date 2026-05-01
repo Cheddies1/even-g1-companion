@@ -1,14 +1,17 @@
 # Protocol Reference
 
-Warning:
-- this file is a raw vendor/demo protocol reference consolidated from the old project README and related demo material
-- it is **not** ground truth by itself
-- when vendor/demo notes conflict with live testing, prefer:
-  1. observed device behavior
-  2. current app behavior
-  3. [even-g1-event-mapping.md](even-g1-event-mapping.md)
+> **Document type:** G1 reference
+> **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6; supplemented by vendor demo material where noted
 
-Use this file as a command-family reference, not as a definitive semantic truth source.
+This file is a wire-level command catalogue for the Even G1 BLE protocol, built from HCI snoop captures of the official Android app and live device testing. Some older entries originate from vendor demo material; where these conflict with capture evidence, prefer the capture-backed finding.
+
+Confidence hierarchy when sources conflict:
+  1. Observed device behaviour (capture-backed or live-tested)
+  2. [even-g1-event-mapping.md](even-g1-event-mapping.md) (event catalogue)
+  3. Vendor/demo material (labelled `Vendor-claimed only` below)
+
+Use this file as a command-family reference, not a definitive semantic truth source — the event mapping and FINDINGS docs are more precisely evidenced for the topics they cover.
 
 ## Confidence labels used here
 
@@ -39,12 +42,12 @@ Use this file as a command-family reference, not as a definitive semantic truth 
   - page up/down control in manual mode
   - dashboard QuickNote / notification detail interactions
 - Observed reality:
-  - `Vendor-claimed only` for firmware behavior
+  - `Vendor-claimed only` for firmware behaviour
   - current Flutter code can route `F5 01` as paging
   - live testing has **not** confirmed reliable app-visible single taps in the flows we care about
 
 Important:
-- do not document or build product behavior as if `F5 01` is a proven single-tap input for this app
+- do not document or build product behaviour as if `F5 01` is a proven single-tap input for this app
 
 ### `0xF5 0x02`
 
@@ -68,7 +71,7 @@ Important:
   - triple tap / silent mode toggle
 - Observed reality:
   - `Suspected`
-  - aligns with user-observed triple-tap silent-mode behavior
+  - aligns with user-observed triple-tap silent-mode behaviour
 
 ### `0xF5 0x17`
 
@@ -164,7 +167,7 @@ Vendor/demo reference:
 Observed reality:
 - mic enable is `Confirmed` enough for the current app path
 - the app has used mic-on successfully for the old connected voice flow and for current capture scaffolding
-- mic-disable / clean stop semantics are still not proven strongly enough to document as settled behavior
+- mic-disable / clean stop semantics are still not proven strongly enough to document as settled behaviour
 
 ## Glasses mic audio packets: `0xF1`
 
@@ -502,7 +505,11 @@ Notes:
   until the value changes
 - the official Even Realities Android app also implements a polled fallback
   via a single-byte `0x29` write to the right glass with response
-  `29 65 <pct> 00 ...`, but a polling path is not required for live readings
+  `29 65 <pct> 00 ...`, but a polling path is not required for live readings.
+  Note: the JohnRThomas wiki claims byte 3 of the `0x29` response is an auto
+  flag; two empirical probes on firmware 1.6.6 returned byte 3 = `0x00`
+  regardless of auto state — see `docs/external-protocol-wiki-notes.md`
+  ("0x29 brightness get") for the full analysis and open questions.
 
 Implementation:
 - ingestion: [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)
@@ -659,6 +666,18 @@ Notes:
   level; the home screen shows the most recent echoed level under
   "Confirmed:" so the user can see the difference between requested and
   applied values
+- `F5 12` is also emitted as a passive push ~15 s after connect, carrying
+  the firmware's current level before any host write; see
+  [FINDINGS-battery+brightness.md](FINDINGS-battery+brightness.md)
+  § "`F5 12` on-connect timing"
+- the ambient light sensor is on the right temple (confirmed via live
+  testing — covering the right arm changes applied brightness; covering the
+  left arm has no effect); see FINDINGS-battery+brightness.md §
+  "Ambient light sensor is on the right arm"
+- the JohnRThomas wiki claims `0x29` response byte 3 is an auto flag; two
+  empirical probes on firmware 1.6.6 returned byte 3 = `0x00` — see
+  [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md)
+  § "0x29 brightness get" for the analysis
 
 Important — byte/decimal note:
 - `F5 12` is hex; in the Flutter dispatch in
@@ -687,7 +706,7 @@ Vendor/demo reference:
 
 Observed reality:
 - `Suspected`
-- right-hold QuickNote behavior is best explained by a release-time `R21` packet family
+- right-hold QuickNote behaviour is best explained by a release-time `R21` packet family
 - payload meaning is still unknown
 - do not overstate this beyond current investigation notes
 

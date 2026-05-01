@@ -1,5 +1,9 @@
 # G1 BLE — layout / rendering mode findings
 
+> **Document type:** G1 reference
+> **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6
+
 Source: `btsnoop_hci.log` (7.8 MB, 2026-04-28 20:13–20:32 UTC), official Even
 Realities Android app, firmware 1.6.6. Wall-clock annotations in
 `wall clock dashboard.md`. Screenshot of the rendered dashboard in

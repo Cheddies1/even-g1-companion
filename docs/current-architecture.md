@@ -1,13 +1,17 @@
 # Current Architecture
 
+> **Document type:** App implementation
+> **Audience:** Eddie + AI agents working on the EvenDemoApp codebase
+> **Evidence basis:** App source code + capture-driven design decisions
+
 This file describes the current stable architecture of the app as it exists now.
 
 It is the architecture view for the current companion app, not the old demo framing.
 
 ## Document map
-- [current-behaviour.md](current-behaviour.md): user-visible behavior and caveats
+- [current-behaviour.md](current-behaviour.md): user-visible behaviour and caveats
 - [even-g1-event-mapping.md](even-g1-event-mapping.md): current trusted event meanings
-- [protocol-reference.md](protocol-reference.md): raw vendor/demo protocol reference with annotations
+- [protocol-reference.md](protocol-reference.md): wire-level G1 BLE command catalogue
 - [investigation-notes.md](investigation-notes.md): broader exploratory findings and hypotheses
 
 ## Product shape
@@ -25,7 +29,7 @@ Only one mode is active at a time.
 Current implementation state:
 - `glance`: implemented and actively used
 - `capture`: implemented for practical on-device use, still needs ongoing validation
-- `navigate`: implemented and working for walking navigation, still open to incremental tuning
+- `navigate`: implemented using the structured `0x0a` navigation card protocol — 108-packet interleaved bootstrap, dynamic TRIP_STATUS and MAP_OVERVIEW, 1-second SYNC poller; working for walking navigation, still open to incremental tuning
 - `chat`: implemented as a practical v1 voice loop
 
 ## Android build baseline
@@ -48,7 +52,7 @@ This matters at startup because early Android-side calls can arrive before backg
 
 ## Core controller
 
-Mode ownership is centralized in:
+Mode ownership is centralised in:
 - [lib/services/companion_controller.dart](../lib/services/companion_controller.dart)
 
 The controller owns:
@@ -57,7 +61,7 @@ The controller owns:
 - interpretation of trusted glasses events
 - routing into mode-specific services
 - notification event subscription
-- background-mode synchronization with the Android foreground service
+- background-mode synchronisation with the Android foreground service
 
 Supporting model:
 - [lib/models/app_mode.dart](../lib/models/app_mode.dart)
@@ -102,7 +106,7 @@ Owns:
 
 Owns:
 - latest maps-derived guidance model
-- suppression / prioritization rules relative to Glance
+- suppression / prioritisation rules relative to Glance
 - **uses the structured `0x0a` navigation card protocol**. The bootstrap
   path replays 108 captured official-app packets through
   [Proto.sendNavBootstrap](../lib/services/proto.dart) using
@@ -249,7 +253,7 @@ Notification path:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
 - [lib/ble_manager.dart](../lib/ble_manager.dart)
 
-Current behavior:
+Current behaviour:
 - notification actions request a passive mode switch
 - the controller performs the actual switch
 - the foreground notification is updated to reflect the new mode
@@ -332,7 +336,7 @@ Key protocol helper:
 Native BLE manager:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
 
-Key preserved behaviors:
+Key preserved behaviours:
 - dual-leg scan/connect
 - left/right pairing by channel
 - native GATT notification setup
@@ -341,7 +345,7 @@ Key preserved behaviors:
 
 ## Transport health and recovery
 
-Transport health is now modeled per leg in:
+Transport health is now modelled per leg in:
 - [lib/ble_manager.dart](../lib/ble_manager.dart)
 
 Current model:
@@ -378,7 +382,7 @@ Navigate-specific transport protection:
 
 ## Trusted event routing
 
-The app only routes trusted gesture/state events into product behavior:
+The app only routes trusted gesture/state events into product behaviour:
 - `F5 00`
 - `F5 02`
 - `F5 03`
@@ -466,13 +470,13 @@ Manifest/service registration:
 Current role:
 - persistent Android notification
 - mode label in the notification
-- foundation for ongoing companion behavior
+- foundation for ongoing companion behaviour
 
 This is intentionally minimal, but it is part of the current architecture rather than a future bolt-on.
 
 Foreground service note:
 - [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt) uses `specialUse`
-- `connectedDevice` was the wrong foreground service type for app startup behavior on the target Android environment
+- `connectedDevice` was the wrong foreground service type for app startup behaviour on the target Android environment
 
 ## Capture audio path
 
@@ -498,7 +502,7 @@ Glance assistant reuse:
 - Glance assistant reuses the same temp-WAV recorder, transcription client, and OpenAI-compatible backend
 - it deliberately avoids Chat persistence and does not create a `ChatHistoryStore` session
 
-This keeps Capture and Chat on the same proven recorder foundation while allowing different stop/output behavior.
+This keeps Capture and Chat on the same proven recorder foundation while allowing different stop/output behaviour.
 
 ## Phone UI
 
@@ -526,12 +530,37 @@ Settings now own:
   [Proto.setDoubleTapAction](../lib/services/proto.dart),
   with the user's pick persisted in
   [AppSettingsStore](../lib/services/app_settings_store.dart)
-  for cross-session display. The companion app deliberately does **not**
-  re-send these on reconnect — values persist in the glasses' firmware
-  themselves.
+  for cross-session display. Re-push behaviour on reconnect follows the
+  authoritative-settings model described below.
 - permission/setup affordances
 
 The home screen stays focused on day-to-day companion control. Runtime backend configuration now comes from the Settings screen, with `dart-define` retained only as fallback/default input.
+
+## Authoritative settings model
+
+The companion app treats its own persisted settings as the source of truth
+and re-pushes them on every fresh BLE reconnect. Settings covered by this
+model:
+
+- brightness level (slider position)
+- auto-brightness toggle
+- head-up (tilt-up) behaviour
+- double-tap action
+
+This is a deliberate divergence from the previous non-invasive stance (under
+which head-up and double-tap were set once and not re-asserted). The
+rationale: this is a personal companion app, and intent expressed inside this
+app should win over whatever the official Even Realities app may have written
+whilst disconnected.
+
+**Gating:** Only settings the user has interacted with at least once are
+pushed. Settings that have never been touched in this app are left at whatever
+the firmware currently holds — the app does not stamp defaults over
+unvisited controls.
+
+See also: [FINDINGS-battery+brightness.md](FINDINGS-battery+brightness.md)
+§ "`F5 12` on-connect timing" — the firmware's passive brightness push on
+connect lets the host display the pre-push level for comparison.
 
 ## Logging posture
 
@@ -567,7 +596,7 @@ The project is no longer treated as a feature-zoo demo app.
 Current stance:
 - preserve proven BLE/protocol/rendering code
 - de-emphasize or quarantine legacy demo surfaces
-- avoid broad deletion while the companion behaviors are still being validated
+- avoid broad deletion while the companion behaviours are still being validated
 
 Old demo material remains useful mainly as:
 - protocol harness code

@@ -1,5 +1,9 @@
 # G1 BLE — settings opcodes & quicknote post-release stream
 
+> **Document type:** G1 reference
+> **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6
+
 Source: `btsnoop_hci.log` (5.6 MB, 2026-04-28 15:28–15:39 UTC), official Even
 Realities Android app, firmware 1.6.6. Wall-clock annotations in
 `wall clock settings.md`.

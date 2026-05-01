@@ -1,6 +1,10 @@
 # Python SDK Comparison Notes
 
-This note summarizes the comparison between:
+> **Document type:** G1 reference — external comparison
+> **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
+> **Evidence basis:** Cross-reference against Even Python SDK source code (not capture-based)
+
+This note summarises the comparison between:
 
 - [EvenDemoApp](..)
 - `eveng1_python_sdk`
@@ -36,14 +40,14 @@ The Python SDK helps confirm some higher-level protocol concepts:
 - the existence of silent-mode and dashboard-related interaction concepts
 
 However, some of its event labels appear interpretive or stale relative to the
-current firmware behavior observed during live Flutter testing.
+current firmware behaviour observed during live Flutter testing.
 
 Most importantly:
 
 - the Flutter investigation is currently ahead of the Python SDK on the
   right-hold / QuickNote path
 - specifically, the repeated `R21` packet family observed on right-hold release
-  is not meaningfully modeled in the Python SDK
+  is not meaningfully modelled in the Python SDK
 
 ## Python Mappings That Align With Live Testing
 
@@ -75,7 +79,7 @@ These Python mappings line up well enough with our current real-device evidence.
   - silent mode on / off
 - Live testing:
   - triple tap produces new `F5 04` / `F5 05` events
-  - firmware behavior suggests triple tap toggles silent mode
+  - firmware behaviour suggests triple tap toggles silent mode
 - Assessment:
   - likely aligned
   - still not fully confirmed end-to-end
@@ -89,7 +93,7 @@ These Python mappings line up well enough with our current real-device evidence.
 - Assessment:
   - aligned
 
-### General `0xF5` state categorization
+### General `0xF5` state categorisation
 
 - Python SDK:
   - treats `0xF5` as the main interaction/state family
@@ -117,7 +121,7 @@ as protocol truth.
 - Python SDK:
   - maps several `F5` values to wearing/cradle/charging style physical states
 - Live testing:
-  - some of those codes overlap with behavior we still consider ambiguous
+  - some of those codes overlap with behaviour we still consider ambiguous
 - Assessment:
   - useful as hypotheses, not yet confirmed
 
@@ -153,12 +157,12 @@ not reliable enough to copy directly.
 - Python SDK implication:
   - many interaction events can be tracked uniformly from `0xF5`
 - Live testing:
-  - some important behaviors appear firmware-local and are not forwarded in a
+  - some important behaviours appear firmware-local and are not forwarded in a
     usable way to the app
 - Assessment:
   - too optimistic as a universal model
 
-### QuickNote modeled as just another `F5` interaction
+### QuickNote modelled as just another `F5` interaction
 
 - Python SDK:
   - does not appear to provide a meaningful dedicated QuickNote packet model
@@ -177,7 +181,7 @@ This is the most important difference between the two references.
 The Flutter investigation has established the strongest current model for the
 QuickNote path:
 
-- right-hold should be treated as firmware-native QuickNote behavior
+- right-hold should be treated as firmware-native QuickNote behaviour
 - the strongest repeatable app-visible signal is `R21` on the right leg
 - it appears consistently after right-hold release
 - it appears in both spoken-note and silence runs
@@ -211,7 +215,7 @@ Worth borrowing conceptually:
 
 Why:
 
-- the Flutter app currently mixes raw event handling and feature behavior too
+- the Flutter app currently mixes raw event handling and feature behaviour too
   closely inside `BleManager`
 
 ### 2. Raw event routing by packet family
@@ -262,7 +266,7 @@ Why:
 
 - do not copy Python event labels directly into Flutter without live validation
 - do not assume `F5 01` is a reliable single-tap signal
-- do not assume all dashboard behavior is driven by app-visible packets
+- do not assume all dashboard behaviour is driven by app-visible packets
 - do not assume QuickNote is covered by the Python SDK's current abstractions
 
 ## Best Use Of The Python SDK Going Forward
@@ -283,13 +287,13 @@ Do not use it as:
 The Python SDK is most helpful for:
 
 - reconnect strategy ideas
-- centralized state tracking
+- centralised state tracking
 - packet-category separation
 - silent-mode and dashboard concept hints
 
 The Flutter investigation is stronger for:
 
 - current-firmware gesture interpretation
-- tilt-driven dashboard behavior
-- `F5 00` close behavior
+- tilt-driven dashboard behaviour
+- `F5 00` close behaviour
 - the `R21` QuickNote path

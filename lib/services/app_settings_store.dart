@@ -17,6 +17,8 @@ class AppSettingsStore extends ChangeNotifier {
   static const _transcriptionModelPrefKey = 'assistant.transcription_model';
   static const _headUpModePrefKey = 'firmware.head_up_mode';
   static const _doubleTapActionPrefKey = 'firmware.double_tap_action';
+  static const _brightnessLevelPrefKey = 'firmware.brightness_level';
+  static const _autoBrightnessPrefKey = 'firmware.auto_brightness';
 
   bool _initialized = false;
   bool _initializing = false;
@@ -27,6 +29,8 @@ class AppSettingsStore extends ChangeNotifier {
   String _transcriptionModel = '';
   HeadUpMode _headUpMode = HeadUpMode.unknown;
   DoubleTapAction _doubleTapAction = DoubleTapAction.unknown;
+  int? _brightnessLevel;
+  bool _autoBrightness = false;
 
   bool get isInitialized => _initialized;
   String get apiKey => _apiKey;
@@ -42,6 +46,15 @@ class AppSettingsStore extends ChangeNotifier {
   /// Last double-tap action the user picked. Persistence behaviour
   /// matches [headUpMode].
   DoubleTapAction get doubleTapAction => _doubleTapAction;
+
+  /// Last brightness level the user sent to the glasses via the home screen
+  /// slider, or null if the user has never interacted with it. Persisted
+  /// across app restarts. Range 0..42.
+  int? get brightnessLevel => _brightnessLevel;
+
+  /// Whether auto brightness was last sent as enabled. Persisted across
+  /// app restarts; defaults to false.
+  bool get autoBrightness => _autoBrightness;
 
   bool get hasRuntimeApiKey => _apiKey.trim().isNotEmpty;
 
@@ -60,6 +73,10 @@ class AppSettingsStore extends ChangeNotifier {
           (prefs.getString(_transcriptionModelPrefKey) ?? '').trim();
       _headUpMode = _readHeadUpMode(prefs);
       _doubleTapAction = _readDoubleTapAction(prefs);
+      _brightnessLevel = prefs.containsKey(_brightnessLevelPrefKey)
+          ? prefs.getInt(_brightnessLevelPrefKey)
+          : null;
+      _autoBrightness = prefs.getBool(_autoBrightnessPrefKey) ?? false;
       _initialized = true;
     } finally {
       _initializing = false;
@@ -169,6 +186,36 @@ class AppSettingsStore extends ChangeNotifier {
     }
     if (_doubleTapAction != action) {
       _doubleTapAction = action;
+      notifyListeners();
+    }
+  }
+
+  /// Persist the brightness level the user last sent to the glasses.
+  ///
+  /// Pass null to clear the persisted level (e.g. on factory reset). See
+  /// [setHeadUpMode] for the orchestration model.
+  Future<void> setBrightnessLevel(int? level) async {
+    await init();
+    final prefs = await SharedPreferences.getInstance();
+    if (level == null) {
+      await prefs.remove(_brightnessLevelPrefKey);
+    } else {
+      await prefs.setInt(_brightnessLevelPrefKey, level);
+    }
+    if (_brightnessLevel != level) {
+      _brightnessLevel = level;
+      notifyListeners();
+    }
+  }
+
+  /// Persist the auto-brightness flag the user last sent to the glasses. See
+  /// [setHeadUpMode] for the orchestration model.
+  Future<void> setAutoBrightness(bool auto) async {
+    await init();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoBrightnessPrefKey, auto);
+    if (_autoBrightness != auto) {
+      _autoBrightness = auto;
       notifyListeners();
     }
   }

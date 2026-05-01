@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/models/app_mode.dart';
+import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/chat_history_store.dart';
 import 'package:demo_ai_even/services/capture_service.dart';
 import 'package:demo_ai_even/services/chat_service.dart';
@@ -81,9 +82,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     DeviceStatusService.get.addListener(_refreshPage);
     ChatHistoryStore.get.addListener(_refreshPage);
     ChatHistoryStore.get.init();
-    final ds = DeviceStatusService.get;
-    _brightnessSliderValue = (ds.brightnessLevel ?? 21).toDouble();
-    _autoBrightness = ds.autoBrightness;
+    _initBrightnessFromStore();
+  }
+
+  /// Reads the persisted brightness state from [AppSettingsStore], falling
+  /// back to the firmware echo then the default when neither is available.
+  ///
+  /// Called asynchronously because [AppSettingsStore.init] may not yet have
+  /// completed when the page first builds (the app launches `runApp` before
+  /// awaiting the store init in `main.dart`).
+  Future<void> _initBrightnessFromStore() async {
+    final store = AppSettingsStore.get;
+    await store.init();
+    if (!mounted) {
+      return;
+    }
+    final persistedLevel = store.brightnessLevel;
+    final firmwareLevel = DeviceStatusService.get.brightnessLevel;
+    setState(() {
+      _brightnessSliderValue =
+          (persistedLevel ?? firmwareLevel ?? 21).toDouble();
+      _autoBrightness = store.autoBrightness;
+    });
   }
 
   @override

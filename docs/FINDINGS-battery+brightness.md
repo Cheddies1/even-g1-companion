@@ -1,5 +1,9 @@
 # G1 BLE — battery / wear / brightness opcode capture findings
 
+> **Document type:** G1 reference
+> **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6
+
 Source: `btsnoop_hci.log` (3.0 MB, 2026-04-28 11:02–11:09 UTC), official Even
 Realities Android app paired with `Even G1_71_L_350E0F` /
 `Even G1_71_R_C719EC` on firmware 1.6.6.
@@ -105,6 +109,23 @@ So `F5 12 <byte2>` echoes whatever brightness level is currently in effect.
 This is exactly the kind of confirmation channel a host would want when
 adjusting brightness.
 
+### `F5 12` on-connect timing (`Confirmed` — live testing)
+
+`F5 12` is also emitted as a passive push roughly 15 seconds after a fresh
+BLE connect, without any host TX trigger — it carries the firmware's current
+brightness level at that moment. This means a host can rely on the first `F5
+12` of a session to reconcile its displayed level against what the firmware
+actually had, without needing to poll `0x29`. The ~15 s delay is observed
+timing; it is not instantaneous on connect.
+
+### Ambient light sensor is on the right arm (`Confirmed` — live testing)
+
+Empirical test: covering the right glasses arm whilst auto brightness is
+active changes the applied brightness level (confirmed via the `F5 12` echo);
+covering the left arm has no effect. This is consistent with the right-glass-
+only poll path for `0x29` — the brightness control hardware, including the
+ambient light sensor, is located on the right temple.
+
 ---
 
 ## What's now wired in the app
@@ -146,14 +167,14 @@ Resolved since the snoop:
 
 ## Other novel opcodes spotted (not battery, but worth logging)
 
-| Opcode | Direction | Cadence       | Notes                                                                                  |
-|--------|-----------|---------------|----------------------------------------------------------------------------------------|
-| `0x1f` | TX/RX     | every ~2 s    | Periodic exchange the official app uses in lieu of `0x25`. Format `1f <subcode> <seq>`. The current firmware accepts both `0x25` and `0x1f` heartbeats — this app's `0x25` heartbeat continues to work. |
-| `0x6e` | RX        | once on connect | Firmware version string in ASCII: `"net build time: 2025-10-22 14:21:16, app build time 2025-10-22 14:20:59, ver 1.6.6, JBD DeviceId 4010"`. |
-| `0x3e` | RX        | once on connect | Large 200+ byte device-info / calibration dump.                                        |
-| `0x2c` | RX        | every ~10 s   | Periodic state push. Fixed 3-byte signature `66 64 64` then 17 bytes of state.         |
-| `0xf1` | RX        | burst         | Sequence of 18 ~140-byte chunks at 11:08:32–34. Looks like a media or asset push.       |
-| `0xc9` | (marker)  | various       | Recurs as byte-1 status marker on many response opcodes. Likely "OK" status.           |
+| Opcode | Direction | Cadence                | Notes                                                                                  |
+|--------|-----------|------------------------|----------------------------------------------------------------------------------------|
+| `0x1f` | TX/RX     | every ~2 s             | Periodic exchange the official app uses in lieu of `0x25`. Format `1f <subcode> <seq>`. The current firmware accepts both `0x25` and `0x1f` heartbeats — this app's `0x25` heartbeat continues to work. |
+| `0x6e` | TX→RX     | once on connect        | Host sends `23 74` (2-byte write); firmware responds with a 200-byte ASCII string starting `0x6e`. Both legs receive the same response. Payload: `"net build time: 2025-10-22 14:21:16, app build time 2025-10-22 14:20:59, ver 1.6.6, JBD DeviceId 4010"`. |
+| `0x3e` | TX→RX     | once on connect        | Host sends a single-byte `3e` write (mirrors the `0x29` pattern); firmware responds with 286 bytes. Structured with repeating `ea 07 04 <tag> <8-byte-value>` markers — likely a config/calibration dump. State content not analysed (single sample); possible candidate for future investigation if a use case emerges. |
+| `0x2c` | TX→RX     | every ~10 s (host poll)| Host sends `2c 01` to a leg; firmware responds `2c 66 64 64 <state>` (20 bytes). The `66 64 64` signature is fixed; the trailing bytes vary in a counter/sensor pattern. Payload analysed across the 11:07 brightness-change window — state bytes do **not** carry brightness or wear information. Previously mis-labelled as an unsolicited firmware push. |
+| `0xf1` | RX        | burst                  | Sequence of 18 ~140-byte chunks at 11:08:32–34. Looks like a media or asset push.       |
+| `0xc9` | (marker)  | various                | Recurs as byte-1 status marker on many response opcodes. Likely "OK" status.           |
 
 The `0x6e` payload is potentially useful as a firmware version/build-id
 signal in the connection area on the home page; tracked separately.

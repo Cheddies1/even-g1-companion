@@ -8,135 +8,115 @@ Use this with:
 - [docs/current-architecture.md](current-architecture.md)
 - [AGENTS.md](../AGENTS.md)
 
+---
+
 ## Current Product State
 
 Working well:
 - Glance mode is a real daily-use feature
-- Chat mode works end-to-end with OpenAI-backed STT + assistant responses
-- Navigate mode now boots and stays alive on the firmware `0x0a` card path
-  using:
-  - interleaved per-leg bootstrap replay
-  - live dynamic `TRIP_STATUS`
-  - a 1-second `0x0a` SYNC poller
-  - post-bootstrap `TRIP_STATUS + SYNC` updates
+- Chat mode works end-to-end with OpenAI-backed STT + assistant responses, paced `0x52` streaming, host-managed scrolling
+- Navigate mode boots and stays alive on the firmware `0x0a` card path (full 108-packet interleaved replay, dynamic TRIP_STATUS, 1-second SYNC poller, post-bootstrap TRIP_STATUS+SYNC updates, idle-prompt suppression)
 - Quick mode switching works from app UI and persistent notification
-- Right-hold QuickNote POC exists for idle-only mode switching
+- Right-hold QuickNote POC exists (gesture captured; transcription not yet wired)
 - Per-leg BLE health and reconnect logic exists
+- Battery + wear state ingested and displayed (home screen pills, Glance HUD)
+- Brightness slider + auto toggle (push side)
+- Firmware settings dropdowns (head-up behaviour + double-tap action) on Settings page
+- Double-tap mode switch via `F5 20`
+- Notification policy (blocked / suppressed / protected / normal), Filters UI, Runtime Settings UI
 
 Working, but still needs real-world observation:
 - Navigate mode startup robustness on first entry / degraded-leg recovery
-- Navigate mode post-bootstrap update behavior on longer real walks
+- Navigate mode post-bootstrap update behaviour on longer real walks
 - Capture mode stop/save reliability on device
 - Protected notification handling for special ongoing items on Samsung/Android variants
 
-## Current Priority Areas
+---
 
-1. Navigate via `0x0a` structured card (protocol confirmed, implementation in progress)
-- **The full `0x0a` lifecycle renders successfully.** The 108-packet
-  official lifecycle is now the known-good bootstrap path.
-- **Interleaved per-leg replay is the current stable bootstrap transport.**
-  Current successful mode: packet `i` to right, short delay, packet `i`
-  to left, short delay, with a 50 ms pause every 10 pairs. Broadcast could
-  starve a leg; full sequential replay created a large eye gap.
-- **Dynamic live `TRIP_STATUS` is now injected.** The current code replaces
-  only the replayed `0x0a 01` packet using live Google Maps notification
-  fields. Captured `MAP_OVERVIEW` and `PANORAMIC_MAP` bytes remain unchanged.
-- **The 1-second SYNC poller is now implemented and working.** Navigate stays
-  alive for full routes as long as the poller is running and the session is
-  not explicitly closed.
-- **Post-bootstrap updates now default to `TRIP_STATUS + SYNC`.** This is the
-  current experiment to reduce the occasional right-eye text loss seen when
-  replaying the full 108-packet lifecycle on every guidance update.
-- **Navigate mode entry is guarded against stale text fallback.** The idle
-  prompt is delayed, cancelled on real render paths, and the on-glasses
-  `Open Google Maps / to start navigation` fallback is explicitly closed
-  before the first nav lifecycle begins.
-- **Heartbeat collisions during bootstrap are currently handled.** `0x25`
-  heartbeats are paused during the interleaved 108-packet burst and resumed
-  afterwards to avoid degraded-leg noise during replay.
-- **All three sub-types are required** for bootstrap cards: TRIP_STATUS
-  (text) + MAP_OVERVIEW (13 RLE icon bands) + PANORAMIC_MAP (90 map rows).
-  Text-only bootstrap cards are rejected.
-- **Next steps (incremental, each testable independently):**
-  1. **Watch startup robustness** — keep testing first-entry Navigate starts,
-     especially cases where one leg begins degraded or reconnecting. Idle
-     prompt is now suppressed to avoid the first-load race condition.
-  2. **Validate `TRIP_STATUS + SYNC` updates on longer walks** — determine
-     whether post-bootstrap updates are now visually solid on both eyes, or
-     whether some updates still require a full lifecycle resend.
-  3. **Clean up field extraction** — some Google Maps updates are still
-     populating `turnDistance` with road text like `towards Milton Rd` or
-     `Home (36 Campbell Rd)`. Fix the text model before treating the payload
-     shape as final.
-  4. ~~Build real icon/map production paths~~ — **DONE**: MAP_OVERVIEW
-     direction icon now scraped from Google Maps notification PNG, decoded
-     to 136×136 monochrome, RLE-encoded. Geometric arrow fallback via
-     `ManoeuvreType` enum in `nav_icon_generator.dart`. PANORAMIC_MAP
-     remains captured/static for now.
-  5. **Production cleanup** — once bootstrap and update behavior are trusted,
-     remove the replay-only scaffolding, implement proper EXIT / ARRIVED
-     handling, and decide what final lifecycle shape production Navigate
-     should use. Consider generating PANORAMIC_MAP (placeholder grid or
-     real route map).
-- BMP pipeline preserved in the codebase as fallback.
-- The debug replay path and `lib/services/nav_replay_data.dart` remain in use
-  for PANORAMIC_MAP bootstrap data and MAP_OVERVIEW fallback. Do not remove yet.
+## Now / In Flight
 
-2. Chat streaming via `0x52` — DONE (`Confirmed`, 2026-05-01)
-- **Fully implemented and working.** Chat uses `0x52` as its on-glasses
-  conversation surface. `0x50` mode control + `0x52` init + `0x53`
-  keepalive (every 5 s) are managed by `ChatService` and `Proto`.
-- **Paced streaming via `StreamingRenderQueue`:** Backend chunks are
-  decoupled from display updates. The backend appends raw text to a target
-  buffer; the queue drains 2 words every 200 ms (~450 WPM effective with
-  BLE overhead). Each tick: adds 2 words to displayed text, wraps with
-  `\n` at 43-char word boundaries, keeps only the last 3 lines (matching
-  the firmware's 3 visible rows), and sends line 1 (`\n` marker) + line 2
-  (visible text) via `Proto.sendStreamingLine`. The queue keeps draining
-  after the backend stream completes until all text is displayed, then
-  signals completion via `onDrained`. `wrapText()` still exists on
-  `StreamingRenderQueue` for non-queue `0x4E` renders.
-- **Firmware display characteristics (`Confirmed`, 2026-05-01):** 3
-  visible text rows, ~43 characters per row (proportional font). The
-  firmware does NOT auto-scroll — it wraps text at its display width and
-  respects embedded `\n` as line breaks, but stops rendering when text
-  exceeds the visible area. The host manages scrolling by trimming the
-  oldest line when a 4th line wraps.
-- **Official app line model (`Confirmed`, 2026-05-01):** line 1 is a
-  cursor/status marker (a regular text packet with `\n` content, NOT a
-  special cursor frame). Line 2 carries ALL text content. Every update
-  sends both packets. No confirmed-flag management is needed.
-- **Previous incorrect approaches:** multi-line indices 1-4 (firmware
-  only rendered 1-2 lines near cursor); single line 2 without `\n`
-  (firmware filled area and stopped); single line 2 with `\n` but no
-  tail trimming (no auto-scroll); separate "cursor frame" (just a line-1
-  text packet); `_capForPacket` 230-char truncation (unnecessary).
-- **`F5 00` handling:** while a Chat reply is visible, clears only the
-  visible display and preserves the in-memory Chat session for follow-up
-  turns.
-- **Follow-up turns:** `startListening` does `Proto.exit()` only when a
-  prior `0x52` session is active, avoiding BLE destabilisation on marginal
-  connections.
-- Key constants: `_displayLineWidth = 43`, `_displayVisibleRows = 3`,
-  `wordsPerTick = 2`, `drainInterval = 200ms`.
+### Authoritative settings reconcile (brightness, auto, head-up, double-tap)
+- **Status**: Now
+- **Context**: The brightness readback investigation (formerly Next item 1) confirmed `0x29` as the brightness GET path but established that the auto flag is NOT readable back from the firmware. The firmware settings readback investigation (formerly Next item 2) found no usable GET path for `0x08` / `0x26`. Both items are resolved by the same architectural decision: the companion app's persisted settings are now treated as authoritative. On every BLE reconnect the app re-pushes its last-known values for all four settings. This deliberately replaces the previous non-invasive model for head-up and double-tap. Eddie's reasoning: "this is my app, my app knows best".
+- **Acceptance**: (a) On every BLE reconnect, the glasses receive the app's persisted values for brightness level, auto-brightness, head-up behaviour, and double-tap action. (b) The home-page brightness slider and auto-brightness toggle survive cold launches — initial UI state is loaded from `AppSettingsStore`, not hard-coded defaults.
+- **Notes**: Implementation sub-tasks being worked in parallel: (1) persist brightness level + auto flag in `AppSettingsStore` (head-up and double-tap were already persisted); (2) wire all four re-push calls into the BLE reconnect handler; (3) update slider/toggle to read initial state from persistence; (4) remove investigation-only `Proto.probeBrightnessReadback()` and `StartupProbe` logging blocks; (5) update docstrings and architectural notes to reflect the authoritative model (docs curator running in parallel). Cross-ref `docs/FINDINGS-battery+brightness.md` and `docs/external-protocol-wiki-notes.md`.
 
-3. QuickNote via hosted transcription (future feature)
-- Right-hold → `0xf1` mic audio during hold → `0x1e c8` chunked post-release
-  stream (likely LC3) → existing LC3 decode path → OpenAI STT → `0x1e` TX
-  note push to dashboard slots.
-- All pieces exist individually; the integration is the work.
+---
 
-4. Notification quality
-- Notification policy now supports:
-  - `blocked`
-  - `suppressed`
-  - `protected`
-  - `normal`
-- Ongoing notifications are generally not ordinary Glance items
-- YouTube / media protection is behaving correctly in recent logs
-- pinned/live score notifications now flow through the ordinary Glance queue as `protected`
-- Notification Filters UI exists for package suppression
-- Runtime Settings UI now owns API key, backend overrides, notification filters, and permission shortcuts
+## Next — Prioritised
+
+### 1. Navigate cleanup (composite)
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: Navigate is functionally working on the `0x0a` structured-card path. Several cleanup tasks remain before it can shed its debug scaffolding. Eddie expects most are straightforward.
+- **Acceptance** — all of the following:
+  - [ ] **Startup robustness** — keep observing first-entry Navigate starts, especially cases where one leg begins degraded or reconnecting. Idle prompt is now suppressed; verify no regressions.
+  - [ ] **Field extraction cleanup** — fix `turnDistance` being populated with road text such as `towards Milton Rd` or `Home (36 Campbell Rd)`. Tighten the Google Maps notification parsing model.
+  - [ ] **Proper EXIT / ARRIVED handling** — sessions are currently torn down via the existing exit path, but the `0x0a 05` EXIT and `0x0a 06` ARRIVED sub-commands are not used cleanly.
+  - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
+- **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
+
+### 2. QuickNote via hosted transcription (experiment)
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: Right-hold gesture surfaces as `0x21` press, followed by a chunked `0x1e c8 ...` audio-shaped stream after release. The shape is consistent with low-bitrate voice; the existing LC3 decode path (used by Capture and Chat) may handle it. End-to-end flow: `0x21` release → buffer chunked stream → LC3 decode → OpenAI STT → push note text via `0x1e` dashboard slot.
+- **Acceptance**: Working POC where a right-hold quicknote on the glasses produces a transcribed note pushed back to the firmware dashboard. All pieces exist individually; integration is the work.
+- **Notes**: This is an experiment — the first goal is to confirm LC3 decodes the post-release stream. Cross-ref `docs/FINDINGS-taps.md` and `docs/FINDINGS-layouts.md`.
+
+### 3. Dashboard content injection
+- **Status**: Next
+- **Priority**: Low
+- **Context**: `0x1e` TX can push titled content into the firmware's dashboard grid layout — useful for summaries, reminders, or status info.
+- **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
+- **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot?
+
+---
+
+## Backlog — Unprioritised
+
+Nothing here yet. Reserved for future capture.
+
+---
+
+## Parked
+
+### PANORAMIC_MAP decision
+- **Status**: Parked — decision pending
+- **Context**: The 488×136 PANORAMIC_MAP region is shown in the glasses' "look up" mode and is a large piece of screen real estate. Currently the app sends a static capture taken from the official app during a previous route — meaning it looks like a map and feels like a map but is NOT active to the user's actual location. Eddie considers this misleading.
+- **Why parked**: Eddie cannot currently think of anything genuinely useful to do with it. The ideal would be a real-time map of the user's current surroundings (a few hundred metres around current location, NOT tied to the active route) rendered as a line drawing — but that requires maps-service integration, current-location handling, and an image pipeline to render the map as 488×136 monochrome. Eddie's words: "feels like a big lift for a nice-to-have".
+- **Three options on the table**:
+  1. Keep static forever (current behaviour — but misleading)
+  2. Generate a neutral placeholder (decorative, honest about not being a map)
+  3. Build the real local-surroundings line-drawing path (significant lift, maps-service dependency)
+- **Constraint**: Do NOT attempt to render the user's actual route geometry — Google Maps notifications do not expose the geometry, and that path is described as "tiny cartography hell".
+- **Revival trigger**: Revisit if a clear use case emerges, or if the static capture becomes actively annoying enough to warrant the placeholder fix.
+
+---
+
+## Recently Done
+
+### Brightness readback investigation (2026-05-01)
+Empirical testing pinned `0x29` as the brightness GET path (level only; the wiki's claim that byte 3 carries the auto flag was not reproduced). Identified triggers for `0x6e` (TX `23 74`), `0x3e` (TX `3e`), and `0x2c` (host poll, not unsolicited firmware push). Confirmed the right-temple ambient light sensor location. Confirmed `F5 12` already fires unprompted ~15 s after connect with the current level. Decision: pivot to authoritative settings model rather than firmware readback — companion app re-pushes all four settings on every BLE reconnect (see Now / In Flight). Full protocol detail in `docs/FINDINGS-battery+brightness.md`.
+
+### Chat `0x52` streaming (Confirmed, 2026-05-01)
+Paced streaming via `StreamingRenderQueue` is fully implemented in Chat. Backend chunks are decoupled from display: the queue drains 2 words every 200 ms (~450 WPM effective with BLE overhead), wraps at 43-char word boundaries, and keeps only the last 3 lines — matching the firmware's 3 visible rows. The firmware does NOT auto-scroll; the host manages scrolling. Line 1 carries a `\n` marker; line 2 carries all visible text. Follow-up turns do `Proto.exit()` only when a prior `0x52` session is active. Full reference detail is in `AGENTS.md` and `docs/FINDINGS-layouts.md`.
+
+### Battery + wear state
+`F5 06/08/0B/0A/0F` ingestion wired into `DeviceStatusService`. Glasses battery % displays next to the Glance time line; home screen shows glasses %, case %, and a Worn / In cradle pill.
+
+### Brightness slider + auto toggle (push side)
+`0x01 <level> <auto>` set wired via `Proto.setBrightness`. `F5 12 <level>` echo handled by `DeviceStatusService`. Home screen Display section has a brightness slider (commits on release) and an auto-brightness switch.
+
+### Firmware settings dropdowns (push side)
+Head-up behaviour (`0x08`) and double-tap action (`0x26`) wired as dropdowns on the Settings page. Choices persisted in `AppSettingsStore`; companion app does not re-send on reconnect (non-invasive).
+
+### Double-tap host-action mode switch
+`F5 20` wired to `CompanionController.handleDoubleTapModeSwitch`. Cycles companion app modes when the official app's double-tap action is set to a host-handled type (Transcribe / Translate / Teleprompter).
+
+### Navigate `0x0a` lifecycle proven
+Full 108-packet interleaved replay renders on the glasses. Dynamic TRIP_STATUS injection from live Google Maps fields is working. MAP_OVERVIEW direction icon is dynamically generated from the Google Maps notification PNG (decoded to 136×136 monochrome, RLE-encoded), with geometric arrow fallback via `ManoeuvreType` enum. 1-second SYNC poller keeps the session alive. Post-bootstrap updates use TRIP_STATUS+SYNC. Idle-prompt suppression prevents first-load race conditions.
+
+---
 
 ## Recent Confirmed Findings
 
@@ -159,6 +139,12 @@ Brightness:
   brightness slider (commits on release) and an auto-brightness switch.
   `Proto.setBrightness` is the wire-level send; `DeviceStatusService` owns
   the locally-tracked auto flag and the echoed level.
+- `0x29` is the brightness GET path (level only); the auto flag is NOT
+  readable back — the wiki's byte-3 auto claim was not reproduced in testing
+- `0x2c` is a host-poll opcode (the host sends it; not an unsolicited push from
+  the firmware). Do not treat it as a proactive status broadcast.
+- The ambient light sensor used for auto-brightness is physically located in
+  the right temple of the glasses
 
 Persisted-on-glasses settings (head-up + double-tap):
 - 2026-04-28 settings capture (`FINDINGS-settings.md`)
@@ -251,9 +237,7 @@ YouTube / media:
 - Media notifications can be `MediaStyle` with `category=transport`
 - Recent policy logs showed these classifying as `protected`, not `normal`
 
-Navigate:
-- Logs captured real per-leg CRC failures and native write anomalies like `writeResult=201`
-- Current diagnosis is transport-level BMP commit failure on one leg, not bitmap format error
+---
 
 ## Useful Log Filters
 
@@ -282,6 +266,8 @@ adb shell setprop log.tag.MapsNotificationDump DEBUG
 adb logcat -d -s MapsNotificationDump
 ```
 
+---
+
 ## Current Guardrails
 
 Do not casually change:
@@ -297,14 +283,18 @@ Prefer narrow changes in:
 - `lib/services/features_services.dart`
 - `lib/controllers/bmp_update_manager.dart`
 
+---
+
 ## What To Tell A Fresh Session
 
 Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
-  - Chat `0x52` streaming / render queue
+  - authoritative settings reconcile (brightness + auto + head-up + double-tap re-push on reconnect, persistence to `AppSettingsStore`, slider cold-launch state) — currently in flight
+  - Navigate `0x0a` cleanup (field extraction, EXIT/ARRIVED, replay scaffolding)
+  - QuickNote transcription experiment (`0x21` + LC3 + STT)
+  - dashboard content injection (`0x1e` TX)
   - notification policy
-  - Navigate `0x0a` card
   - Capture validation
 - point the agent to:
   - `AGENTS.md`
@@ -313,12 +303,15 @@ Good first prompt pattern:
   - `docs/current-architecture.md`
   - this file
 
+---
+
 ## Files Most Likely Relevant Next
 
 - [lib/services/chat_service.dart](../lib/services/chat_service.dart)
 - [lib/services/streaming_render_queue.dart](../lib/services/streaming_render_queue.dart)
 - [lib/services/notification_policy.dart](../lib/services/notification_policy.dart)
 - [lib/services/glance_service.dart](../lib/services/glance_service.dart)
+- [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)
 - [lib/services/companion_controller.dart](../lib/services/companion_controller.dart)
 - [lib/services/navigate_service.dart](../lib/services/navigate_service.dart)
 - [lib/services/features_services.dart](../lib/services/features_services.dart)

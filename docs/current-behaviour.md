@@ -1,10 +1,14 @@
 # Current Behaviour
 
+> **Document type:** App implementation
+> **Audience:** Eddie + AI agents working on the EvenDemoApp codebase
+> **Evidence basis:** App source code + capture-driven design decisions
+
 This file describes what the app currently does from a user and runtime point of view.
 
 It is intentionally separate from:
 - [current-architecture.md](current-architecture.md): structure and ownership
-- [protocol-reference.md](protocol-reference.md): raw vendor/demo protocol notes
+- [protocol-reference.md](protocol-reference.md): wire-level G1 BLE command catalogue
 - [investigation-notes.md](investigation-notes.md): exploratory findings and hypotheses
 
 ## Current mode summary
@@ -28,15 +32,15 @@ It is intentionally separate from:
 
 ### Chat
 - voice-driven conversational mode
-- implemented end-to-end on device
+- implemented end-to-end; responses streamed word-by-word to the glasses via `0x52` live streaming text (host-managed scrolling, 3 visible rows, ~43 chars/row, paced 2 words/200 ms)
 
 ### Quick mode switching
 - available from the persistent Android notification
 - available from the app UI mode selector
-- available as a narrow idle-only right-hold POC via right-leg `R21`
-  (note: this POC's `len == 42` gate may no longer match current firmware,
-  which appears to emit `R21` at length 15 — see
-  [FINDINGS-taps.md](FINDINGS-taps.md))
+- *(inactive)* narrow idle-only right-hold POC via right-leg `R21` — superseded
+  by the `F5 20` double-tap path. The `len == 42` gate does not match current
+  firmware (emits `R21` at length 15); not active user-facing functionality.
+  See [FINDINGS-taps.md](FINDINGS-taps.md)
 - available via double-tap on either temple, contingent on the official
   Even Realities app's "double-tap action" being any host-handled feature
   (Transcribe / Translate / Teleprompter all work); the firmware then emits
@@ -73,7 +77,7 @@ Notification body
 
 It deliberately does not use the bitmap dashboard path because text is much faster and better for ambient notification use.
 
-### Current behavior
+### Current behaviour
 
 - new notifications can auto-pop into the glasses
 - proactive auto-pop does not dismiss the phone notification
@@ -95,7 +99,7 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 - does not switch into Chat mode
 - uses the firmware-native listening overlay during left-hold
 - on release, the app:
-  - finalizes the temp WAV
+  - finalises the temp WAV
   - transcribes speech via the configured OpenAI transcription API
   - shows a short transcript preview
   - shows `Thinking...`
@@ -112,7 +116,7 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 
 ### Current caveats
 
-- heavy notification churn can still stress left/right synchronization
+- heavy notification churn can still stress left/right synchronisation
 - new notifications are now queued if one is already visible, rather than interrupting the current display
 
 ### Current filtering
@@ -177,16 +181,19 @@ Behavioural notes:
 - The chosen values persist on the glasses themselves (they survive an app
   uninstall) and are also remembered locally so the dropdown shows the last
   pick after an app restart.
-- The companion app **does not** re-send these on reconnect. To re-apply a
-  setting, re-tap the dropdown. This is deliberate — it avoids overriding
-  anything the user might have changed in the official Even Realities app
-  between sessions.
+- The companion app **re-pushes these on every BLE reconnect**, overriding
+  whatever the official Even Realities app may have set while disconnected.
+  This applies to brightness level, auto-brightness, tilt-up behaviour, and
+  double-tap action. Only settings that have been interacted with at least
+  once in this app are pushed — never-touched settings are left at the
+  firmware's current value. See `current-architecture.md` — "Authoritative
+  settings model" for the full design rationale.
 
 ## Capture mode
 
 Capture is practically usable and has survived at least one long real-world recording session, but stop/save semantics still need broader confidence.
 
-### Intended behavior
+### Intended behaviour
 
 - idle + tilt-up -> start recording after a short `500ms` intent gate
 - recording + tilt-up -> stop and save after the same `500ms` intent gate
@@ -216,12 +223,12 @@ So:
 
 Navigate is intentionally lean and notification-driven.
 
-### Current intended behavior
+### Current intended behaviour
 
 - user switches app into Navigate mode on phone
 - Google Maps notifications are ingested
 - concise turn guidance is shown in the glasses
-- ordinary Glance notifications are suppressed or deprioritized while navigating
+- ordinary Glance notifications are suppressed or deprioritised while navigating
 
 ### Current status
 
@@ -279,7 +286,7 @@ Navigate is intentionally lean and notification-driven.
 - The `0x0a` code still contains replay scaffolding and captured
   `MAP_OVERVIEW` / `PANORAMIC_MAP` data. The next production step is
   replacing those captured bytes with real icon/map generation or a turn-icon
-  library once lifecycle/update behavior is fully trusted.
+  library once lifecycle/update behaviour is fully trusted.
 
 ## Chat mode
 
@@ -430,7 +437,7 @@ Richer technical detail is kept in app logs rather than dumped into the glasses 
 
 ## Quick mode switching
 
-Quick mode switching is now part of normal companion behavior.
+Quick mode switching is now part of normal companion behaviour.
 
 ### Notification switching
 
@@ -445,7 +452,7 @@ Quick mode switching is now part of normal companion behavior.
 - the notification title updates to the new mode
 - tapping the notification body opens the main app screen
 
-### App and glasses behavior
+### App and glasses behaviour
 
 - app UI mode buttons switch mode immediately through the same central controller path as notification actions
 - idle right-hold can cycle mode when a right-leg `R21` packet with the current stable `len == 42` shape is observed
@@ -545,7 +552,7 @@ adb logcat | findstr "\[R21Probe\] \[RightHoldProbe\] \[QuickNoteProbe\]"
 
 ## Connection and transport reliability
 
-Current runtime behavior:
+Current runtime behaviour:
 - left and right legs are monitored separately
 - heartbeat success is tracked per leg
 - repeated heartbeat/request failures can mark one leg degraded without declaring the whole session dead
@@ -559,7 +566,7 @@ Practical effect:
 
 ## Home screen
 
-Current behavior:
+Current behaviour:
 - the connection area stays prominent at the top during startup, scanning, disconnected, or degraded states
 - once both legs are healthy, that area compresses into a smaller status card
 - the compact state still shows:
@@ -593,8 +600,11 @@ card and the Chat Log on the home screen. It contains:
   doing its own thing
 
 The auto flag is locally tracked from the last sent command because the
-firmware does not echo it back. On full disconnect, both the slider state and
-the auto flag reset to defaults.
+firmware does not echo it back. On full disconnect, the displayed slider
+position and auto flag reset to defaults in the UI. On the next connect, the
+persisted values are re-pushed to the firmware as part of the authoritative
+settings reconcile (see `current-architecture.md` — "Authoritative settings
+model").
 
 ## Background behaviour
 
@@ -624,7 +634,7 @@ Practical rule:
 
 ## Notification ingestion
 
-Current behavior:
+Current behaviour:
 - the app captures recent Android notifications
 - recent notifications are cached natively
 - Flutter hydrates from that feed and also receives pushed notification events
@@ -636,7 +646,7 @@ This supports:
 
 ## Current known problems / open edges
 
-- Glance left/right synchronization still needs watching under rapid notification arrival
+- Glance left/right synchronisation still needs watching under rapid notification arrival
 - some notification sources/messages still need smarter formatting
 - Capture mode needs real device validation for start/stop/save reliability
 - Navigate mode still needs longer human review against real Google Maps walking sessions

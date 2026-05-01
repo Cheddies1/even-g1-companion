@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:demo_ai_even/models/app_mode.dart';
+import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/ble.dart';
 import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
@@ -104,6 +105,7 @@ class BleManager {
   int? _lastRightCmd21EventMs;
   bool _resyncInFlight = false;
   int _heartbeatPauseDepth = 0;
+  bool _settingsReconcileFired = false;
   final Map<String, LegConnectionState> _legStates =
       <String, LegConnectionState>{
     'L': const LegConnectionState(lr: 'L'),
@@ -208,6 +210,80 @@ class BleManager {
 
     onStatusChanged?.call();
     startSendBeatHeart();
+    _scheduleSettingsReconcile();
+  }
+
+  void _scheduleSettingsReconcile() {
+    if (_settingsReconcileFired) {
+      return;
+    }
+    _settingsReconcileFired = true;
+    unawaited(_runSettingsReconcileAfterSettle());
+  }
+
+  Future<void> _runSettingsReconcileAfterSettle() async {
+    const tag = 'SettingsReconcile';
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (!isConnected) {
+      AppLog.info(
+        '${DateTime.now()} reconcile skipped — no legs available after settle delay',
+        tag: tag,
+      );
+      return;
+    }
+
+    final store = AppSettingsStore.get;
+    await store.init();
+
+    // 1. Brightness — only if the user has interacted at least once.
+    final persistedLevel = store.brightnessLevel;
+    if (persistedLevel != null) {
+      final persistedAuto = store.autoBrightness;
+      AppLog.info(
+        '${DateTime.now()} brightness: pushing level=$persistedLevel auto=$persistedAuto',
+        tag: tag,
+      );
+      await Proto.setBrightness(persistedLevel, persistedAuto);
+    } else {
+      AppLog.info(
+        '${DateTime.now()} brightness: skipped (not yet picked)',
+        tag: tag,
+      );
+    }
+
+    // 2. Head-up mode — only if the user has picked a value.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final persistedHeadUp = store.headUpMode;
+    final headUpWire = persistedHeadUp.wireValue;
+    if (headUpWire != null) {
+      AppLog.info(
+        '${DateTime.now()} head-up mode: pushing ${persistedHeadUp.name} (0x${headUpWire.toRadixString(16).padLeft(2, '0')})',
+        tag: tag,
+      );
+      await Proto.setHeadUpMode(headUpWire);
+    } else {
+      AppLog.info(
+        '${DateTime.now()} head-up mode: skipped (not yet picked)',
+        tag: tag,
+      );
+    }
+
+    // 3. Double-tap action — only if the user has picked a value.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final persistedAction = store.doubleTapAction;
+    final actionWire = persistedAction.wireValue;
+    if (actionWire != null) {
+      AppLog.info(
+        '${DateTime.now()} double-tap action: pushing ${persistedAction.name} (0x${actionWire.toRadixString(16).padLeft(2, '0')})',
+        tag: tag,
+      );
+      await Proto.setDoubleTapAction(actionWire);
+    } else {
+      AppLog.info(
+        '${DateTime.now()} double-tap action: skipped (not yet picked)',
+        tag: tag,
+      );
+    }
   }
 
   void startSendBeatHeart() async {
@@ -258,6 +334,7 @@ class BleManager {
     beatHeartTimer = null;
     _reconnectMonitorTimer?.cancel();
     _reconnectMonitorTimer = null;
+    _settingsReconcileFired = false;
     DeviceStatusService.get.reset(source: 'GlassesDisconnected');
     _updateLegState(
       'L',

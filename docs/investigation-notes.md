@@ -1,6 +1,10 @@
 # Investigation Notes
 
-This file keeps the broader exploratory findings, firmware/app model, hypotheses, and test-driven understanding that sit outside the current architecture and current user-visible behavior.
+> **Document type:** Hybrid — G1 reference + app implementation context
+> **Audience:** Eddie + AI agents (analytical hub for methodology) and G1 hackers reading alongside the FINDINGS docs
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6; plus cross-source comparison and inferred models
+
+This file keeps the broader exploratory findings, firmware/app model, hypotheses, and test-driven understanding that sit outside the current architecture and current user-visible behaviour.
 
 It is intentionally not the same thing as:
 - [current-architecture.md](current-architecture.md)
@@ -11,11 +15,11 @@ It is intentionally not the same thing as:
 
 The current evidence supports a three-layer model:
 
-1. firmware-native behavior
+1. firmware-native behaviour
 2. persisted device configuration
-3. app-driven BLE behavior
+3. app-driven BLE behaviour
 
-### Firmware-native behavior
+### Firmware-native behaviour
 
 The glasses are not behaving like a dumb peripheral.
 
@@ -24,12 +28,12 @@ Current evidence suggests firmware owns at least:
 - tilt detection
 - some touch semantics
 - some feature entry points
-- some on-device UI behavior
+- some on-device UI behaviour
 
 Examples:
-- right-hold QuickNote-like behavior works even when disconnected
+- right-hold QuickNote-like behaviour works even when disconnected
 - left-hold while disconnected shows a firmware Bluetooth-disconnected message
-- tilt behavior exists even without the app connected
+- tilt behaviour exists even without the app connected
 
 ### Persisted configuration
 
@@ -37,10 +41,10 @@ Some settings appear to be written by the official app and stored on the device.
 
 Strong example:
 - “dashboard on tilt” persists on-device
-- disabling it in the official app still affects behavior when disconnected
+- disabling it in the official app still affects behaviour when disconnected
 - disabling it suppresses the firmware UI reaction, not the underlying tilt event emission
 
-### App-driven BLE behavior
+### App-driven BLE behaviour
 
 The app behaves as:
 - transport layer
@@ -50,6 +54,7 @@ The app behaves as:
 Examples:
 - text rendering
 - notification rendering
+- bitmap rendering
 - old demo voice path
 - current companion-mode overlays
 
@@ -66,7 +71,7 @@ Current best model:
 
 Notes:
 - `F5 02` / `F5 03` were observed from the right leg in the clean tilt runs
-- that asymmetry may reflect reporting behavior rather than a truly right-only capability
+- that asymmetry may reflect reporting behaviour rather than a truly right-only capability
 
 ### Single taps
 
@@ -75,7 +80,7 @@ are not reliable app-visible input in the tested flows.
 
 Current best explanation:
 - single taps are handled locally in firmware in every observed state
-- the app should not rely on them for core product behavior
+- the app should not rely on them for core product behaviour
 
 The 2026-04-28 taps capture pushed this from "best explanation" to a strong
 negative result. Single taps were tested with:

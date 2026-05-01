@@ -148,18 +148,19 @@ class DeviceStatusService extends ChangeNotifier {
   /// has been received since connect.
   int? get brightnessLevel => _brightnessLevel;
 
-  /// Whether auto brightness is locally believed to be on. Tracked from the
-  /// last [setBrightness] call because the firmware does not echo this flag.
+  /// Whether auto brightness was last sent as enabled. Tracked from the last
+  /// [setBrightness] call and persisted in [AppSettingsStore] because the
+  /// firmware does not echo this flag. Stays set across disconnects.
   bool get autoBrightness => _autoBrightness;
 
-  /// Most recent head-up (tilt-up) mode the user picked from this session.
-  /// The setting is also persisted in `AppSettingsStore` so it survives
-  /// app restarts; on a fresh connect this returns [HeadUpMode.unknown]
-  /// until the user picks again.
+  /// Current head-up (tilt-up) mode. Stays aligned with [AppSettingsStore]
+  /// across disconnects — the companion app is authoritative and re-pushes
+  /// this value on every fresh BLE reconnect. Returns [HeadUpMode.unknown]
+  /// if the user has never picked.
   HeadUpMode get headUpMode => _headUpMode;
 
-  /// Most recent double-tap action the user picked from this session.
-  /// Persistence behaviour matches [headUpMode].
+  /// Current double-tap action. Behaviour and persistence model matches
+  /// [headUpMode].
   DoubleTapAction get doubleTapAction => _doubleTapAction;
 
   /// "85%" or null if no glasses battery push has been received yet.
@@ -211,6 +212,9 @@ class DeviceStatusService extends ChangeNotifier {
   /// Send `0x01 <level> <auto>` to both legs and update the locally tracked
   /// auto flag. The applied [level] is confirmed back via `F5 12`.
   ///
+  /// Also writes both values through to [AppSettingsStore] so the companion
+  /// app's UI is authoritative across reconnects and cold launches.
+  ///
   /// [level] is clamped to `0..[brightnessLevelMax]`.
   Future<void> setBrightness({
     required int level,
@@ -222,6 +226,8 @@ class DeviceStatusService extends ChangeNotifier {
       tag: 'DeviceStatus',
     );
     await Proto.setBrightness(clamped, auto);
+    await AppSettingsStore.get.setBrightnessLevel(clamped);
+    await AppSettingsStore.get.setAutoBrightness(auto);
     if (_autoBrightness != auto) {
       _autoBrightness = auto;
       notifyListeners();
@@ -230,8 +236,8 @@ class DeviceStatusService extends ChangeNotifier {
 
   /// Send `0x08 06 00 00 03 <wireValue>` to both legs to persist the head-up
   /// (tilt-up) behaviour on the glasses. Also writes the choice to
-  /// `AppSettingsStore` so it survives an app restart. No-op for
-  /// [HeadUpMode.unknown].
+  /// [AppSettingsStore] so it survives app restarts and is re-pushed on every
+  /// fresh BLE reconnect (authoritative model). No-op for [HeadUpMode.unknown].
   Future<void> setHeadUpMode(HeadUpMode mode) async {
     final wire = mode.wireValue;
     if (wire == null) {
@@ -251,7 +257,9 @@ class DeviceStatusService extends ChangeNotifier {
 
   /// Send `0x26 06 00 <seq> 05 <wireValue>` to both legs to persist the
   /// double-tap action on the glasses. Also writes the choice to
-  /// `AppSettingsStore`. No-op for [DoubleTapAction.unknown].
+  /// [AppSettingsStore] so it survives app restarts and is re-pushed on every
+  /// fresh BLE reconnect (authoritative model). No-op for
+  /// [DoubleTapAction.unknown].
   Future<void> setDoubleTapAction(DoubleTapAction action) async {
     final wire = action.wireValue;
     if (wire == null) {
@@ -269,30 +277,27 @@ class DeviceStatusService extends ChangeNotifier {
     }
   }
 
-  /// Reset on full disconnect so the UI doesn't show stale numbers.
+  /// Clear live-echo state on full disconnect so the UI doesn't show stale
+  /// numbers pushed by the glasses firmware.
   ///
-  /// Note: only the in-memory live state resets here. The user's persisted
-  /// firmware-settings choices in `AppSettingsStore` are deliberately kept
-  /// across disconnects so the Settings dropdowns can still display the
-  /// last picked value when the user reconnects.
+  /// **Only** the firmware-echoed fields are cleared: battery percentages,
+  /// wear state, and the `F5 12` brightness echo. User-intent fields
+  /// (`_autoBrightness`, `_headUpMode`, `_doubleTapAction`) are left
+  /// untouched — they already match [AppSettingsStore] by construction and
+  /// will be re-pushed to the glasses by the settings reconcile on the next
+  /// fresh connect.
   void reset({required String source}) {
-    final hadAny = _glassesBatteryPct != null ||
+    final hadLiveState = _glassesBatteryPct != null ||
         _caseBatteryPct != null ||
         _wearState != WearState.unknown ||
-        _brightnessLevel != null ||
-        _autoBrightness ||
-        _headUpMode != HeadUpMode.unknown ||
-        _doubleTapAction != DoubleTapAction.unknown;
+        _brightnessLevel != null;
     _glassesBatteryPct = null;
     _caseBatteryPct = null;
     _wearState = WearState.unknown;
     _brightnessLevel = null;
-    _autoBrightness = false;
-    _headUpMode = HeadUpMode.unknown;
-    _doubleTapAction = DoubleTapAction.unknown;
-    if (hadAny) {
+    if (hadLiveState) {
       AppLog.info(
-        '${DateTime.now()} cleared device status from $source',
+        '${DateTime.now()} cleared live device status from $source',
         tag: 'DeviceStatus',
       );
       notifyListeners();

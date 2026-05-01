@@ -1,4 +1,8 @@
-# External protocol notes — JohnRThomas wiki (2025-12-30)
+# External protocol notes — JohnRThomas wiki, Gadgetbridge, ayroblu (2025–2026)
+
+> **Document type:** G1 reference — external comparison
+> **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
+> **Evidence basis:** Cross-reference against external sources: JohnRThomas wiki, Gadgetbridge `even-g1-custom-drawing-experiment` branch, ayroblu/bazel-demo Swift implementation (not capture-based)
 
 Artifact:
 
@@ -47,20 +51,33 @@ What we already have:
 
 Potential value:
 
-- The wiki’s additional `0x26` subcommand catalog might help us prioritize what
+- The wiki’s additional `0x26` subcommand catalogue might help us prioritise what
   to investigate next (without re-deriving everything from snoops).
 
 ### `0x29` brightness get (readback)
 
-The wiki documents a “Brightness Get (0x29)” request/response shape. We
-currently implement the “set” path (`0x01 <level> <auto>`) and track `auto`
-locally based on the last write.
+The wiki documents a “Brightness Get (0x29)” request/response shape as
+`29 65 <level> <auto>`, claiming byte 3 is an auto-brightness flag.
 
-Suggested follow-up:
+**Empirical probe results (firmware 1.6.6):** Two separate probes against
+current firmware returned byte 3 = `0x00` in both cases, even after
+auto-brightness had been enabled via the official app and via the companion
+app. This leaves two interpretations open:
 
-- If `0x29` works reliably on current firmware, it could be used to reconcile
-  state after reconnect (especially if the user changes brightness in the
-  official app).
+- The wiki is wrong about byte 3's meaning; or
+- The firmware does not persist the auto state across BLE disconnect — it
+  resets to OFF on every fresh connect regardless of what was last written.
+
+The existing capture data does not let us distinguish between these. Byte 3
+is therefore **unverified** on firmware 1.6.6. The level byte (byte 2) is
+consistent with the `F5 12` echo and appears reliable.
+
+For this app's handling, see `current-architecture.md` — “Authoritative
+settings model” — which moots the reconcile question by re-pushing on every
+connect.
+
+Cross-reference: `docs/protocol-reference.md` — “Brightness: `0x01 <level>
+<auto>` and `F5 12 <level>`”.
 
 ## Areas where our docs appear ahead (and the wiki is TODO / missing detail)
 
@@ -165,8 +182,11 @@ Key value for us:
 ## Investigation backlog derived from all comparisons
 
 1. Validate or reject the wiki’s `0x22` field breakdown against our logs.
-2. Probe `0x29` brightness get on current firmware and decide whether we want
-   to implement it (readback vs local tracking).
+2. ~~Probe `0x29` brightness get on current firmware~~ — **PROBED**: byte 3
+   (wiki-claimed auto flag) returned `0x00` on two probes even after auto was
+   set ON; unresolved whether wiki is wrong or firmware resets auto on
+   disconnect. Moot for this app — authoritative-settings model re-pushes on
+   every connect anyway.
 3. Cross-check the wiki’s `0x26` subcommand list against our `docs/FINDINGS-settings.md`
    and snoops to see if any high-impact settings are missing from our current
    mapping.
