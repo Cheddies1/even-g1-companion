@@ -29,16 +29,17 @@ Recently implemented:
   lifecycle and the production target still being dynamic TRIP_STATUS packet
   building. Direction is currently hinted with Unicode arrow text (→ ← ↑ etc.)
   prepended to road name.
-- **Chat `0x52` paced streaming** — assistant replies now render word-by-word
-  via a `StreamingRenderQueue` that decouples backend chunk arrival from
-  display cadence (~2 words / 150 ms). The queue sends line 1 (empty cursor
-  marker) + line 2 (all text, growing word by word) on every tick — matching
-  the official Even Realities app's line model discovered from BLE capture
-  analysis. The firmware handles wrapping and scrolling natively. If text
-  exceeds ~230 chars, only the tail is sent. The `_charsPerLine`,
-  `maxVisibleLines`, `TextPainter`-based wrapping, committed-line buffer,
-  and multi-line-index approach are all removed. `wrapText()` still exists
-  for non-queue `0x4E` renders.
+- **Chat `0x52` paced streaming** (`Confirmed`, 2026-05-01) — assistant
+  replies render word-by-word via a `StreamingRenderQueue` that decouples
+  backend chunk arrival from display cadence (2 words / 200 ms, ~450 WPM).
+  The queue sends line 1 (`\n` marker) + line 2 (visible text) on every
+  tick — matching the official app's line model. The firmware does NOT
+  auto-scroll; the host wraps text with `\n` at 43-char word boundaries
+  and keeps only the last 3 lines (matching the firmware's 3 visible rows).
+  Follow-up turns: `startListening` does `Proto.exit()` only when a prior
+  `0x52` session is active. `wrapText()` still exists for non-queue `0x4E`
+  renders. Key constants: `_displayLineWidth = 43`,
+  `_displayVisibleRows = 3`, `wordsPerTick = 2`, `drainInterval = 200ms`.
 
 Under active development:
 - Navigate `0x0a` structured card — **protocol confirmed working** (full
@@ -110,7 +111,10 @@ Key protocol families already mapped:
   row-major LSB-first pixel layout, two layers (image + overlay) = 4,624
   raw bytes. Confirmed from ayroblu Swift source. Padded to 13 bands of
   185-byte chunks with 9-byte packet headers.
-- `0x52` / `0x53` live streaming text with cursor and keepalive
+- `0x52` / `0x53` live streaming text (`Confirmed`, 2026-05-01): line 1
+  `\n` marker + line 2 all text; firmware has 3 rows, ~43 chars/row, does
+  NOT auto-scroll; host manages scrolling by wrapping at word boundaries
+  and trimming to last 3 lines; `0x53` keepalive every 5 s
 - `0x1e` TX dashboard data slot injection / RX quicknote post-release audio stream
 - `0x50` display mode control (required before `0x0a` nav and `0x52` streaming)
 - `0x06` / `0x22` note management transactions

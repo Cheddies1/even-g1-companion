@@ -94,25 +94,45 @@ companion app would need to emit these while streaming.
 
 ### Implications for the companion app
 
-**Now implemented.** Chat mode streams the LLM response word by word via a
-paced `StreamingRenderQueue`. The protocol steps:
+**Fully implemented and confirmed working** (2026-05-01). Chat mode
+streams the LLM response word by word via a paced `StreamingRenderQueue`.
+The protocol steps:
 1. Send `50 06 00 00 01 01` to prime the display
 2. Send `52 06 00 00 01 01` to enter streaming mode
-3. For each word/phrase update, send a line-1 empty marker + line-2 text
-   frame (all text on a single line index; firmware wraps and scrolls)
-4. Send `0x53` keepalives every ~5 s while active
+3. For each word/phrase update, send a line-1 marker (`\n`) + line-2 text
+   frame — the host manages scrolling (see below)
+4. Send `0x53` keepalives every 5 s while active
 
-**Official app line model (confirmed from BLE capture analysis):** the
-official app uses only two line indices: line 1 as an empty cursor/status
-marker (always `\n`), and line 2 for ALL text content. The firmware handles
-wrapping at its display width and scrolls oldest rows off the top. New
-paragraphs are embedded as `\n` within line 2. No confirmed-flag
-management is needed. The companion app mirrors this model — the
-`StreamingRenderQueue` sends line 1 (marker) + line 2 (growing text) on
-every tick, and the firmware handles layout natively. If text exceeds ~230
-chars, only the tail is sent. The previous multi-line-index approach
-(lines 1-4 with host-side wrapping) only showed 1-2 visible lines due to
-the firmware's cursor-proximity rendering.
+**Official app line model (`Confirmed`, 2026-05-01):** the official app
+uses only two line indices: line 1 as a cursor/status marker (a regular
+text packet with `\n` content, NOT a special cursor frame), and line 2
+for ALL text content. Every update sends both packets. No confirmed-flag
+management is needed.
+
+**Firmware display characteristics (`Confirmed`, 2026-05-01):** 3 visible
+text rows, ~43 characters per row (proportional font). The firmware does
+NOT auto-scroll — it wraps text at its display width and respects embedded
+`\n` as line breaks, but stops rendering when text exceeds the visible
+area. Character-wraps mid-word at the display boundary.
+
+**Host-managed scrolling:** the companion app wraps text with `\n` at
+~43-char word boundaries, then keeps only the last 3 lines (matching the
+3 visible rows). As new content wraps to a 4th line, the oldest line is
+trimmed. Visual effect: text grows word by word on the bottom row; when
+it fills, the top row drops off and new content starts at the bottom.
+
+**Pacing:** 2 words every 200 ms (~450 WPM effective with BLE overhead).
+Backend chunks are decoupled — they append to a target buffer; the queue
+drains independently. Queue keeps draining after backend completes until
+all words are displayed, then signals completion.
+
+**Previous incorrect approaches:** (1) multi-line indices 1-4 with
+host-managed wrapping — firmware only rendered 1-2 lines near the cursor;
+(2) single line 2 without `\n` — firmware filled visible area and stopped;
+(3) single line 2 with `\n` but no tail trimming — firmware does not
+auto-scroll; (4) "cursor frame" sent separately — it is actually just the
+line-1 text packet; (5) `_capForPacket` 230-char truncation — unnecessary,
+the BLE stack handles larger packets.
 
 ---
 
@@ -382,10 +402,11 @@ a 1-second SYNC poller. The BMP pipeline is preserved but no longer active.
 ### Priority 2 — Chat streaming via `0x52` — DONE
 
 Chat now streams assistant replies word by word via a paced
-`StreamingRenderQueue`. The queue sends line 1 (empty cursor marker) +
-line 2 (all text, growing word by word) on every tick. The firmware
-handles wrapping and scrolling natively. If text exceeds ~230 chars,
-only the tail is sent.
+`StreamingRenderQueue` (`Confirmed`, 2026-05-01). The queue sends line 1
+(marker with `\n`) + line 2 (all text, growing word by word) on every
+tick. The host manages scrolling: text is wrapped with `\n` at ~43-char
+word boundaries, and only the last 3 lines are kept (matching the
+firmware's 3 visible rows). Pacing: 2 words every 200 ms.
 
 ### External cross-references (found during implementation)
 

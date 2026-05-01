@@ -419,11 +419,10 @@ class ChatService {
   }) async {
     if (!_modeActive) return;
     markDisplayVisible(value: true, source: 'Chat.stream');
-    if (isActive) {
-      await Proto.sendStreamingText(text, line: line, isFinal: false);
-    } else {
-      await Proto.sendStreamingLine(text, line: line, confirmed: true);
-    }
+    // Both lines use plain text packets (no cursor frame) — matching
+    // the official app's 0x52 pattern from the BLE capture. Line 1 is
+    // always '\n' (cursor marker), line 2 carries all text content.
+    await Proto.sendStreamingLine(text, line: line, confirmed: false);
   }
 
   void _onRenderQueueDrained() {

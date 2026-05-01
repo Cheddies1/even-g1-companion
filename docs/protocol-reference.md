@@ -246,62 +246,105 @@ Observed reality:
 Source:
 - 2026-04-28 layouts capture, Phase 3 (live transcription) — full write-up
   in [FINDINGS-layouts.md](FINDINGS-layouts.md)
+- confirmed and refined through live testing + BLE capture analysis,
+  2026-04-29 through 2026-05-01
 
-Observed reality (`Confirmed`):
+Observed reality (`Confirmed`, 2026-05-01):
 
-- TX `0x52` pushes word-by-word incremental text to the glasses with a
-  cursor and live-updating clock. The firmware handles line wrapping
-  (typewriter-style, oldest line scrolls off the top).
-- Mode init: `52 06 00 00 01 01` (identical shape to `0x50` mode control).
-- Text update frame:
+### Wire protocol
+
+- `0x50 06 00 00 01 01` — display mode init, sent before the first `0x52`
+  frame (see "Display mode control" below)
+- `0x52 06 00 00 01 01` — streaming text mode init
+- `0x53` — keepalive, sent every 5 seconds to prevent firmware timeout
+- Text update packet:
   ```
   52 <len> 00 <seq> 02 02 00 <line> 00 <flags> 00 00 <text_utf8> 0a
   ```
-  `<line>` = which display line (01, 02, ...); `<flags>` = `01 00` when
-  confirmed, `00 00` while still typing. Each update re-sends the full
-  current line (not a delta).
-- Cursor-update frame (interleaved):
-  `52 0e 00 <seq> 02 02 00 01 00 00 00 00 0a 0a`
-- TX `0x53` is a keepalive sent every ~5 s during streaming to prevent the
-  firmware from timing out the display mode.
-- Known test phrase "The quick brown fox jumped over the lazy dog" confirmed
-  byte-for-byte in the payloads, growing word by word.
+  `<line>` = line index (01 or 02); `<flags>` at byte position 9:
+  `0x00` during normal updates, `0x01` at session start and paragraph
+  transitions (not required for basic operation). Each update re-sends the
+  full current line content (not a delta).
 
-Implementation:
-- the companion app now uses `0x52` for Chat assistant replies via a paced
+### Official app line model (`Confirmed`, 2026-05-01)
+
+From BLE capture analysis of the official Even Realities app:
+
+- **Line 1** = cursor/status marker. A regular text packet for line
+  index 1, sent every update with text content `\n`. This is NOT a special
+  cursor frame — it is the same `0x52` text packet format as line 2.
+- **Line 2** = ALL text content. The full growing response text goes to
+  line index 2. The firmware handles visual rendering (wrapping, scrolling).
+- **Every update sends both packets** — line 1 marker then line 2 text.
+- No "cursor frame" exists as a distinct concept. What was previously
+  identified as a cursor frame (`52 0e 00 <seq> 02 02 00 01 00 00 00 00
+  0a 0a`) is just a text packet for line 1 with `\n` content.
+- No confirmed-flag management is needed.
+
+### Firmware display characteristics (`Confirmed`, 2026-05-01)
+
+- **3 visible text rows** on the display
+- **~43 characters per row** (proportional font, varies slightly)
+- **No native scrolling** — the firmware displays whatever text it receives
+  on line 2, wrapped at its display width, but does NOT scroll when text
+  exceeds the visible area
+- The firmware wraps text at its own display width AND respects embedded
+  `\n` characters as explicit line breaks
+- Text mid-word wrapping occurs when a word crosses the display boundary
+  (firmware does not word-wrap, only character-wrap)
+
+### Scrolling (host-managed)
+
+The firmware does NOT auto-scroll. The host must manage the visible window:
+
+- The companion app wraps text with `\n` at ~43-char word boundaries, then
+  keeps only the **last 3 lines** (matching the 3 visible rows)
+- As new content wraps to a 4th line, the oldest line is trimmed from the
+  front of the text
+- Visual effect: text grows word by word on the bottom row. When that row
+  fills, the top row disappears and new content starts at the bottom.
+
+### Implementation
+
+- the companion app uses `0x52` for Chat assistant replies via a paced
   `StreamingRenderQueue` — see
   [chat_service.dart](../lib/services/chat_service.dart) and
   [streaming_render_queue.dart](../lib/services/streaming_render_queue.dart)
-- `0x50 06 00 00 01 01` must be sent before the first `0x52` frame to
-  prime the display (see "Display mode control" below)
+- `0x50 06 00 00 01 01` must be sent before the first `0x52` frame
 - if streaming is unavailable, Chat can fall back to `0x4E` text blocks
+- `StreamingRenderQueue` pacing: 2 words every 200 ms (~450 WPM effective
+  with BLE send overhead)
+- each tick: adds 2 words to displayed text, wraps with `\n` at 43-char
+  word boundaries, keeps last 3 lines, sends line 1 (`\n`) + line 2
+  (visible text) via `Proto.sendStreamingLine`
+- backend chunks are decoupled from display — chunks append to a target
+  buffer, the queue drains independently
+- queue keeps draining after the backend completes until all words are
+  displayed, then signals completion via `onDrained` callback
+- display flow: user question shown via `0x4E` → "Thinking..." via `0x4E`
+  → fresh `0x52` surface → queue streams response → response stays visible
+  with keepalive
+- follow-up turns: `startListening` does `Proto.exit()` only when a prior
+  `0x52` session is active (avoids BLE destabilisation on marginal
+  connections)
+- key constants: `_displayLineWidth = 43`, `_displayVisibleRows = 3`,
+  `wordsPerTick = 2`, `drainInterval = 200ms`
 
-Official app line model (`Confirmed`, 2026-04-29, from BLE capture analysis):
-- the official Even Realities app uses only **two line indices**:
-  - **line 1** = cursor/status marker. Always sent with empty content
-    (just `\n`). Marks "cursor is here" for the firmware.
-  - **line 2** = ALL text content. The full growing text goes to a single
-    line index. The firmware handles all wrapping and scrolling internally.
-- every update sends **both packets**: a line-1 marker (`sendStreamingLine`),
-  then a line-2 text update (`sendStreamingText` with cursor + text)
-- the firmware wraps text at its own display width and scrolls oldest rows
-  off the top — the host does not manage line breaks or visible windows
-- text on line 2 can be hundreds of characters; the firmware handles it
-- when a new paragraph starts, the text includes embedded `\n` newlines —
-  both paragraphs stay in line 2
-- no confirmed-flag management is needed — there is only ever line 1
-  (marker) and line 2 (growing text)
-- the companion app now mirrors this model: `StreamingRenderQueue` sends
-  line 1 (empty marker) + line 2 (all text, growing word by word) on every
-  tick. If text exceeds ~230 chars, only the tail is sent. The
-  `_charsPerLine` constant and `maxVisibleLines` are removed — the firmware
-  handles wrapping.
+### Previous incorrect approaches (superseded)
 
-Previous incorrect approach (superseded):
-- we previously tried using multiple line indices (1-4) with our own
-  wrapping and confirmed/active flag management. The firmware only reliably
-  renders lines near the cursor, so this approach showed only 1-2 lines
-  and lost text.
+1. **Multi-line indices (lines 1-4)** with host-managed wrapping and
+   confirmed/active flags — firmware only renders lines near the cursor
+   position, so only 1-2 lines were visible
+2. **Single line 2 without embedded `\n`** — firmware fills visible area
+   and stops, no scrolling
+3. **Single line 2 with `\n` but no tail trimming** — firmware fills
+   visible area and stops (firmware does not auto-scroll)
+4. **Sending cursor frame before line 2 text** — the official app doesn't
+   do this; the "cursor frame" is actually a line-1 text packet with `\n`
+   content
+5. **`_capForPacket` truncation at 230 chars** — wrong; the BLE stack
+   handles larger packets, and the `0x52` length byte wrapping with
+   `& 0xff` doesn't matter since the firmware uses the BLE packet length
 
 ## Navigation card: `0x0a`
 

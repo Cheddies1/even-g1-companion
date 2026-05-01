@@ -294,10 +294,11 @@ Chat mode is now a working v1 feature.
 - once the transcript is available, Chat enters the `0x52` conversation
   surface
 - the transcribed user question and a `G1: Thinking...` placeholder are
-  shown in the `0x52` surface while waiting for the backend
+  shown via `0x4E` while waiting for the backend
 - when the assistant reply starts streaming, the render queue takes over
-  the glasses display and sends the reply word by word (line 1 empty marker
-  + line 2 growing text; the firmware wraps and scrolls natively)
+  the glasses display via a fresh `0x52` surface and sends the reply word
+  by word (line 1 `\n` marker + line 2 growing text; host-managed
+  scrolling keeps the last 3 lines visible)
 - follow-up turns continue in the same session while Chat mode stays active
 - leaving Chat mode resets and discards the session
 - `F5 00` / close-active while a reply is visible now clears only the visible
@@ -311,23 +312,22 @@ Chat mode is now a working v1 feature.
 - the WAV is transcribed through the configured OpenAI transcription API
 - the transcript plus in-memory conversation history are sent to the configured
   chat backend
-- the visible Chat surface is displayed via `0x52` streaming text:
+- the visible Chat surface is displayed via `0x52` streaming text
+  (`Confirmed`, 2026-05-01):
   - `0x50` display mode control + `0x52` init before the first streamed frame
-  - `0x53` keepalive stays active while the `0x52` surface is active
-  - non-streaming renders (user turn, Thinking, final committed view) send
-    the visible window with the last line as active (firmware requires the
-    cursor to be present for reliable display)
+  - `0x53` keepalive sent every 5 s while the `0x52` surface is active
+  - non-streaming renders (user turn, Thinking) use `0x4E` text blocks
 - assistant reply rendering is paced by a `StreamingRenderQueue`:
   - backend chunks only append to a target text buffer
-  - the queue drains ~2 words every 150 ms at its own cadence
-  - the queue sends line 1 (empty cursor marker) + line 2 (all text,
-    growing word by word) on every tick — this mirrors the official Even
-    Realities app's line model discovered from BLE capture analysis
-  - the firmware handles all wrapping and scrolling internally; the host
-    does not manage line breaks or visible windows
-  - if text exceeds ~230 chars, only the tail is sent
+  - the queue drains 2 words every 200 ms (~450 WPM effective with BLE
+    overhead)
+  - each tick: adds 2 words to displayed text, wraps with `\n` at 43-char
+    word boundaries, keeps only the last 3 lines (matching the firmware's
+    3 visible rows), sends line 1 (`\n` marker) + line 2 (visible text)
+  - scrolling is host-managed — the firmware does NOT auto-scroll; the
+    host trims the oldest line when a 4th line wraps
   - the queue keeps draining after the backend stream completes until
-    all text is displayed, then signals completion
+    all text is displayed, then signals completion via `onDrained`
 - the visible Chat surface is now a trimmed conversation buffer separate from
   backend history, using compact labels (`You:` / `G1:`) and preserving recent
   turns across follow-up questions while Chat mode remains active
@@ -417,10 +417,10 @@ Richer technical detail is kept in app logs rather than dumped into the glasses 
 
 - Chat mode depends on network reachability and a valid API key
 - long conversations are lightly windowed if they exceed the recent-history cap
-- the `0x52` render path now uses a paced `StreamingRenderQueue` sending
-  line 1 (marker) + line 2 (all text) on every tick, with the firmware
-  handling wrapping and scrolling; still needs live validation of reading
-  pace and long-answer behaviour
+- the `0x52` render path is fully working (`Confirmed`, 2026-05-01):
+  host-managed scrolling (43 chars/row, 3 visible rows, 2 words/tick at
+  200 ms); long-answer behaviour confirmed — oldest line is trimmed as new
+  content wraps
 - during assistant streaming the glasses show only the assistant reply
   (all on line 2), not the user question as context
 - the user question is visible during the "Thinking..." phase and again
@@ -641,4 +641,4 @@ This supports:
 - Capture mode needs real device validation for start/stop/save reliability
 - Navigate mode still needs longer human review against real Google Maps walking sessions
 - Chat mode still needs broader real-world testing for latency, retries, and edge-case error handling
-- Chat `0x52` streaming needs live validation: reading pace tuning, long-answer scrolling, follow-up turn rendering
+- Chat `0x52` streaming is confirmed working (host-managed scrolling, 43 chars/row, 3 rows, 200 ms pacing); follow-up turn rendering still benefits from broader real-world observation

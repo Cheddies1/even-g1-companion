@@ -17,15 +17,18 @@ class StreamingRenderQueue {
 
   // -- Tuning constants (easy to tweak) ------------------------------------
   static const int wordsPerTick = 2;
-  static const Duration drainInterval = Duration(milliseconds: 150);
-
-  /// Max text bytes in a single 0x52 packet (length byte is 1 byte, minus
-  /// header overhead). If the text exceeds this, only the tail is sent.
-  static const int _maxTextBytes = 230;
+  static const Duration drainInterval = Duration(milliseconds: 200);
 
   // -- Configuration -------------------------------------------------------
   final Future<void> Function(int line, String text, {required bool isActive}) _sendLine;
   final void Function() _onDrained;
+
+  /// Firmware display width in characters (confirmed from live testing:
+  /// ~43 chars per visual row, 3 visible rows).
+  static const int _displayLineWidth = 43;
+
+  /// Number of visible rows on the firmware display.
+  static const int _displayVisibleRows = 3;
 
   // -- State ---------------------------------------------------------------
   final StringBuffer _targetText = StringBuffer();
@@ -112,18 +115,23 @@ class StreamingRenderQueue {
 
     if (newWordCount > _displayedWordCount) {
       _displayedWordCount = newWordCount;
-      _displayedText =
-          'G1: ${targetWords.sublist(0, _displayedWordCount).join(' ')}';
+      // Build text with embedded \n at word-wrap boundaries, then keep
+      // only the last N lines (the firmware's visible area). This creates
+      // the scrolling effect: as new content wraps to a new line, the
+      // oldest visible line is trimmed off the front.
+      final wrapped = _wrapWithNewlines(
+        'G1: ${targetWords.sublist(0, _displayedWordCount).join(' ')}',
+      );
+      _displayedText = _tailLines(wrapped, _displayVisibleRows);
     }
 
     // Send if text changed.
-    final textToSend = _capForPacket(_displayedText);
-    if (!_cancelled && textToSend != _lastSentText) {
-      // Line 1: cursor marker (matches official app pattern).
-      await _sendLine(1, '', isActive: false);
+    if (!_cancelled && _displayedText != _lastSentText) {
+      // Line 1: cursor marker with '\n' (matches official app pattern).
+      await _sendLine(1, '\n', isActive: false);
       // Line 2: all text content — firmware wraps and scrolls.
-      await _sendLine(2, textToSend, isActive: true);
-      _lastSentText = textToSend;
+      await _sendLine(2, _displayedText, isActive: true);
+      _lastSentText = _displayedText;
     }
 
     AppLog.debug(
@@ -132,25 +140,19 @@ class StreamingRenderQueue {
       tag: 'Chat',
     );
 
-    // Check drain-complete.
+    // Check drain-complete. The last normal tick already sent all words
+    // to line 2 — no final re-send needed. Re-sending the full text with
+    // original whitespace (newlines etc.) causes the firmware to re-render
+    // from the top, jumping the display back to the beginning.
     if (_backendComplete &&
         _displayedWordCount >= wordsAvailable &&
         !_drainedFired) {
-      // Final: ensure the full text is displayed.
-      final fullText = 'G1: ${target.trim()}';
-      final finalToSend = _capForPacket(fullText);
-      if (!_cancelled && finalToSend != _lastSentText) {
-        await _sendLine(1, '', isActive: false);
-        await _sendLine(2, finalToSend, isActive: true);
-        _lastSentText = finalToSend;
-      }
-
       _drainedFired = true;
       _drainTimer?.cancel();
       _drainTimer = null;
       AppLog.info(
         '${DateTime.now()} render queue: display complete, '
-        'words=$_displayedWordCount/$wordsAvailable textLen=${fullText.length}',
+        'words=$_displayedWordCount/$wordsAvailable textLen=${_displayedText.length}',
         tag: 'Chat',
       );
       if (!_cancelled) {
@@ -159,11 +161,35 @@ class StreamingRenderQueue {
     }
   }
 
-  /// If text exceeds the max 0x52 packet payload, send only the tail.
-  /// The firmware scrolls, so the user sees the most recent content.
-  String _capForPacket(String text) {
-    if (text.length <= _maxTextBytes) return text;
-    return text.substring(text.length - _maxTextBytes);
+  /// Keep only the last [maxLines] lines from [text] (split on `\n`).
+  static String _tailLines(String text, int maxLines) {
+    final lines = text.split('\n');
+    if (lines.length <= maxLines) return text;
+    return lines.sublist(lines.length - maxLines).join('\n');
+  }
+
+  /// Insert `\n` at word boundaries every ~[_displayLineWidth] chars.
+  /// The firmware uses these as paragraph breaks for scrolling.
+  static String _wrapWithNewlines(String text) {
+    final words = text.split(' ');
+    final buffer = StringBuffer();
+    int lineLen = 0;
+    for (int i = 0; i < words.length; i++) {
+      final word = words[i];
+      if (i == 0) {
+        buffer.write(word);
+        lineLen = word.length;
+      } else if (lineLen + 1 + word.length > _displayLineWidth) {
+        buffer.write('\n');
+        buffer.write(word);
+        lineLen = word.length;
+      } else {
+        buffer.write(' ');
+        buffer.write(word);
+        lineLen += 1 + word.length;
+      }
+    }
+    return buffer.toString();
   }
 
   /// Split text into words.

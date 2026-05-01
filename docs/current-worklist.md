@@ -82,41 +82,43 @@ Working, but still needs real-world observation:
 - The debug replay path and `lib/services/nav_replay_data.dart` remain in use
   for PANORAMIC_MAP bootstrap data and MAP_OVERVIEW fallback. Do not remove yet.
 
-2. Chat streaming polish via `0x52`
-- **Implemented:** Chat uses `0x52` as its on-glasses conversation surface.
-  `0x50` mode control + `0x52` init + `0x53` keepalive are managed by
-  `ChatService` and `Proto`.
+2. Chat streaming via `0x52` — DONE (`Confirmed`, 2026-05-01)
+- **Fully implemented and working.** Chat uses `0x52` as its on-glasses
+  conversation surface. `0x50` mode control + `0x52` init + `0x53`
+  keepalive (every 5 s) are managed by `ChatService` and `Proto`.
 - **Paced streaming via `StreamingRenderQueue`:** Backend chunks are
   decoupled from display updates. The backend appends raw text to a target
-  buffer; the queue drains ~2 words every 150 ms and sends line 1 (empty
-  cursor marker) + line 2 (all text, growing word by word) on every tick.
-  The firmware handles all wrapping and scrolling natively. If text exceeds
-  ~230 chars, only the tail is sent. The queue keeps draining after the
-  backend stream completes until all text is displayed. The old
-  `TextPainter`-based wrapping, committed-line buffer, multi-line-index
-  approach (lines 1-4), and 80 ms flush timer are all removed. The
-  `_charsPerLine` constant and `maxVisibleLines` are removed — the firmware
-  handles wrapping. `wrapText()` still exists on `StreamingRenderQueue` for
-  non-queue `0x4E` renders.
-- **Official app line model (confirmed from BLE capture analysis):** the
-  official Even Realities app uses only two line indices: line 1 as an
-  empty cursor/status marker (always `\n`), and line 2 for ALL text
-  content. Every update sends both packets. The firmware wraps at its
-  display width and scrolls oldest rows off the top. New paragraphs use
-  embedded `\n` within line 2. No confirmed-flag management is needed.
-  The previous multi-line-index approach only showed 1-2 visible lines due
-  to firmware cursor-proximity rendering. This finding is also documented
-  in `protocol-reference.md`.
-- **Recent fix:** `F5 00` while a Chat reply is visible now clears only the
-  visible Chat display and preserves the in-memory Chat session for follow-up
+  buffer; the queue drains 2 words every 200 ms (~450 WPM effective with
+  BLE overhead). Each tick: adds 2 words to displayed text, wraps with
+  `\n` at 43-char word boundaries, keeps only the last 3 lines (matching
+  the firmware's 3 visible rows), and sends line 1 (`\n` marker) + line 2
+  (visible text) via `Proto.sendStreamingLine`. The queue keeps draining
+  after the backend stream completes until all text is displayed, then
+  signals completion via `onDrained`. `wrapText()` still exists on
+  `StreamingRenderQueue` for non-queue `0x4E` renders.
+- **Firmware display characteristics (`Confirmed`, 2026-05-01):** 3
+  visible text rows, ~43 characters per row (proportional font). The
+  firmware does NOT auto-scroll — it wraps text at its display width and
+  respects embedded `\n` as line breaks, but stops rendering when text
+  exceeds the visible area. The host manages scrolling by trimming the
+  oldest line when a 4th line wraps.
+- **Official app line model (`Confirmed`, 2026-05-01):** line 1 is a
+  cursor/status marker (a regular text packet with `\n` content, NOT a
+  special cursor frame). Line 2 carries ALL text content. Every update
+  sends both packets. No confirmed-flag management is needed.
+- **Previous incorrect approaches:** multi-line indices 1-4 (firmware
+  only rendered 1-2 lines near cursor); single line 2 without `\n`
+  (firmware filled area and stopped); single line 2 with `\n` but no
+  tail trimming (no auto-scroll); separate "cursor frame" (just a line-1
+  text packet); `_capForPacket` 230-char truncation (unnecessary).
+- **`F5 00` handling:** while a Chat reply is visible, clears only the
+  visible display and preserves the in-memory Chat session for follow-up
   turns.
-- **Next steps:**
-  1. Live-validate reading pace on device — tune `wordsPerTick` (currently 2)
-     and `drainInterval` (currently 150 ms) if the pace feels too fast or slow.
-  2. Validate long-answer behaviour and confirm the firmware's native
-     scrolling works well for extended replies.
-  3. Validate follow-up turns still render correctly after the line-model
-     change.
+- **Follow-up turns:** `startListening` does `Proto.exit()` only when a
+  prior `0x52` session is active, avoiding BLE destabilisation on marginal
+  connections.
+- Key constants: `_displayLineWidth = 43`, `_displayVisibleRows = 3`,
+  `wordsPerTick = 2`, `drainInterval = 200ms`.
 
 3. QuickNote via hosted transcription (future feature)
 - Right-hold → `0xf1` mic audio during hold → `0x1e c8` chunked post-release
@@ -187,10 +189,12 @@ Note-management family `0x06`:
 Rendering protocols (layouts capture):
 - 2026-04-28 layouts capture (`FINDINGS-layouts.md`) discovered three new
   rendering paths the official app uses beyond `0x4E` text and BMP:
-  - **`0x52` live streaming text** — word-by-word with cursor, confirmed
-    with a known phrase. `0x53` keepalive every ~5 s. **Now implemented in
-    Chat** via paced `StreamingRenderQueue` with sequential line-fill model
-    (firmware only reliably renders lines near the cursor position).
+  - **`0x52` live streaming text** — word-by-word with cursor, `0x53`
+    keepalive every 5 s. **Fully implemented in Chat** (`Confirmed`,
+    2026-05-01) via paced `StreamingRenderQueue` with host-managed
+    scrolling: 43 chars/row, 3 visible rows, 2 words/tick at 200 ms.
+    The firmware does NOT auto-scroll; the host wraps at word boundaries
+    and trims to the last 3 lines.
   - **`0x0a` navigation card** — structured text data slots in one ~48-byte
     packet (ETA, distance, road, turn distance) plus optional icon/map
     bitmap chunks. The current Navigate implementation uses:

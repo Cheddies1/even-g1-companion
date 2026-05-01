@@ -187,29 +187,35 @@ Owns:
 - backend request / response handling
 - concise text-state rendering back to the glasses
 - Chat uses the confirmed `0x52` streaming text protocol as its on-glasses
-  conversation surface. `Proto.startStreamingText()` sends `0x50`
-  display-mode control and the `0x52` init frame. `0x53` keepalive runs
-  every ~5 s while the `0x52` surface is active.
+  conversation surface (`Confirmed`, 2026-05-01).
+  `Proto.startStreamingText()` sends `0x50` display-mode control and the
+  `0x52` init frame. `0x53` keepalive runs every 5 s while the `0x52`
+  surface is active.
 - **Paced streaming via `StreamingRenderQueue`:** Backend chunks are
   decoupled from display updates. The backend appends raw text to a target
   buffer; a separate `StreamingRenderQueue` drains that buffer at a paced
-  cadence (~2 words every 150 ms) and sends line 1 (empty cursor marker) +
-  line 2 (all text, growing word by word) on every tick. The firmware
-  handles all wrapping and scrolling internally. If text exceeds ~230
-  chars, only the tail is sent. The `_charsPerLine` constant and
-  `maxVisibleLines` are removed — the firmware handles wrapping. The
-  `wrapText()` static method still exists on `StreamingRenderQueue` for
-  non-queue `0x4E` renders.
-  The queue keeps draining after the backend stream completes until all
-  text is displayed, then signals completion.
-- **Official app line model (confirmed from BLE capture analysis):** the
-  official Even Realities app uses only two `0x52` line indices: line 1 as
-  an empty cursor/status marker, and line 2 for all text content. The
-  firmware wraps at its display width and scrolls oldest rows off the top.
-  New paragraphs use embedded `\n` within line 2. No confirmed-flag
-  management is needed. The previous multi-line-index approach (lines 1-4
-  with host-side `TextPainter` wrapping and committed-line buffers) only
-  rendered 1-2 visible lines due to firmware cursor-proximity behaviour.
+  cadence (2 words every 200 ms, ~450 WPM effective with BLE overhead).
+  Each tick: adds 2 words to the displayed text, wraps with `\n` at
+  43-char word boundaries, keeps only the last 3 lines (matching the
+  firmware's 3 visible rows), and sends line 1 (`\n` marker) + line 2
+  (visible text) via `Proto.sendStreamingLine`. The host manages
+  scrolling — the firmware does NOT auto-scroll. The `wrapText()` static
+  method still exists on `StreamingRenderQueue` for non-queue `0x4E`
+  renders. The queue keeps draining after the backend stream completes
+  until all text is displayed, then signals completion via `onDrained`.
+- **Firmware display characteristics (`Confirmed`, 2026-05-01):** 3
+  visible text rows, ~43 characters per row (proportional font). The
+  firmware wraps at its display width and respects embedded `\n` as line
+  breaks, but does NOT scroll — the host trims to the last 3 lines.
+  Character-wraps mid-word at the display boundary.
+- **Official app line model (`Confirmed`, 2026-05-01):** the official Even
+  Realities app uses only two `0x52` line indices: line 1 as a
+  cursor/status marker (a regular text packet with `\n` content, NOT a
+  special cursor frame), and line 2 for all text content. Every update
+  sends both packets. No confirmed-flag management is needed. The previous
+  multi-line-index approach (lines 1-4 with host-side `TextPainter`
+  wrapping and committed-line buffers) only rendered 1-2 visible lines due
+  to firmware cursor-proximity behaviour.
 - Chat keeps a **display buffer** separate from backend message history.
   The display buffer is the on-glasses conversation surface (`You:` / `G1:`),
   with committed wrapped lines. During assistant streaming the queue takes
