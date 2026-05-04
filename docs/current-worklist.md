@@ -35,11 +35,7 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-### Authoritative settings reconcile (brightness, auto, head-up, double-tap)
-- **Status**: Now
-- **Context**: The brightness readback investigation (formerly Next item 1) confirmed `0x29` as the brightness GET path but established that the auto flag is NOT readable back from the firmware. The firmware settings readback investigation (formerly Next item 2) found no usable GET path for `0x08` / `0x26`. Both items are resolved by the same architectural decision: the companion app's persisted settings are now treated as authoritative. On every BLE reconnect the app re-pushes its last-known values for all four settings. This deliberately replaces the previous non-invasive model for head-up and double-tap. Eddie's reasoning: "this is my app, my app knows best".
-- **Acceptance**: (a) On every BLE reconnect, the glasses receive the app's persisted values for brightness level, auto-brightness, head-up behaviour, and double-tap action. (b) The home-page brightness slider and auto-brightness toggle survive cold launches — initial UI state is loaded from `AppSettingsStore`, not hard-coded defaults.
-- **Notes**: Implementation sub-tasks being worked in parallel: (1) persist brightness level + auto flag in `AppSettingsStore` (head-up and double-tap were already persisted); (2) wire all four re-push calls into the BLE reconnect handler; (3) update slider/toggle to read initial state from persistence; (4) remove investigation-only `Proto.probeBrightnessReadback()` and `StartupProbe` logging blocks; (5) update docstrings and architectural notes to reflect the authoritative model (docs curator running in parallel). Cross-ref `docs/FINDINGS-battery+brightness.md` and `docs/external-protocol-wiki-notes.md`.
+Nothing currently in flight. Top of Next: Navigate cleanup (composite).
 
 ---
 
@@ -95,8 +91,14 @@ Nothing here yet. Reserved for future capture.
 
 ## Recently Done
 
+### Glance: notification posted time (2026-05-04)
+`lib/services/glance_service.dart` (`_buildDisplayText`). The `--` separator on the second line of the four-line Glance HUD is replaced by the notification's posted time in `HH:MM` 24-hour format. No model or protocol change — `CompanionNotification.postedAt` was already populated. The "No notifications" idle branch is unchanged. Build green; no new analysis issues.
+
+### Authoritative settings reconcile — brightness, auto, head-up, double-tap (2026-05-01)
+Device testing confirmed complete. Settings persist across cold launches; slider loads its last position from `AppSettingsStore` on startup. All four firmware settings (brightness level, auto-brightness, head-up behaviour, double-tap action) re-assert on every BLE reconnect — even when the official Even Realities app has written different values in between.
+
 ### Brightness readback investigation (2026-05-01)
-Empirical testing pinned `0x29` as the brightness GET path (level only; the wiki's claim that byte 3 carries the auto flag was not reproduced). Identified triggers for `0x6e` (TX `23 74`), `0x3e` (TX `3e`), and `0x2c` (host poll, not unsolicited firmware push). Confirmed the right-temple ambient light sensor location. Confirmed `F5 12` already fires unprompted ~15 s after connect with the current level. Decision: pivot to authoritative settings model rather than firmware readback — companion app re-pushes all four settings on every BLE reconnect (see Now / In Flight). Full protocol detail in `docs/FINDINGS-battery+brightness.md`.
+Empirical testing pinned `0x29` as the brightness GET path (level only; the wiki's claim that byte 3 carries the auto flag was not reproduced). Identified triggers for `0x6e` (TX `23 74`), `0x3e` (TX `3e`), and `0x2c` (host poll, not unsolicited firmware push). Confirmed the right-temple ambient light sensor location. Confirmed `F5 12` already fires unprompted ~15 s after connect with the current level. Decision: pivot to authoritative settings model rather than firmware readback — companion app re-pushes all four settings on every BLE reconnect (see 2026-05-01 authoritative settings entry above). Full protocol detail in `docs/FINDINGS-battery+brightness.md`.
 
 ### Chat `0x52` streaming (Confirmed, 2026-05-01)
 Paced streaming via `StreamingRenderQueue` is fully implemented in Chat. Backend chunks are decoupled from display: the queue drains 2 words every 200 ms (~450 WPM effective with BLE overhead), wraps at 43-char word boundaries, and keeps only the last 3 lines — matching the firmware's 3 visible rows. The firmware does NOT auto-scroll; the host manages scrolling. Line 1 carries a `\n` marker; line 2 carries all visible text. Follow-up turns do `Proto.exit()` only when a prior `0x52` session is active. Full reference detail is in `AGENTS.md` and `docs/FINDINGS-layouts.md`.
@@ -108,7 +110,7 @@ Paced streaming via `StreamingRenderQueue` is fully implemented in Chat. Backend
 `0x01 <level> <auto>` set wired via `Proto.setBrightness`. `F5 12 <level>` echo handled by `DeviceStatusService`. Home screen Display section has a brightness slider (commits on release) and an auto-brightness switch.
 
 ### Firmware settings dropdowns (push side)
-Head-up behaviour (`0x08`) and double-tap action (`0x26`) wired as dropdowns on the Settings page. Choices persisted in `AppSettingsStore`; companion app does not re-send on reconnect (non-invasive).
+Head-up behaviour (`0x08`) and double-tap action (`0x26`) wired as dropdowns on the Settings page. Choices persisted in `AppSettingsStore`; companion app does not re-send on reconnect (non-invasive — superseded by authoritative model, see 2026-05-01 entry above).
 
 ### Double-tap host-action mode switch
 `F5 20` wired to `CompanionController.handleDoubleTapModeSwitch`. Cycles companion app modes when the official app's double-tap action is set to a host-handled type (Transcribe / Translate / Teleprompter).
@@ -158,7 +160,7 @@ Persisted-on-glasses settings (head-up + double-tap):
   Notification Filters and Permissions. Two dropdowns: Tilt-up behaviour
   and Double-tap behaviour. Choices are persisted in `AppSettingsStore`
   so they survive app restarts; the companion app does **not** re-send
-  on connect (non-invasive). The settings themselves persist on the
+  on connect (non-invasive — superseded by authoritative model, see 2026-05-01 Recently Done). The settings themselves persist on the
   glasses' firmware regardless.
 
 Quicknote post-release stream:
@@ -290,8 +292,7 @@ Prefer narrow changes in:
 Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
-  - authoritative settings reconcile (brightness + auto + head-up + double-tap re-push on reconnect, persistence to `AppSettingsStore`, slider cold-launch state) — currently in flight
-  - Navigate `0x0a` cleanup (field extraction, EXIT/ARRIVED, replay scaffolding)
+  - Navigate `0x0a` cleanup (field extraction, EXIT/ARRIVED, replay scaffolding) — top of Next
   - QuickNote transcription experiment (`0x21` + LC3 + STT)
   - dashboard content injection (`0x1e` TX)
   - notification policy

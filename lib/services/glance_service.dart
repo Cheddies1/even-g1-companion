@@ -191,7 +191,9 @@ class GlanceService {
     if (current == null) {
       return '$timeLine\n--\nNo notifications';
     }
-    return '$timeLine\n--\n${current.source}\n${current.message}';
+    final postedHour = current.postedAt.hour.toString().padLeft(2, '0');
+    final postedMinute = current.postedAt.minute.toString().padLeft(2, '0');
+    return '$timeLine\n$postedHour:$postedMinute\n${current.source}\n${current.message}';
   }
 
   CompanionNotification? _currentNotification() {

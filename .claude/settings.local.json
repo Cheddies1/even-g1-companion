@@ -9,7 +9,9 @@
       "Read(//tmp/**)",
       "Bash(awk '/QUICKNOTE management/,/All distinct TX 0x08/' /tmp/settings_analysis.txt)",
       "Bash(awk -F',' '$7==\"0xf5\" {print $2,$3,$4,$9}' \"logs/bluetooth/traffic_baseline.csv\")",
-      "Bash(awk *)"
+      "Bash(awk *)",
+      "Bash(flutter build *)",
+      "Bash(git *)"
     ]
   }
 }
