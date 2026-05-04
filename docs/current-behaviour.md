@@ -57,26 +57,26 @@ Glance is currently the main working user-facing feature.
 Glance is text-only by design:
 
 ```text
-14:32  85%
-09:47
-AppName
+14:32  |  85%
+AppName  ·  09:47
 Notification body
 ```
 
-Line 1 is the current wall-clock time, with the glasses battery percentage
-appended whenever a battery value has been received from the glasses. Line 2 is
-the time the notification was originally posted on the phone (`HH:MM`, 24-hour,
-zero-padded, local time) — sourced from `CompanionNotification.postedAt`. Lines
-3 and 4 are the notification source and body respectively.
+Line 1 is the current wall-clock time, separated from the glasses battery
+percentage by `  |  ` (space-pipe-space). Line 2 combines the notification
+source and the time the notification was originally posted on the phone
+(`HH:MM`, 24-hour, zero-padded, local time — sourced from
+`CompanionNotification.postedAt`), separated by `  ·  ` (space-mid-dot-space).
+Line 3 is the notification body; longer messages wrap naturally via
+`TextService` rather than being truncated.
 
 If the glasses have not yet pushed a battery reading (e.g. immediately after
-connect, before the first `F5 0A`), the time line is rendered without the
-percentage:
+connect, before the first `F5 0A`), the battery field is omitted and line 1 is
+the wall-clock time alone:
 
 ```text
 14:32
-09:47
-AppName
+AppName  ·  09:47
 Notification body
 ```
 

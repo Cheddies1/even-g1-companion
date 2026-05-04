@@ -91,8 +91,8 @@ Nothing here yet. Reserved for future capture.
 
 ## Recently Done
 
-### Glance: notification posted time (2026-05-04)
-`lib/services/glance_service.dart` (`_buildDisplayText`). The `--` separator on the second line of the four-line Glance HUD is replaced by the notification's posted time in `HH:MM` 24-hour format. No model or protocol change — `CompanionNotification.postedAt` was already populated. The "No notifications" idle branch is unchanged. Build green; no new analysis issues.
+### Glance: notification display reworked to 3-line format (2026-05-04)
+`lib/services/glance_service.dart` (`_buildDisplayText`). The Glance notification HUD is now a compact 3-line layout: line 1 shows `HH:MM  |  <battery>` (pipe separator between time and battery); line 2 shows `<source>  ·  HH:MM` (mid-dot separator between source and posted time); line 3 is the message content, wrapping naturally via TextService. Earlier in the day the posted time was added as a fourth line; this follow-up merged source and posted time onto one line and dropped the count to three. No model or protocol change — `CompanionNotification.postedAt` was already populated. The "No notifications" idle branch is unchanged. Build green; no new analysis issues.
 
 ### Authoritative settings reconcile — brightness, auto, head-up, double-tap (2026-05-01)
 Device testing confirmed complete. Settings persist across cold launches; slider loads its last position from `AppSettingsStore` on startup. All four firmware settings (brightness level, auto-brightness, head-up behaviour, double-tap action) re-assert on every BLE reconnect — even when the official Even Realities app has written different values in between.

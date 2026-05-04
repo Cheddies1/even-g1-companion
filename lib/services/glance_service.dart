@@ -186,14 +186,14 @@ class GlanceService {
     final batteryLabel = DeviceStatusService.get.glassesBatteryLabel;
     final timeLine = batteryLabel == null
         ? '$hour:$minute'
-        : '$hour:$minute  $batteryLabel';
+        : '$hour:$minute  |  $batteryLabel';
     final current = _currentNotification();
     if (current == null) {
       return '$timeLine\n--\nNo notifications';
     }
     final postedHour = current.postedAt.hour.toString().padLeft(2, '0');
     final postedMinute = current.postedAt.minute.toString().padLeft(2, '0');
-    return '$timeLine\n$postedHour:$postedMinute\n${current.source}\n${current.message}';
+    return '$timeLine\n${current.source}  ·  $postedHour:$postedMinute\n${current.message}';
   }
 
   CompanionNotification? _currentNotification() {
