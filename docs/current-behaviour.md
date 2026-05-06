@@ -614,6 +614,41 @@ Practical effect:
 - Navigate display divergence should self-correct more often after recovery
 - a restart/reconnect should no longer be the only way to recover from every partial transport problem
 
+## Auto-reconnection
+
+The app reconnects automatically in two scenarios: after an unexpected full disconnect, and on app launch when a previously-paired device is known.
+
+### Post-disconnect auto-reconnect
+
+When the glasses disconnect unexpectedly, the app attempts reconnect using exponential backoff:
+
+| Attempt | Delay before attempt |
+|---|---|
+| 1 | Immediate (0 s) |
+| 2 | 30 s |
+| 3 | 60 s |
+| 4 | 120 s |
+
+After four attempts without success, the app gives up and waits for a manual `Force Reconnect`.
+
+During active reconnect attempts, the connection status shown in the app is `Reconnecting...`.
+
+### Cradle-aware skip
+
+Before starting auto-reconnect, the app checks the last known wear state (persisted in `AppSettingsStore`). If the glasses were last seen in cradle — `F5 08` or `F5 0B` — auto-reconnect is skipped entirely. The assumption is that the user deliberately put the glasses away, and retrying would be unwanted churn.
+
+Auto-reconnect proceeds only when the last recorded wear state was worn (`F5 06`) or is not yet known (the app has never received a wear-state event from the current pairing).
+
+The persisted wear state survives both disconnection and app restart, so the cradle-check works correctly even if the app is restarted while the glasses are in their case.
+
+### App-launch auto-connect
+
+On app launch, if a previously-paired device exists (channel number persisted in `AppSettingsStore.ble.last_channel_number`) AND the last recorded wear state is not `inCradle`, the app starts a BLE scan automatically and connects when the known glasses are found. No manual action is required.
+
+If the last wear state was `inCradle`, the launch-time scan is suppressed — consistent with the cradle-aware skip above.
+
+Once a successful connection is made (whether via auto-reconnect or app-launch auto-connect), the authoritative settings re-push applies as normal — see `current-architecture.md` § "Authoritative settings model".
+
 ## Home screen
 
 Current behaviour:
@@ -633,6 +668,7 @@ Current behaviour:
   glasses re-push values
 - on full disconnect, battery values clear and wear state returns to `—`
 - a `Force Reconnect` action remains available in the connection area
+- during auto-reconnect attempts the connection status shows `Reconnecting...`
 - occasional setup items now live under `Settings` rather than staying on the main screen
 
 ### Display section

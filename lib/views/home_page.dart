@@ -34,6 +34,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (BleManager.get().getConnectionStatus() == 'Connecting...') {
       return 'Connecting';
     }
+    if (BleManager.get().getConnectionStatus() == 'Reconnecting...') {
+      return 'Reconnecting';
+    }
     if (isScanning) {
       return 'Scanning';
     }

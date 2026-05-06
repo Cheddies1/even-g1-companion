@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/proto.dart';
@@ -313,6 +315,7 @@ class DeviceStatusService extends ChangeNotifier {
       tag: 'DeviceStatus',
     );
     _wearState = next;
+    unawaited(AppSettingsStore.get.setLastWearState(_wearState.name));
     notifyListeners();
     return true;
   }

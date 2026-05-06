@@ -50,6 +50,8 @@ Flutter startup is intentionally ordered so the phone UI can come up first:
 
 This matters at startup because early Android-side calls can arrive before background companion setup is finished.
 
+As part of `CompanionController.init()`, the controller calls `attemptAutoConnect()`. This reads `ble.last_channel_number` and `ble.last_wear_state` from `AppSettingsStore`. If a prior channel number exists and the last wear state was not `inCradle`, a BLE scan is started immediately so the app reconnects to the known glasses without any manual action. If the last wear state was `inCradle`, the scan is suppressed.
+
 ## Core controller
 
 Mode ownership is centralised in:
@@ -166,6 +168,11 @@ Behaviour:
 - resets to defaults on full disconnect so stale values are not displayed
 - accepts updates from either temple; the glasses share a single battery, so
   whichever side reports last wins
+- **wear state is persisted to `AppSettingsStore` (`ble.last_wear_state`) on
+  every `F5` wear-state change.** This allows the auto-reconnect logic in
+  `BleManager` to make a cradle-aware decision even after the app has been
+  restarted — see "Auto-reconnect" in the "Transport health and recovery"
+  section below.
 
 Consumers:
 - [lib/services/glance_service.dart](../lib/services/glance_service.dart)
@@ -363,7 +370,7 @@ Heartbeat handling:
 - repeated heartbeat/request timeouts degrade that leg
 - a stale leg can be treated as degraded even before a full disconnect is reported
 
-Reconnect handling:
+Reconnect handling (per-leg):
 - degraded legs trigger bounded reconnect attempts through the native bridge
 - reconnect is per-leg, not always full-session teardown
 - reconnect attempts are intentionally bounded to avoid loops or storms
@@ -380,6 +387,35 @@ Navigate-specific transport protection:
   interleaved burst, then resumes heartbeats afterwards
 - this is specifically to avoid degraded-leg noise and false transport
   failures during the large fire-and-forget bootstrap
+
+### Auto-reconnect (full session)
+
+Full-session disconnect detection and auto-reconnect are a distinct concern from the per-leg degraded handling above.
+
+**Dead-code fix note:** `_onGlassesDisconnected()` in `ble_manager.dart` was historically dead code. Android's GATT stack routes disconnect events through `_onGlassesConnectionStateChanged()` / `_applyConnectionPayload()`, not through `_onGlassesDisconnected()`. As a result, timer cleanup (heartbeat, reconnect monitor) never ran on real disconnects. This has been fixed: `_applyConnectionPayload()` now detects a full disconnect via a `wasConnected && !isConnected` transition check, and performs the full cleanup and auto-reconnect trigger from there.
+
+Full-session auto-reconnect behaviour (`BleManager`):
+- on detecting a full disconnect, checks the last wear state from `AppSettingsStore`
+- if last wear state is `inCradle` (`F5 08` / `F5 0B`), auto-reconnect is skipped
+- if last wear state is `worn` (`F5 06`) or unknown, reconnect proceeds using `forceReconnect()`
+- backoff schedule: immediate → 30 s → 60 s → 120 s (four attempts total)
+- after four unsuccessful attempts, auto-reconnect stops and waits for manual action
+- the channel number used for reconnect is persisted in `AppSettingsStore`
+  (`ble.last_channel_number`) on every successful connect, so it survives
+  app restart
+
+New methods added to `BleManager` for this feature:
+- full-disconnect detection in `_applyConnectionPayload()`
+- backoff scheduling and state tracking
+- channel persistence on connect
+- `_pendingAutoConnectChannel` scan-then-connect pattern for app-launch auto-connect
+
+**AppSettingsStore fields added:**
+
+| Field | Written by | Read by | Purpose |
+|---|---|---|---|
+| `ble.last_channel_number` | `BleManager` on connect | `BleManager` on launch | Identifies which glasses to scan for on app start |
+| `ble.last_wear_state` | `DeviceStatusService` on every F5 wear event | `BleManager` before reconnect / on launch | Enables cradle-aware reconnect skip |
 
 ## Trusted event routing
 

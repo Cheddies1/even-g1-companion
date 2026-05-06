@@ -19,6 +19,8 @@ class AppSettingsStore extends ChangeNotifier {
   static const _doubleTapActionPrefKey = 'firmware.double_tap_action';
   static const _brightnessLevelPrefKey = 'firmware.brightness_level';
   static const _autoBrightnessPrefKey = 'firmware.auto_brightness';
+  static const _lastChannelNumberPrefKey = 'ble.last_channel_number';
+  static const _lastWearStatePrefKey = 'ble.last_wear_state';
 
   bool _initialized = false;
   bool _initializing = false;
@@ -31,6 +33,8 @@ class AppSettingsStore extends ChangeNotifier {
   DoubleTapAction _doubleTapAction = DoubleTapAction.unknown;
   int? _brightnessLevel;
   bool _autoBrightness = false;
+  String _lastChannelNumber = '';
+  String _lastWearState = '';
 
   bool get isInitialized => _initialized;
   String get apiKey => _apiKey;
@@ -56,6 +60,15 @@ class AppSettingsStore extends ChangeNotifier {
   /// app restarts; defaults to false.
   bool get autoBrightness => _autoBrightness;
 
+  /// Last BLE channel number the app successfully connected to, or empty
+  /// string if the app has never connected. Persisted across app restarts.
+  String get lastChannelNumber => _lastChannelNumber;
+
+  /// Name of the [WearState] enum value last observed from the glasses, or
+  /// empty string if no wear event has been received yet. Persisted across
+  /// app restarts so auto-reconnect can skip a cradle-docked glasses pair.
+  String get lastWearState => _lastWearState;
+
   bool get hasRuntimeApiKey => _apiKey.trim().isNotEmpty;
 
   Future<void> init() async {
@@ -77,6 +90,9 @@ class AppSettingsStore extends ChangeNotifier {
           ? prefs.getInt(_brightnessLevelPrefKey)
           : null;
       _autoBrightness = prefs.getBool(_autoBrightnessPrefKey) ?? false;
+      _lastChannelNumber =
+          (prefs.getString(_lastChannelNumberPrefKey) ?? '').trim();
+      _lastWearState = (prefs.getString(_lastWearStatePrefKey) ?? '').trim();
       _initialized = true;
     } finally {
       _initializing = false;
@@ -216,6 +232,36 @@ class AppSettingsStore extends ChangeNotifier {
     await prefs.setBool(_autoBrightnessPrefKey, auto);
     if (_autoBrightness != auto) {
       _autoBrightness = auto;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setLastChannelNumber(String channel) async {
+    await init();
+    final prefs = await SharedPreferences.getInstance();
+    final trimmed = channel.trim();
+    if (trimmed.isEmpty) {
+      await prefs.remove(_lastChannelNumberPrefKey);
+    } else {
+      await prefs.setString(_lastChannelNumberPrefKey, trimmed);
+    }
+    if (_lastChannelNumber != trimmed) {
+      _lastChannelNumber = trimmed;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setLastWearState(String stateName) async {
+    await init();
+    final prefs = await SharedPreferences.getInstance();
+    final trimmed = stateName.trim();
+    if (trimmed.isEmpty) {
+      await prefs.remove(_lastWearStatePrefKey);
+    } else {
+      await prefs.setString(_lastWearStatePrefKey, trimmed);
+    }
+    if (_lastWearState != trimmed) {
+      _lastWearState = trimmed;
       notifyListeners();
     }
   }

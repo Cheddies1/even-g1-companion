@@ -95,6 +95,7 @@ class CompanionController extends ChangeNotifier {
       );
     });
     await _startBackgroundFoundation();
+    await BleManager.get().attemptAutoConnect();
     _logDisplayStateIfChanged('Controller.init.complete');
     AppLog.info('${DateTime.now()} init complete', tag: 'Companion');
   }
@@ -326,15 +327,14 @@ class CompanionController extends ChangeNotifier {
         );
         break;
       case 3:
-        if (_cancelPendingTiltUpIntent(
+        final intentCancelled = _cancelPendingTiltUpIntent(
           reason: 'glance-return-to-centre',
           mode: AppMode.glance,
-        )) {
-          _statusMessage = 'Glance intent cancelled';
-          break;
-        }
+        );
         GlanceService.get.startLookDownTimeout();
-        _statusMessage = 'Glance waiting';
+        _statusMessage = intentCancelled
+            ? 'Glance intent cancelled'
+            : 'Glance waiting';
         break;
       case 17:
         if (_shouldIgnoreVoiceGesture()) {

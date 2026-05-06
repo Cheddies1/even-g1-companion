@@ -115,6 +115,16 @@ class BleManager {
   static const _heartbeatDegradeThreshold = 2;
   static const _heartbeatWarningAge = Duration(seconds: 20);
 
+  Timer? _autoReconnectTimer;
+  int _autoReconnectAttempt = 0;
+  String? _pendingAutoConnectChannel;
+  static const _autoReconnectDelays = [
+    Duration.zero,
+    Duration(seconds: 30),
+    Duration(seconds: 60),
+    Duration(seconds: 120),
+  ];
+
   final List<Map<String, String>> pairedGlasses = [];
   bool isConnected = false;
   String connectionStatus = 'Not connected';
@@ -132,6 +142,7 @@ class BleManager {
   }
 
   Future<void> startScan() async {
+    _cancelAutoReconnect(source: 'manualScan');
     try {
       AppLog.info('${DateTime.now()} scan requested', tag: 'BLE');
       await _channel.invokeMethod('startScan');
@@ -200,6 +211,8 @@ class BleManager {
   }
 
   void _onGlassesConnected(dynamic arguments) {
+    _cancelAutoReconnect(source: 'glassesConnected');
+    _pendingAutoConnectChannel = null;
     AppLog.debug('_onGlassesConnected arguments=$arguments', tag: 'BLE');
     AppLog.info(
       '${DateTime.now()} both connected -> ${arguments['leftDeviceName']} | ${arguments['rightDeviceName']}',
@@ -390,6 +403,16 @@ class BleManager {
 
     if (!isAlreadyPaired) {
       pairedGlasses.add(deviceInfo);
+    }
+
+    final pending = _pendingAutoConnectChannel;
+    if (pending != null && channelNumber == pending) {
+      _pendingAutoConnectChannel = null;
+      AppLog.info(
+        '${DateTime.now()} auto-connect: target channel $pending found, connecting',
+        tag: 'BLE',
+      );
+      unawaited(connectToGlasses('Pair_$channelNumber'));
     }
 
     onStatusChanged?.call();
@@ -633,6 +656,35 @@ class BleManager {
 
   List<Map<String, String>> getPairedGlasses() {
     return pairedGlasses;
+  }
+
+  Future<void> attemptAutoConnect() async {
+    await AppSettingsStore.get.init();
+    final channel = AppSettingsStore.get.lastChannelNumber;
+    final lastWearState = AppSettingsStore.get.lastWearState;
+    if (channel.isEmpty) {
+      AppLog.info(
+        '${DateTime.now()} auto-connect: no persisted channel, skipping',
+        tag: 'BLE',
+      );
+      return;
+    }
+    if (lastWearState == 'inCradle') {
+      AppLog.info(
+        '${DateTime.now()} auto-connect: last wear state was inCradle, skipping',
+        tag: 'BLE',
+      );
+      return;
+    }
+    AppLog.info(
+      '${DateTime.now()} auto-connect: scanning for channel=$channel (lastWearState=$lastWearState)',
+      tag: 'BLE',
+    );
+    _pendingAutoConnectChannel = channel;
+    _lastConnectedChannelNumber = channel;
+    connectionStatus = 'Reconnecting...';
+    onStatusChanged?.call();
+    await startScan();
   }
 
   Future<void> forceReconnect() async {
@@ -930,10 +982,12 @@ class BleManager {
   }
 
   void _applyConnectionPayload(Map<String, dynamic> payload) {
+    final wasConnected = isConnected;
     final channelNumber = (payload['channelNumber'] as String?)?.trim() ??
         _lastConnectedChannelNumber;
     if (channelNumber != null && channelNumber.isNotEmpty) {
       _lastConnectedChannelNumber = channelNumber;
+      unawaited(AppSettingsStore.get.setLastChannelNumber(channelNumber));
     }
     final leftName =
         payload['leftDeviceName'] as String? ?? legState('L').deviceName;
@@ -981,6 +1035,10 @@ class BleManager {
 
     isConnected = leftConnected || rightConnected;
     connectionStatus = _buildConnectionStatus();
+    if (wasConnected && !isConnected) {
+      _handleFullDisconnect(source: 'ConnectionStateChanged');
+      _maybeStartAutoReconnect();
+    }
   }
 
   void _recordLegAck(String lr, {required int cmd}) {
@@ -1153,6 +1211,98 @@ class BleManager {
       );
       onStatusChanged?.call();
     }
+  }
+
+  void _handleFullDisconnect({required String source}) {
+    beatHeartTimer?.cancel();
+    beatHeartTimer = null;
+    _reconnectMonitorTimer?.cancel();
+    _reconnectMonitorTimer = null;
+    _settingsReconcileFired = false;
+    AppLog.info(
+      '${DateTime.now()} full disconnect: timers cancelled source=$source',
+      tag: 'BLE',
+    );
+  }
+
+  void _maybeStartAutoReconnect() {
+    if (_autoReconnectTimer != null || _autoReconnectAttempt > 0) {
+      AppLog.debug(
+        '${DateTime.now()} auto-reconnect already active, skipping',
+        tag: 'BLE',
+      );
+      return;
+    }
+    final lastWearState = AppSettingsStore.get.lastWearState;
+    if (lastWearState == 'inCradle') {
+      AppLog.info(
+        '${DateTime.now()} skip auto-reconnect: last wear state was inCradle',
+        tag: 'BLE',
+      );
+      connectionStatus = 'Not connected';
+      onStatusChanged?.call();
+      return;
+    }
+    AppLog.info(
+      '${DateTime.now()} auto-reconnect: starting backoff (lastWearState=$lastWearState)',
+      tag: 'BLE',
+    );
+    _autoReconnectAttempt = 0;
+    _scheduleNextReconnectAttempt();
+  }
+
+  void _scheduleNextReconnectAttempt() {
+    if (_autoReconnectAttempt >= _autoReconnectDelays.length) {
+      AppLog.info(
+        '${DateTime.now()} auto-reconnect: all ${_autoReconnectDelays.length} attempts exhausted',
+        tag: 'BLE',
+      );
+      _autoReconnectTimer = null;
+      _autoReconnectAttempt = 0;
+      connectionStatus = 'Not connected';
+      onStatusChanged?.call();
+      return;
+    }
+    final delay = _autoReconnectDelays[_autoReconnectAttempt];
+    AppLog.info(
+      '${DateTime.now()} auto-reconnect: attempt $_autoReconnectAttempt in ${delay.inSeconds}s',
+      tag: 'BLE',
+    );
+    connectionStatus = 'Reconnecting...';
+    onStatusChanged?.call();
+    if (delay == Duration.zero) {
+      _executeReconnectAttempt();
+    } else {
+      _autoReconnectTimer = Timer(delay, _executeReconnectAttempt);
+    }
+  }
+
+  void _executeReconnectAttempt() {
+    _autoReconnectTimer = null;
+    if (isConnected) {
+      _cancelAutoReconnect(source: 'already-connected');
+      return;
+    }
+    AppLog.info(
+      '${DateTime.now()} auto-reconnect: executing attempt $_autoReconnectAttempt',
+      tag: 'BLE',
+    );
+    _autoReconnectAttempt++;
+    forceReconnect();
+    _scheduleNextReconnectAttempt();
+  }
+
+  void _cancelAutoReconnect({required String source}) {
+    if (_autoReconnectTimer == null && _autoReconnectAttempt == 0) {
+      return;
+    }
+    AppLog.info(
+      '${DateTime.now()} auto-reconnect: cancelled source=$source',
+      tag: 'BLE',
+    );
+    _autoReconnectTimer?.cancel();
+    _autoReconnectTimer = null;
+    _autoReconnectAttempt = 0;
   }
 
   String _buildConnectionStatus() {

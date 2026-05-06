@@ -52,37 +52,7 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
   - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
 - **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
-### 2. BLE connection stability and auto-reconnection
-- **Status**: Next
-- **Priority**: High
-- **Context**: The app's BLE connection is entirely manual after a full disconnect. Per-leg degradation recovery exists (3 retries within an active connection via `_monitorLegHealth` in `ble_manager.dart`), but once both legs drop the app gives up completely. There is no auto-reconnect on app launch, no retry after unexpected disconnects, and no awareness of whether the disconnect was deliberate (glasses placed in cradle) or accidental (walked out of range). Real-world incidents: the glasses silently disconnect and are not noticed until notifications stop appearing — then a manual reopen and force-reconnect is required.
-- **Proposed behaviour**:
-  1. **Post-disconnect auto-reconnect with exponential backoff** — when an unexpected disconnect occurs, retry on a schedule: immediate → 30 s → 60 s → 120 s → accept connection is gone. Uses the existing `forceReconnect()` entry point (`ble_manager.dart:638`).
-  2. **Cradle-aware smart disconnect** — before clearing wear/cradle state on disconnect, persist the last known state. If the last known state was "in cradle" (`F5 08` / `F5 0B`), skip auto-reconnect — the user put the glasses away deliberately. Only auto-reconnect when last state was "worn" (`F5 06`) or unknown.
-  3. **Auto-connect on app launch** — if a previously-paired device exists, attempt connection automatically in `CompanionController.init()` without requiring manual user action.
-- **Current codebase state (from investigation)**:
-  - `lib/ble_manager.dart:1059-1119` — existing per-leg health monitor and reconnect logic (degraded → retry ×3). Only works within an active connection.
-  - `lib/ble_manager.dart:329-367` — `_onGlassesDisconnected()` — cancels all timers, resets all state, no retry. This is where the post-disconnect backoff timer would be inserted.
-  - `lib/ble_manager.dart:638-654` — `forceReconnect()` — manual reconnect entry point, usable from the backoff timer.
-  - `lib/services/device_status_service.dart:289-305` — state cleared on disconnect. Needs to persist last known wear state *before* clearing.
-  - `lib/services/companion_controller.dart:214-231` — `handleTransportRecovered()` — feature resync on leg recovery; already handles Navigate refresh and text resend.
-  - `android/.../BleManager.kt:188-218` — `reconnectLeg()` native implementation, no backoff.
-  - `android/.../CompanionForegroundService.kt` — `START_STICKY` foreground service, has no connection awareness. Could host retry logic.
-- **Acceptance**:
-  - [ ] Unexpected disconnect triggers auto-reconnect with backoff: immediate → 30 s → 60 s → 120 s → stop
-  - [ ] Deliberate disconnect (last known state: in cradle) skips auto-reconnect
-  - [ ] App launch auto-connects to last-paired device if available
-  - [ ] Last known wear/cradle state persisted across disconnect (before clearing live state)
-  - [ ] No reconnection storm — backoff schedule respected, no constant scanning for absent glasses
-  - [ ] Reconnection success triggers existing transport recovery (settings reconcile, feature resync)
-- **Design decisions still open**:
-  - Should the foreground service own the retry timer, or keep it in the Flutter BLE manager?
-  - Should there be a user-visible indicator during auto-reconnect attempts ("Reconnecting…" vs silent)?
-  - Should auto-connect on app launch be gated behind a user setting, or always-on?
-  - How to handle the edge case where glasses are powered off (not just out of range) — BLE scan will fail repeatedly.
-- **Notes**: Cross-ref the existing per-leg recovery mechanism (`_monitorLegHealth`, `_attemptLegReconnect`, `_maxReconnectAttempts = 3`) — this feature complements rather than replaces it. The existing logic handles in-connection leg degradation; this handles full disconnects. Files likely touched: `lib/ble_manager.dart`, `lib/services/device_status_service.dart`, `lib/services/companion_controller.dart`, possibly `android/.../BleManager.kt` and `CompanionForegroundService.kt`.
-
-### 3. QuickNote via hosted transcription (experiment)
+### 2. QuickNote via hosted transcription (experiment)
 - **Status**: Next
 - **Priority**: Medium
 - **Context**: Right-hold gesture surfaces as `0x21` press, followed by a chunked `0x1e c8 ...` audio-shaped stream after release. The shape is consistent with low-bitrate voice; the existing LC3 decode path (used by Capture and Chat) may handle it. End-to-end flow: `0x21` release → buffer chunked stream → LC3 decode → OpenAI STT → push note text via `0x1e` dashboard slot.
@@ -99,14 +69,6 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Context**: `0x1e` TX can push titled content into the firmware's dashboard grid layout — useful for summaries, reminders, or status info.
 - **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
 - **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot? Demoted from Next — lacks a concrete use case. Revisit when a clear scenario emerges.
-
-### glance-tilt-stuck: Glance: display occasionally sticks after tilt-down
-- **Status**: Backlog
-- **Priority**: Unprioritised
-- **Context**: When using "tilt up" frequently in Glance mode, the last displayed notification or dashboard view can get stuck on the glasses when tilting back down. It is supposed to clear after approximately 2 seconds. Suspected cause: a timer conflict between the tilt-up intent timer (`_pendingTiltUpIntentTimer` in `companion_controller.dart`) and the tilt-down clear timer (`_clearTimer` in `glance_service.dart`).
-- **Reproduction**: Frequent tilt-up/tilt-down cycling in Glance mode. The display remains showing the last rendered content instead of clearing.
-- **Acceptance**: Tilt-down reliably clears the display within ~2 seconds regardless of how rapidly the user has been cycling tilt-up. No timer conflict between `_pendingTiltUpIntentTimer` and `_clearTimer`.
-- **Notes**: Pre-existing issue, not caused by recent changes. Files likely involved: `lib/services/companion_controller.dart` (tilt intent timer, lines ~493–531), `lib/services/glance_service.dart` (`_displayDuration`, `_restartClearTimer`, `startLookDownTimeout`).
 
 ### now-playing-mediasession: Now Playing: extract MediaSession metadata for apps with empty notification fields
 - **Status**: Backlog
@@ -127,6 +89,23 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Acceptance**: Root cause identified. Either confirmed that the current sequence is correct (and the ghost screen is a firmware quirk), or a cleaner alternative command sequence is identified and implemented.
 - **Notes**: Pre-existing issue, not caused by recent changes. Requires protocol investigation before a fix can be designed. Files likely involved: `lib/services/proto.dart` (`exit()`, line ~475), `lib/services/text_service.dart` (`stopTextSendingByOS()`), `docs/protocol-reference.md`.
 
+### ongoing-call-idle: Ongoing call idle surface
+- **Status**: Backlog
+- **Priority**: Unprioritised
+- **Context**: When a phone call is active, the idle surface (what the glasses show when the display times out and the user looks forward) should become a persistent call HUD rather than going blank. The feature leverages the existing `GlanceService.showIdleSurfaceIfAvailable()` stub (currently returns false) as the exact insertion point — the controller calls it after `close()` fires on tilt-down timeout.
+- **Design** (fully specified, capture faithfully):
+  - **Detection**: Call notifications are typically `category == 'call'` and `isOngoing == true`. Expected source: Samsung dialer (`com.samsung.android.incallui` or similar). Fields likely include: `source="Call"`, `title=<caller name>`, duration in `text` or `subText`. A log capture during a real call will confirm exact field names and package — treat this as a small precursor investigation embedded in this item.
+  - **Idle surface hook**: After `close()` fires (tilt-down timeout), `CompanionController` calls `GlanceService.showIdleSurfaceIfAvailable()`. If a call is active, this renders the call HUD instead of going blank. The stub already exists; the implementation fills it in.
+  - **Duration updates**: Android fires periodic notification updates during a call (duration ticking). Each update refreshes `_currentCall` and re-renders the idle surface — duration stays live with no separate timer needed.
+  - **Interaction model**:
+    - Looking forward (idle): `Ongoing call: Andy Hulbert` + `Call time: 35:12` (persistent, refreshed by notification updates)
+    - Tilt up: normal notification carousel (existing behaviour, unchanged)
+    - Tilt down / timeout: returns to call idle surface (not blank)
+    - Call ends: notification removed, `_currentCall` cleared, idle reverts to blank
+  - **Reference screenshot**: `logs/images/ongoing-call.jpg`
+- **Acceptance**: When a call is active and the display times out, the glasses show the caller name and live call duration. Tilt-up opens the notification carousel as normal. When the call ends the idle surface clears.
+- **Notes**: Precursor investigation — do a log capture during a real call to confirm: Samsung dialer package name, exact notification field names for caller name and duration, and whether `isOngoing` is the reliable discriminator. Keep this investigation inside the item rather than as a separate entry. Implementation files likely involved: `lib/services/glance_service.dart` (`showIdleSurfaceIfAvailable`), `lib/services/companion_controller.dart` (post-`close()` call path), `lib/services/notification_policy.dart` (call detection / `_currentCall` state).
+
 ---
 
 ## Parked
@@ -145,6 +124,12 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 ---
 
 ## Recently Done
+
+### BLE connection stability and auto-reconnection (2026-05-06)
+Three capabilities implemented across 5 files (`app_settings_store.dart`, `device_status_service.dart`, `ble_manager.dart`, `companion_controller.dart`, `home_page.dart`). (1) Post-disconnect auto-reconnect with exponential backoff: immediate → 30 s → 60 s → 120 s → give up. (2) Cradle-aware smart disconnect: skips reconnect when last persisted wear state was "in cradle" (`F5 08` / `F5 0B`). (3) Auto-connect on app launch using persisted `ble.last_channel_number`. Also fixed a critical bug: `_onGlassesDisconnected()` was dead code — disconnect timer cleanup never ran; fixed via `wasConnected && !isConnected` transition detection in `_applyConnectionPayload()`. New persisted settings: `ble.last_channel_number`, `ble.last_wear_state`. UI shows "Reconnecting..." during backoff attempts.
+
+### Glance: tilt-down display stuck bug fixed (2026-05-06)
+The tilt-down handler (case 3, `F5 03`) in `companion_controller.dart` had an early `break` when cancelling a pending tilt-up intent, which skipped calling `GlanceService.startLookDownTimeout()`. If the display was already visible from a previous confirmed intent or notification auto-pop, the clear timer never started and the display stayed on the glasses indefinitely. Fix: `startLookDownTimeout()` is now called unconditionally on every tilt-down in Glance mode. The method's own `if (!_isVisible) return;` guard makes it a safe no-op when the display is not visible. One case block changed; no new fields or methods.
 
 ### Glance: "Now Playing" media integration (2026-05-06)
 Media notifications from streaming apps are now absorbed into Glance line 1 instead of cycling through the notification carousel. Line 1 shows `12:41  |  100%  |  ▶ Green Day - Dookie` when playback is active; reverts to `12:41  |  100%` when stopped. New `NotificationDisposition.mediaAbsorbed` classification. Two-tier detection: auto-detect (`isMediaStyle && category == transport`) plus per-app "Now Playing" toggle in Settings. Track text truncated with `...` at 43-char display width. DB migrated v1 → v2 (`media_override` column). Settings UI gains two toggles per app: "Now Playing" and "Mute". 6 files changed: `notification_policy.dart`, `notification_settings_store.dart`, `notification_package_preference.dart`, `glance_service.dart`, `companion_controller.dart`, `settings_page.dart`.
@@ -351,8 +336,7 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — top of Next; field extraction, EXIT/ARRIVED, replay scaffolding decision
-  - BLE connection stability and auto-reconnection (`ble_manager.dart`, `device_status_service.dart`, `companion_controller.dart`) — High priority; post-disconnect backoff, cradle-aware skip, app-launch auto-connect
-  - QuickNote transcription experiment (`0x21` + LC3 + STT)
+  - QuickNote transcription experiment (`0x21` + LC3 + STT) — Next #2
   - notification policy
   - Capture validation
 - point the agent to:
