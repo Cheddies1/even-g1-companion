@@ -16,9 +16,11 @@ class GlanceService {
 
   static const _displayDuration = Duration(seconds: 5);
   static const _maxNotifications = 20;
+  static const _mediaTimeout = Duration(seconds: 60);
 
   final List<CompanionNotification> _notifications = [];
   Timer? _clearTimer;
+  Timer? _mediaTimeoutTimer;
   int _currentIndex = 0;
   bool _isVisible = false;
   String? _pendingDismissKey;
@@ -49,6 +51,18 @@ class GlanceService {
 
   void updateMedia(CompanionNotification notification) {
     _currentMedia = notification;
+    _mediaTimeoutTimer?.cancel();
+    _mediaTimeoutTimer = Timer(_mediaTimeout, () {
+      _currentMedia = null;
+      _mediaTimeoutTimer = null;
+      if (_isVisible) {
+        _enqueueRender(autoHide: false, markInteracted: false);
+      }
+      AppLog.info(
+        '${DateTime.now()} media cleared by timeout',
+        tag: 'Glance',
+      );
+    });
     AppLog.info(
       '${DateTime.now()} media updated -> ${notification.title} / ${notification.text}',
       tag: 'Glance',
@@ -63,6 +77,8 @@ class GlanceService {
       return;
     }
     _currentMedia = null;
+    _mediaTimeoutTimer?.cancel();
+    _mediaTimeoutTimer = null;
     AppLog.info(
       '${DateTime.now()} media cleared -> $key',
       tag: 'Glance',
@@ -156,6 +172,8 @@ class GlanceService {
   Future<void> close() async {
     _clearTimer?.cancel();
     _clearTimer = null;
+    _mediaTimeoutTimer?.cancel();
+    _mediaTimeoutTimer = null;
     await _dismissPendingNotificationOnPhone();
     _isVisible = false;
     await TextService.get.stopTextSendingByOS();
@@ -224,11 +242,11 @@ class GlanceService {
     return '$line1\n${current.source}  ·  $postedHour:$postedMinute\n${current.message}';
   }
 
-  /// Builds the `▶ Artist - Track` suffix for the time line, or returns
+  /// Builds the `> Artist - Track` suffix for the time line, or returns
   /// `null` if there is no current media or the available width is too narrow.
   ///
   /// Line-1 budget is 43 characters. The separator `  |  ` costs 5 characters
-  /// and the `▶ ` prefix costs 2, leaving:
+  /// and the `> ` prefix costs 2, leaving:
   ///   available = 43 - timeLine.length - 5 - 2
   String? _buildMediaSuffix(String timeLine) {
     final media = _currentMedia;
@@ -250,7 +268,7 @@ class GlanceService {
     final truncated = raw.length > available
         ? '${raw.substring(0, available - 3)}...'
         : raw;
-    return '▶ $truncated';
+    return '> $truncated';
   }
 
   CompanionNotification? _currentNotification() {

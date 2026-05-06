@@ -33,14 +33,14 @@ class NotificationPolicy {
     if (notification.isSamsungAodMirror) {
       return NotificationDisposition.suppressed;
     }
+    if (_isMediaAbsorbedNotification(notification, packageName)) {
+      return NotificationDisposition.mediaAbsorbed;
+    }
     if (NotificationSettingsStore.get.isPackageSuppressed(packageName)) {
       return NotificationDisposition.suppressed;
     }
     if (_shouldSuppressOpenOnPhone(notification)) {
       return NotificationDisposition.suppressed;
-    }
-    if (_isMediaAbsorbedNotification(notification, packageName)) {
-      return NotificationDisposition.mediaAbsorbed;
     }
     if (notification.isOngoing) {
       return NotificationDisposition.suppressed;

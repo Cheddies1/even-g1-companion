@@ -100,6 +100,33 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
 - **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot? Demoted from Next — lacks a concrete use case. Revisit when a clear scenario emerges.
 
+### glance-tilt-stuck: Glance: display occasionally sticks after tilt-down
+- **Status**: Backlog
+- **Priority**: Unprioritised
+- **Context**: When using "tilt up" frequently in Glance mode, the last displayed notification or dashboard view can get stuck on the glasses when tilting back down. It is supposed to clear after approximately 2 seconds. Suspected cause: a timer conflict between the tilt-up intent timer (`_pendingTiltUpIntentTimer` in `companion_controller.dart`) and the tilt-down clear timer (`_clearTimer` in `glance_service.dart`).
+- **Reproduction**: Frequent tilt-up/tilt-down cycling in Glance mode. The display remains showing the last rendered content instead of clearing.
+- **Acceptance**: Tilt-down reliably clears the display within ~2 seconds regardless of how rapidly the user has been cycling tilt-up. No timer conflict between `_pendingTiltUpIntentTimer` and `_clearTimer`.
+- **Notes**: Pre-existing issue, not caused by recent changes. Files likely involved: `lib/services/companion_controller.dart` (tilt intent timer, lines ~493–531), `lib/services/glance_service.dart` (`_displayDuration`, `_restartClearTimer`, `startLookDownTimeout`).
+
+### now-playing-mediasession: Now Playing: extract MediaSession metadata for apps with empty notification fields
+- **Status**: Backlog
+- **Priority**: Unprioritised
+- **Context**: Some media apps (confirmed: Audible / `com.audible.application`) send `MediaStyle` notifications with `category=transport` but leave all content fields (`title`, `text`, `subText`) as empty strings. The actual track/chapter/artist metadata lives in the `MediaSession.metadata` object, not in the notification's `extras` bundle. `RecentNotificationsListenerService.kt` only extracts standard notification text fields — it does not read `MediaSession` metadata.
+- **Evidence (2026-05-06 logs)**:
+  - Flutter side: `title="" text="" subText="" category=transport media=true template="android.app.Notification$MediaStyle"` — all content fields empty
+  - System UI side: `metaData=The Wee Free Men, Chapter 7: First Sight and Second Thoughts, Terry Pratchett` — full metadata available in the `MediaSession`
+- **Proposed fix**: Enhance `RecentNotificationsListenerService.kt` to detect `MediaStyle` notifications and, when standard title/text fields are empty, fall back to extracting `MediaMetadata.METADATA_KEY_TITLE` and `MediaMetadata.METADATA_KEY_ARTIST` from the notification's associated `MediaSession`. The `MediaSession.Token` is available in notification extras under `android.mediaSession`.
+- **Acceptance**: Audible (and similarly-behaving apps) produce a non-empty title/text pair that the Now Playing feature can display on the glasses. Apps that already populate standard notification fields (Spotify, YouTube Music, Podcast Addict) are unaffected.
+- **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Other audiobook/podcast apps may behave similarly and would benefit automatically. Files likely touched: `android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt`, possibly `lib/models/companion_notification.dart` if new fields are added for media metadata.
+
+### ghost-listening-screen: Investigate firmware "listening" screen on display clear
+- **Status**: Backlog
+- **Priority**: Unprioritised
+- **Context**: When the app sends a screen-clear command, the G1 firmware occasionally displays the "Even AI is listening, release to finish recording" screen instead of clearing cleanly. This suggests the clear/exit command sequence may be inadvertently triggering a firmware listening state.
+- **Investigation needed**: Check what `Proto.exit()` (`0x18`) and `TextService.stopTextSendingByOS()` actually send. Cross-reference with `docs/protocol-reference.md`, `docs/external-protocol-wiki-notes.md`, and Gadgetbridge `G1Constants.java`. Determine whether there is a sequence that produces a clean screen clear without triggering the voice prompt.
+- **Acceptance**: Root cause identified. Either confirmed that the current sequence is correct (and the ghost screen is a firmware quirk), or a cleaner alternative command sequence is identified and implemented.
+- **Notes**: Pre-existing issue, not caused by recent changes. Requires protocol investigation before a fix can be designed. Files likely involved: `lib/services/proto.dart` (`exit()`, line ~475), `lib/services/text_service.dart` (`stopTextSendingByOS()`), `docs/protocol-reference.md`.
+
 ---
 
 ## Parked
