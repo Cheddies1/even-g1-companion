@@ -93,18 +93,30 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Status**: Backlog
 - **Priority**: Unprioritised
 - **Context**: When a phone call is active, the idle surface (what the glasses show when the display times out and the user looks forward) should become a persistent call HUD rather than going blank. The feature leverages the existing `GlanceService.showIdleSurfaceIfAvailable()` stub (currently returns false) as the exact insertion point — the controller calls it after `close()` fires on tilt-down timeout.
-- **Design** (fully specified, capture faithfully):
-  - **Detection**: Call notifications are typically `category == 'call'` and `isOngoing == true`. Expected source: Samsung dialer (`com.samsung.android.incallui` or similar). Fields likely include: `source="Call"`, `title=<caller name>`, duration in `text` or `subText`. A log capture during a real call will confirm exact field names and package — treat this as a small precursor investigation embedded in this item.
+- **Design** (fully specified — detection confirmed by live capture 2026-05-06, see `logs/call-notification-dump.txt` lines 330–407):
+  - **Detection (confirmed)**:
+    - Package: `com.samsung.android.incallui` (Samsung in-call UI — not the generic dialer package)
+    - Channel: `Ongoing_call`; Category: `call`; Template: `android.app.Notification$CallStyle`
+    - Flags: `ONGOING_EVENT | NO_CLEAR | FOREGROUND_SERVICE | NO_DISMISS` — so `isOngoing == true` on the listener side; this is the reliable discriminator
+    - `android.title` = contact name (e.g. "Andy Hulbert") — this is what we render
+    - `android.callType` = Integer; observed `2` for an active/ongoing call. Likely `1` = incoming/ringing, `2` = ongoing. Confirm with a ringing-call capture if ringing-vs-in-call distinction becomes useful later.
+    - `android.callIsVideo` = Boolean (false for voice)
+    - `android.text` was empty; `android.subText` null; `android.bigText` not present — no duration in any text extra
+    - `android.contains.customView = true` — Samsung renders duration via a custom `RemoteViews` (the "35:12" / "1:28:42" visible on the phone screen). This field is NOT exposed to the notification listener; the standard text-extras path cannot retrieve it.
   - **Idle surface hook**: After `close()` fires (tilt-down timeout), `CompanionController` calls `GlanceService.showIdleSurfaceIfAvailable()`. If a call is active, this renders the call HUD instead of going blank. The stub already exists; the implementation fills it in.
-  - **Duration updates**: Android fires periodic notification updates during a call (duration ticking). Each update refreshes `_currentCall` and re-renders the idle surface — duration stays live with no separate timer needed.
+  - **Duration (revised — original assumption was wrong)**:
+    - ~~Android fires periodic notification updates during a call; each update refreshes duration.~~ This is incorrect. Samsung does NOT re-post the notification every second. Android's chronometer self-updates the phone UI without re-firing notification events, so there are no notification listener callbacks to drive re-renders.
+    - **Correct approach**: `notification.when` is set to the call *connect* time (confirmed: dump's `when` = 13:42:39 BST; call was ~1:28–1:30 in at dump time ~15:11 BST — arithmetic checks out). Note: `mCreationTimeMs` is ~15 s *earlier* than `when` — that gap is Samsung resetting `when` to the connect time once the call is answered; do NOT use `postedAt`/`postTime` for duration.
+    - On the Dart side: subtract `notification.when` from `DateTime.now()`, format as `M:SS` under an hour and `H:MM:SS` once an hour is crossed. Drive a local 1 Hz timer to re-render the idle surface text. Stop the timer when the notification is removed (call ends).
   - **Interaction model**:
-    - Looking forward (idle): `Ongoing call: Andy Hulbert` + `Call time: 35:12` (persistent, refreshed by notification updates)
+    - Looking forward (idle): `Ongoing call: Andy Hulbert` + `Call time: 35:12` (driven by local 1 Hz timer, not notification updates)
     - Tilt up: normal notification carousel (existing behaviour, unchanged)
     - Tilt down / timeout: returns to call idle surface (not blank)
-    - Call ends: notification removed, `_currentCall` cleared, idle reverts to blank
+    - Call ends: notification removed, `_currentCall` cleared, timer stopped, idle reverts to blank
   - **Reference screenshot**: `logs/images/ongoing-call.jpg`
-- **Acceptance**: When a call is active and the display times out, the glasses show the caller name and live call duration. Tilt-up opens the notification carousel as normal. When the call ends the idle surface clears.
-- **Notes**: Precursor investigation — do a log capture during a real call to confirm: Samsung dialer package name, exact notification field names for caller name and duration, and whether `isOngoing` is the reliable discriminator. Keep this investigation inside the item rather than as a separate entry. Implementation files likely involved: `lib/services/glance_service.dart` (`showIdleSurfaceIfAvailable`), `lib/services/companion_controller.dart` (post-`close()` call path), `lib/services/notification_policy.dart` (call detection / `_currentCall` state).
+  - **Future enhancement (out of scope for first cut)**: The notification carries a "Hang up" `PendingIntent` action. The existing notification-action plumbing could surface a hang-up affordance via a glass gesture (e.g. long-tap). Not needed for MVP.
+- **Acceptance**: When a call is active and the display times out, the glasses show the caller name and a live call duration driven by a local 1 Hz timer seeded from `notification.when`. Tilt-up opens the notification carousel as normal. When the call ends the idle surface clears and the timer stops.
+- **Notes**: Precursor capture done (2026-05-06). Implementation files likely involved: `lib/services/glance_service.dart` (`showIdleSurfaceIfAvailable`), `lib/services/companion_controller.dart` (post-`close()` call path), `lib/services/notification_policy.dart` (call detection / `_currentCall` state).
 
 ---
 
