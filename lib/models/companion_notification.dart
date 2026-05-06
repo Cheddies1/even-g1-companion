@@ -22,6 +22,9 @@ class CompanionNotification {
     required this.navIconPngBase64,
     required this.navIconSource,
     required this.postedAt,
+    this.connectedAt,
+    this.callType = -1,
+    this.callIsVideo = false,
   });
 
   final String key;
@@ -46,6 +49,10 @@ class CompanionNotification {
   final String navIconPngBase64;
   final String navIconSource;
   final DateTime postedAt;
+  // Set to the call connect time from notification.when; null if not a call or not yet answered.
+  final DateTime? connectedAt;
+  final int callType;
+  final bool callIsVideo;
 
   bool get isGoogleMaps =>
       packageName.contains('com.google.android.apps.maps') ||
@@ -70,7 +77,16 @@ class CompanionNotification {
       navIconPngBase64.isNotEmpty ||
       navIconSource.isNotEmpty;
 
+  bool get isCall =>
+      isOngoing &&
+      (category.toLowerCase() == 'call' || template.contains('CallStyle'));
+
   factory CompanionNotification.fromMap(Map<dynamic, dynamic> raw) {
+    final whenMs = raw['whenMs'] as int?;
+    final connectedAt = (whenMs != null && whenMs > 0)
+        ? DateTime.fromMillisecondsSinceEpoch(whenMs)
+        : null;
+
     return CompanionNotification(
       key: (raw['key'] as String?) ?? '',
       packageName: (raw['packageName'] as String?) ?? '',
@@ -98,6 +114,9 @@ class CompanionNotification {
       postedAt: DateTime.fromMillisecondsSinceEpoch(
         (raw['postedAt'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
       ),
+      connectedAt: connectedAt,
+      callType: (raw['callType'] as int?) ?? -1,
+      callIsVideo: (raw['callIsVideo'] as bool?) ?? false,
     );
   }
 }

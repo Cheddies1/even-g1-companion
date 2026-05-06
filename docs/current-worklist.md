@@ -89,34 +89,13 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Acceptance**: Root cause identified. Either confirmed that the current sequence is correct (and the ghost screen is a firmware quirk), or a cleaner alternative command sequence is identified and implemented.
 - **Notes**: Pre-existing issue, not caused by recent changes. Requires protocol investigation before a fix can be designed. Files likely involved: `lib/services/proto.dart` (`exit()`, line ~475), `lib/services/text_service.dart` (`stopTextSendingByOS()`), `docs/protocol-reference.md`.
 
-### ongoing-call-idle: Ongoing call idle surface
+
+### call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed
 - **Status**: Backlog
 - **Priority**: Unprioritised
-- **Context**: When a phone call is active, the idle surface (what the glasses show when the display times out and the user looks forward) should become a persistent call HUD rather than going blank. The feature leverages the existing `GlanceService.showIdleSurfaceIfAvailable()` stub (currently returns false) as the exact insertion point — the controller calls it after `close()` fires on tilt-down timeout.
-- **Design** (fully specified — detection confirmed by live capture 2026-05-06, see `logs/call-notification-dump.txt` lines 330–407):
-  - **Detection (confirmed)**:
-    - Package: `com.samsung.android.incallui` (Samsung in-call UI — not the generic dialer package)
-    - Channel: `Ongoing_call`; Category: `call`; Template: `android.app.Notification$CallStyle`
-    - Flags: `ONGOING_EVENT | NO_CLEAR | FOREGROUND_SERVICE | NO_DISMISS` — so `isOngoing == true` on the listener side; this is the reliable discriminator
-    - `android.title` = contact name (e.g. "Andy Hulbert") — this is what we render
-    - `android.callType` = Integer; observed `2` for an active/ongoing call. Likely `1` = incoming/ringing, `2` = ongoing. Confirm with a ringing-call capture if ringing-vs-in-call distinction becomes useful later.
-    - `android.callIsVideo` = Boolean (false for voice)
-    - `android.text` was empty; `android.subText` null; `android.bigText` not present — no duration in any text extra
-    - `android.contains.customView = true` — Samsung renders duration via a custom `RemoteViews` (the "35:12" / "1:28:42" visible on the phone screen). This field is NOT exposed to the notification listener; the standard text-extras path cannot retrieve it.
-  - **Idle surface hook**: After `close()` fires (tilt-down timeout), `CompanionController` calls `GlanceService.showIdleSurfaceIfAvailable()`. If a call is active, this renders the call HUD instead of going blank. The stub already exists; the implementation fills it in.
-  - **Duration (revised — original assumption was wrong)**:
-    - ~~Android fires periodic notification updates during a call; each update refreshes duration.~~ This is incorrect. Samsung does NOT re-post the notification every second. Android's chronometer self-updates the phone UI without re-firing notification events, so there are no notification listener callbacks to drive re-renders.
-    - **Correct approach**: `notification.when` is set to the call *connect* time (confirmed: dump's `when` = 13:42:39 BST; call was ~1:28–1:30 in at dump time ~15:11 BST — arithmetic checks out). Note: `mCreationTimeMs` is ~15 s *earlier* than `when` — that gap is Samsung resetting `when` to the connect time once the call is answered; do NOT use `postedAt`/`postTime` for duration.
-    - On the Dart side: subtract `notification.when` from `DateTime.now()`, format as `M:SS` under an hour and `H:MM:SS` once an hour is crossed. Drive a local 1 Hz timer to re-render the idle surface text. Stop the timer when the notification is removed (call ends).
-  - **Interaction model**:
-    - Looking forward (idle): `Ongoing call: Andy Hulbert` + `Call time: 35:12` (driven by local 1 Hz timer, not notification updates)
-    - Tilt up: normal notification carousel (existing behaviour, unchanged)
-    - Tilt down / timeout: returns to call idle surface (not blank)
-    - Call ends: notification removed, `_currentCall` cleared, timer stopped, idle reverts to blank
-  - **Reference screenshot**: `logs/images/ongoing-call.jpg`
-  - **Future enhancement (out of scope for first cut)**: The notification carries a "Hang up" `PendingIntent` action. The existing notification-action plumbing could surface a hang-up affordance via a glass gesture (e.g. long-tap). Not needed for MVP.
-- **Acceptance**: When a call is active and the display times out, the glasses show the caller name and a live call duration driven by a local 1 Hz timer seeded from `notification.when`. Tilt-up opens the notification carousel as normal. When the call ends the idle surface clears and the timer stops.
-- **Notes**: Precursor capture done (2026-05-06). Implementation files likely involved: `lib/services/glance_service.dart` (`showIdleSurfaceIfAvailable`), `lib/services/companion_controller.dart` (post-`close()` call path), `lib/services/notification_policy.dart` (call detection / `_currentCall` state).
+- **Context**: When the user dismisses the *last* carousel notification while a call is active, `GlanceService.removeNotificationByKey` calls `Proto.exit()` directly rather than falling back to the call HUD. This leaves the glasses blank mid-call, contrary to the expected "call HUD is always the idle fallback when a call is active" behaviour.
+- **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
+- **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
 
 ---
 
@@ -136,6 +115,11 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 ---
 
 ## Recently Done
+
+### Glance: ongoing call idle surface (2026-05-06)
+When a phone call is active and the Glance carousel display times out, the glasses now show a call HUD rather than going blank. Two lines are shown: `Ongoing call: <name>` and `Call time: M:SS` (switching to `H:MM:SS` once the call exceeds an hour). Duration is computed locally in Dart from the call connect timestamp (`notification.when`, confirmed to be set by Samsung's in-call UI to the answer time — NOT the notification post time) via a 1 Hz `Timer.periodic`. Tilt-up opens the normal notification carousel as before; tilt-down or carousel timeout returns to the call HUD. When the call ends the notification is removed, `clearCall` stops the timer, and the idle surface tears down via `Proto.exit()`. The previously-stub `showIdleSurfaceIfAvailable()` in `GlanceService` is now the live entry point for this path. New `NotificationDisposition.callAbsorbed` added to `notification_policy.dart`; call notifications bypass the existing ongoing-suppressed rule and are excluded from the Glance carousel. Detection: `com.samsung.android.incallui`, `isOngoing == true`, `isCall` getter on `CompanionNotification`. 5 files changed: `notification_policy.dart`, `companion_controller.dart`, `glance_service.dart`, `companion_notification.dart`, Kotlin listener + feed store. Known gap: if the user dismisses the last carousel notification mid-call, `removeNotificationByKey` still calls `Proto.exit()` rather than falling back to the HUD — tracked in Backlog (`call-idle-dismiss-fallback`).
+
+**Pending on-device verification:** caller name displays correctly, duration ticks at 1 Hz, tilt-up returns to carousel, tilt-down/timeout returns to HUD, call-end clears the HUD.
 
 ### BLE connection stability and auto-reconnection (2026-05-06)
 Three capabilities implemented across 5 files (`app_settings_store.dart`, `device_status_service.dart`, `ble_manager.dart`, `companion_controller.dart`, `home_page.dart`). (1) Post-disconnect auto-reconnect with exponential backoff: immediate → 30 s → 60 s → 120 s → give up. (2) Cradle-aware smart disconnect: skips reconnect when last persisted wear state was "in cradle" (`F5 08` / `F5 0B`). (3) Auto-connect on app launch using persisted `ble.last_channel_number`. Also fixed a critical bug: `_onGlassesDisconnected()` was dead code — disconnect timer cleanup never ran; fixed via `wasConnected && !isConnected` transition detection in `_applyConnectionPayload()`. New persisted settings: `ble.last_channel_number`, `ble.last_wear_state`. UI shows "Reconnecting..." during backoff attempts.

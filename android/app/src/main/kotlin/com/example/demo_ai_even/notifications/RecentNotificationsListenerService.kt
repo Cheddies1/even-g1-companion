@@ -106,6 +106,9 @@ class RecentNotificationsListenerService : NotificationListenerService() {
                     "navIconPngBase64" to it.navIconPngBase64,
                     "navIconSource" to it.navIconSource,
                     "postedAt" to it.postedAt,
+                    "whenMs" to it.whenMs,
+                    "callType" to it.callType,
+                    "callIsVideo" to it.callIsVideo,
                 )
             )
         }
@@ -199,6 +202,9 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             ?.trim()
             .orEmpty()
         val (navIconPngBase64, navIconSource) = extractBestNavigationIcon(extras)
+        val whenMs = notification.`when`
+        val callType = extras.getInt("android.callType", -1)
+        val callIsVideo = extras.getBoolean("android.callIsVideo", false)
 
         val source = appLabel.ifBlank {
             if (title.isNotBlank()) title else packageName.substringAfterLast('.')
@@ -244,6 +250,9 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             navIconPngBase64 = navIconPngBase64,
             navIconSource = navIconSource,
             postedAt = postTime,
+            whenMs = whenMs,
+            callType = callType,
+            callIsVideo = callIsVideo,
         )
     }
 

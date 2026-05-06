@@ -87,6 +87,40 @@ arrive, and cleared when the source notification is removed (i.e. playback
 stops). Media notifications do not appear in lines 2–3 of the Glance feed;
 they are absorbed into line 1 only.
 
+### Call HUD
+
+When an active phone call is in progress and the Glance carousel display times
+out (or is dismissed), the glasses show a persistent two-line call surface
+rather than going blank:
+
+```text
+Ongoing call: Andy Hulbert
+Call time: 35:12
+```
+
+Duration is formatted as `M:SS` up to 59:59, then `H:MM:SS` once the call
+exceeds one hour. It is computed locally in Dart by subtracting the call
+connect timestamp (`CompanionNotification.connectedAt`, sourced from
+`notification.when` as set by Samsung's in-call UI) from `DateTime.now()`,
+driven by a 1 Hz timer. Samsung does not re-post the in-call notification every
+second, so duration is not derivable from notification updates — the local
+timer is the correct approach.
+
+Caller name is taken from `android.title` in the notification extras
+(`com.samsung.android.incallui` package).
+
+Interactions while the call HUD is showing:
+- Tilt-up: exits the call HUD and opens the normal notification carousel
+- Tilt-down or carousel timeout: returns to the call HUD
+- Call ends: the notification is removed, the timer stops, and the HUD clears
+
+The Glance assistant is not available while the call HUD is visible (the HUD
+counts as an active display, blocking the left-hold assistant trigger).
+
+Known gap: if the user dismisses the last carousel notification mid-call (via
+tilt-up), the display currently goes blank rather than returning to the call
+HUD. Tracked in Backlog (`call-idle-dismiss-fallback`).
+
 If the glasses have not yet pushed a battery reading (e.g. immediately after
 connect, before the first `F5 0A`), the battery field is omitted and line 1 is
 the wall-clock time alone:
@@ -119,13 +153,16 @@ It deliberately does not use the bitmap dashboard path because text is much fast
   - normal notifications are also removed from the local app queue
   - protected notifications stay visible on the phone and are only advanced locally
 - `F5 00` closes the active Glance item
-- timeout clears the active display after a short interval
+- timeout clears the active display after a short interval — unless a call is
+  active, in which case the display transitions to the call HUD rather than
+  going blank (see "Call HUD" in "Display format" above)
 
 ### Glance assistant
 
 - only available while current mode is `Glance`
 - only triggers when Glance is idle / forward-facing
 - does not trigger while a Glance notification is visible
+- does not trigger while the call HUD is showing (the HUD sets `_isVisible = true`, so `hasActiveDisplay` is true and the left-hold assistant path is blocked)
 - does not switch into Chat mode
 - uses the firmware-native listening overlay during left-hold
 - on release, the app:
@@ -157,9 +194,13 @@ At notification-ingestion time, noisy system notifications are filtered out, inc
 
 ### Current notification policy
 
-Glance now applies five notification dispositions:
+Glance now applies six notification dispositions:
 - `blocked`: never shown
 - `suppressed`: not shown in the ordinary Glance queue
+- `callAbsorbed`: not queued in the Glance carousel; routed to the call idle
+  surface (see "Call HUD" in "Display format" above). `shouldBlockFromGlance`
+  returns `true` for this disposition. Call state is cleared when the source
+  notification is removed.
 - `protected`: shown in the queue but never dismissed by Glance gestures
 - `normal`: shown and dismissible
 - `mediaAbsorbed`: not queued in the Glance carousel; absorbed into the Glance
@@ -181,11 +222,13 @@ YouTube when they post media-style notifications.
 Current handling:
 - blocked:
   - companion app notifications
+- callAbsorbed:
+  - active phone call notifications (`com.samsung.android.incallui`, `isOngoing == true`, `category == 'call'` or `CallStyle` template) — routed to the call idle surface rather than the carousel
 - protected:
   - YouTube notifications
   - pinned/live score notifications (Google app pinned live score and Samsung AOD sports wrapper)
 - suppressed:
-  - most ongoing notifications
+  - most ongoing notifications (call notifications are intercepted before this rule applies)
   - low-value `Open on phone` / `Open your phone for details` style handoff notifications
   - user-suppressed packages such as SmartThings / Samsung Camera when toggled off
 

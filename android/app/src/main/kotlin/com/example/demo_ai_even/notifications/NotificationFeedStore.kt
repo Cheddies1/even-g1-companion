@@ -23,6 +23,9 @@ data class DashboardNotificationEntry(
     val navIconPngBase64: String,
     val navIconSource: String,
     val postedAt: Long,
+    val whenMs: Long,
+    val callType: Int,
+    val callIsVideo: Boolean,
 )
 
 object NotificationFeedStore {
@@ -76,6 +79,9 @@ object NotificationFeedStore {
                 "navIconPngBase64" to entry.navIconPngBase64,
                 "navIconSource" to entry.navIconSource,
                 "postedAt" to entry.postedAt,
+                "whenMs" to entry.whenMs,
+                "callType" to entry.callType,
+                "callIsVideo" to entry.callIsVideo,
             )
         }
     }

@@ -687,6 +687,17 @@ class CompanionController extends ChangeNotifier {
       return;
     }
 
+    if (classification == NotificationDisposition.callAbsorbed) {
+      GlanceService.get.updateCall(notification);
+      _logNotificationPolicy(
+        notification,
+        classification: classification,
+        routing: 'call-absorbed',
+      );
+      notifyListeners();
+      return;
+    }
+
     if (classification == NotificationDisposition.mediaAbsorbed) {
       GlanceService.get.updateMedia(notification);
       _logNotificationPolicy(
@@ -757,18 +768,27 @@ class CompanionController extends ChangeNotifier {
         }
       }
       CompanionNotification? latestMedia;
+      CompanionNotification? latestCall;
       for (final raw in rawNotifications?.whereType<Map>() ?? const <Map>[]) {
         final notification = CompanionNotification.fromMap(raw);
-        if (NotificationPolicy.classify(notification) ==
-            NotificationDisposition.mediaAbsorbed) {
+        final disposition = NotificationPolicy.classify(notification);
+        if (disposition == NotificationDisposition.mediaAbsorbed) {
           if (latestMedia == null ||
               notification.postedAt.isAfter(latestMedia.postedAt)) {
             latestMedia = notification;
+          }
+        } else if (disposition == NotificationDisposition.callAbsorbed) {
+          if (latestCall == null ||
+              notification.postedAt.isAfter(latestCall.postedAt)) {
+            latestCall = notification;
           }
         }
       }
       if (latestMedia != null) {
         GlanceService.get.updateMedia(latestMedia);
+      }
+      if (latestCall != null) {
+        GlanceService.get.updateCall(latestCall);
       }
     } catch (e) {
       AppLog.error(
@@ -825,6 +845,7 @@ class CompanionController extends ChangeNotifier {
     final packageName = (rawEvent['packageName'] as String?) ?? '';
     await GlanceService.get.removeNotificationByKey(key);
     GlanceService.get.clearMedia(key);
+    GlanceService.get.clearCall(key);
     final cleared = await NavigateService.get.clearIfMatches(
       key: key,
       packageName: packageName,

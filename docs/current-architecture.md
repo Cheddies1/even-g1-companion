@@ -92,6 +92,9 @@ Owns:
 - phone-side dismissal of deliberately viewed notifications
 - Glance-only assistant shortcut state and ephemeral follow-up context
 - media state (`_currentMedia`): updated live via `updateMedia()` when a `mediaAbsorbed` notification arrives, cleared via `clearMedia()` when that notification is removed; rendered as the `▶ Artist - Track` suffix on Glance line 1
+- call state (`_currentCall`): updated live via `updateCall()` when a `callAbsorbed` notification arrives, cleared via `clearCall()` when that notification is removed; drives the call HUD idle surface (see below)
+
+**Idle surface** — when `close()` fires (tilt-down timeout or carousel advance exhaustion) and `_currentCall` is non-null, `GlanceService` does **not** call `Proto.exit()` and go blank. Instead it sets `_isIdleSurfaceActive = true`, enqueues a render via the call HUD text builder, and starts a 1 Hz `Timer.periodic` (`_callTimer`) that re-renders the duration every second. This branch is embedded directly in `close()`. A separate public method `showIdleSurfaceIfAvailable()` provides the same transition and returns `false` when no call is active (intended for external callers who need to explicitly activate the idle surface). Tilt-up clears `_isIdleSurfaceActive` and cancels `_callTimer`, restoring normal carousel behaviour. Call end (`clearCall()`) cancels the timer, clears `_isIdleSurfaceActive`, and calls `close()` to tear down via `Proto.exit()`.
 
 ### Capture
 - [lib/services/capture_service.dart](../lib/services/capture_service.dart)
@@ -482,18 +485,21 @@ Notification policy:
 - [lib/services/notification_settings_store.dart](../lib/services/notification_settings_store.dart)
 
 Current responsibility:
-- central classification of notifications as `blocked`, `suppressed`, `protected`, `normal`, or `mediaAbsorbed`
-- one place for package-based Glance suppression, dismissal protection, and media absorption rules
+- central classification of notifications as `blocked`, `suppressed`, `callAbsorbed`, `protected`, `normal`, or `mediaAbsorbed`
+- one place for package-based Glance suppression, dismissal protection, media absorption, and call routing rules
 - persistence of user-managed suppressed package and media-override preferences (DB v2)
 
 Current built-in rules:
 - block the companion app's own notifications from entering Glance
+- route active-call notifications (`callAbsorbed`) to `GlanceService.updateCall()` — bypasses the ongoing-suppressed rule; excluded from the carousel via `shouldBlockFromGlance()`; detection uses the `CompanionNotification.isCall` getter (`isOngoing && (category == 'call' || template contains 'CallStyle')`)
 - protect YouTube notifications from Glance-driven dismissal side effects
 - protect pinned/live score notifications (Google pinned live score and Samsung AOD sports wrapper) so they remain visible but non-dismissible
 - suppress most ongoing notifications from the ordinary Glance queue
 - suppress low-value `Open on phone` style handoff notifications
 - seed user-manageable noisy-package suppression for SmartThings / Samsung Camera style churn
 - absorb media-style notifications (`mediaAbsorbed`) from streaming apps (Spotify, YouTube Music, Podcast Addict, YouTube, etc.) into the Glance time line rather than the carousel; controlled by auto-detect heuristics and per-app `media_override` toggle
+
+Classification order in `classify()`: `blocked` → `callAbsorbed` → protected-pinned → suppressed-ongoing → `normal` / `mediaAbsorbed`. The `callAbsorbed` check precedes the ongoing-suppressed rule intentionally — call notifications are `isOngoing == true` and would otherwise be suppressed.
 
 ## Background / permanent companion foundation
 

@@ -4,6 +4,7 @@ import 'package:demo_ai_even/services/notification_settings_store.dart';
 enum NotificationDisposition {
   blocked,
   suppressed,
+  callAbsorbed,
   mediaAbsorbed,
   protected,
   normal,
@@ -26,6 +27,9 @@ class NotificationPolicy {
     final packageName = notification.packageName.trim().toLowerCase();
     if (_blockedPackages.contains(packageName)) {
       return NotificationDisposition.blocked;
+    }
+    if (notification.isCall) {
+      return NotificationDisposition.callAbsorbed;
     }
     if (_isProtectedPinnedLiveScoreNotification(notification)) {
       return NotificationDisposition.protected;
@@ -55,6 +59,7 @@ class NotificationPolicy {
     final disposition = classify(notification);
     return disposition == NotificationDisposition.blocked ||
         disposition == NotificationDisposition.suppressed ||
+        disposition == NotificationDisposition.callAbsorbed ||
         disposition == NotificationDisposition.mediaAbsorbed;
   }
 

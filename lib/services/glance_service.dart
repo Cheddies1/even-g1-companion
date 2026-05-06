@@ -21,11 +21,16 @@ class GlanceService {
   final List<CompanionNotification> _notifications = [];
   Timer? _clearTimer;
   Timer? _mediaTimeoutTimer;
+  Timer? _callTimer;
   int _currentIndex = 0;
+  // True when the glasses are showing any surface (carousel or call HUD).
   bool _isVisible = false;
+  // True specifically when the call HUD is the active idle surface.
+  bool _isIdleSurfaceActive = false;
   String? _pendingDismissKey;
   Future<void> _renderChain = Future<void>.value();
   CompanionNotification? _currentMedia;
+  CompanionNotification? _currentCall;
 
   bool get isVisible => _isVisible;
   int get notificationCount => _notifications.length;
@@ -88,6 +93,35 @@ class GlanceService {
     }
   }
 
+  void updateCall(CompanionNotification notification) {
+    _currentCall = notification;
+    // Only re-render if the idle surface is already showing — the HUD appears
+    // via showIdleSurfaceIfAvailable (post-close / post-timeout), not on call start.
+    if (_isIdleSurfaceActive) {
+      _enqueueRender(autoHide: false, markInteracted: false);
+    }
+    AppLog.info(
+      '${DateTime.now()} call updated -> ${notification.title}',
+      tag: 'Glance',
+    );
+  }
+
+  void clearCall(String key) {
+    if (_currentCall?.key != key) return;
+    _currentCall = null;
+    _callTimer?.cancel();
+    _callTimer = null;
+    if (_isIdleSurfaceActive) {
+      _isIdleSurfaceActive = false;
+      // Was showing the call HUD; close properly now that the call has ended.
+      close();
+    }
+    AppLog.info(
+      '${DateTime.now()} call cleared -> $key',
+      tag: 'Glance',
+    );
+  }
+
   Future<void> ingestNotification(
     CompanionNotification notification, {
     bool autoPop = true,
@@ -145,6 +179,12 @@ class GlanceService {
   Future<void> showLatestOrAdvance() async {
     _clearTimer?.cancel();
     _clearTimer = null;
+    // Tilt-up from idle surface: exit HUD mode and return to the carousel.
+    if (_isIdleSurfaceActive) {
+      _isIdleSurfaceActive = false;
+      _callTimer?.cancel();
+      _callTimer = null;
+    }
     if (!_isVisible) {
       _currentIndex = 0;
     } else if (_notifications.isNotEmpty) {
@@ -175,6 +215,16 @@ class GlanceService {
     _mediaTimeoutTimer?.cancel();
     _mediaTimeoutTimer = null;
     await _dismissPendingNotificationOnPhone();
+    // If a call is active, transition to the call HUD instead of going blank.
+    if (_currentCall != null) {
+      _isIdleSurfaceActive = true;
+      await _enqueueRender(autoHide: false, markInteracted: false);
+      _startCallTimerIfNeeded();
+      return;
+    }
+    _isIdleSurfaceActive = false;
+    _callTimer?.cancel();
+    _callTimer = null;
     _isVisible = false;
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
@@ -182,7 +232,23 @@ class GlanceService {
   }
 
   Future<bool> showIdleSurfaceIfAvailable() async {
-    return false;
+    if (_currentCall == null) return false;
+    _isIdleSurfaceActive = true;
+    await _enqueueRender(autoHide: false, markInteracted: false);
+    _startCallTimerIfNeeded();
+    return true;
+  }
+
+  void _startCallTimerIfNeeded() {
+    _callTimer?.cancel();
+    _callTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_isIdleSurfaceActive && _currentCall != null) {
+        _enqueueRender(autoHide: false, markInteracted: false);
+      } else {
+        _callTimer?.cancel();
+        _callTimer = null;
+      }
+    });
   }
 
   Future<void> _enqueueRender({
@@ -225,6 +291,9 @@ class GlanceService {
   }
 
   String _buildDisplayText(DateTime now) {
+    if (_isIdleSurfaceActive && _currentCall != null) {
+      return _buildCallHudText(now);
+    }
     final hour = now.hour.toString().padLeft(2, '0');
     final minute = now.minute.toString().padLeft(2, '0');
     final batteryLabel = DeviceStatusService.get.glassesBatteryLabel;
@@ -240,6 +309,26 @@ class GlanceService {
     final postedHour = current.postedAt.hour.toString().padLeft(2, '0');
     final postedMinute = current.postedAt.minute.toString().padLeft(2, '0');
     return '$line1\n${current.source}  ·  $postedHour:$postedMinute\n${current.message}';
+  }
+
+  String _buildCallHudText(DateTime now) {
+    final call = _currentCall!;
+    final name = call.title.isNotEmpty ? call.title : call.source;
+    final connected = call.connectedAt;
+    final durationLine = (connected == null || connected.isAfter(now))
+        ? 'Call time: --:--'
+        : 'Call time: ${_formatCallDuration(now.difference(connected))}';
+    return 'Ongoing call: $name\n$durationLine';
+  }
+
+  String _formatCallDuration(Duration d) {
+    if (d.isNegative) return '--:--';
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60);
+    final s = d.inSeconds.remainder(60);
+    String two(int n) => n.toString().padLeft(2, '0');
+    if (h > 0) return '$h:${two(m)}:${two(s)}';
+    return '${two(m)}:${two(s)}';
   }
 
   /// Builds the `> Artist - Track` suffix for the time line, or returns
