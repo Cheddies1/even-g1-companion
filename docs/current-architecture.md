@@ -89,6 +89,7 @@ Owns:
 - auto-pop / deliberate recall timing
 - phone-side dismissal of deliberately viewed notifications
 - Glance-only assistant shortcut state and ephemeral follow-up context
+- media state (`_currentMedia`): updated live via `updateMedia()` when a `mediaAbsorbed` notification arrives, cleared via `clearMedia()` when that notification is removed; rendered as the `▶ Artist - Track` suffix on Glance line 1
 
 ### Capture
 - [lib/services/capture_service.dart](../lib/services/capture_service.dart)
@@ -445,9 +446,9 @@ Notification policy:
 - [lib/services/notification_settings_store.dart](../lib/services/notification_settings_store.dart)
 
 Current responsibility:
-- central classification of notifications as `blocked`, `suppressed`, `protected`, or `normal`
-- one place for package-based Glance suppression and dismissal protection rules
-- persistence of user-managed suppressed package preferences
+- central classification of notifications as `blocked`, `suppressed`, `protected`, `normal`, or `mediaAbsorbed`
+- one place for package-based Glance suppression, dismissal protection, and media absorption rules
+- persistence of user-managed suppressed package and media-override preferences (DB v2)
 
 Current built-in rules:
 - block the companion app's own notifications from entering Glance
@@ -456,6 +457,7 @@ Current built-in rules:
 - suppress most ongoing notifications from the ordinary Glance queue
 - suppress low-value `Open on phone` style handoff notifications
 - seed user-manageable noisy-package suppression for SmartThings / Samsung Camera style churn
+- absorb media-style notifications (`mediaAbsorbed`) from streaming apps (Spotify, YouTube Music, Podcast Addict, YouTube, etc.) into the Glance time line rather than the carousel; controlled by auto-detect heuristics and per-app `media_override` toggle
 
 ## Background / permanent companion foundation
 

@@ -35,7 +35,7 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-Nothing currently in flight. Top of Next: Navigate cleanup (composite).
+Nothing currently in flight. Top of Next: Navigate cleanup.
 
 ---
 
@@ -52,25 +52,53 @@ Nothing currently in flight. Top of Next: Navigate cleanup (composite).
   - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
 - **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
-### 2. QuickNote via hosted transcription (experiment)
+### 2. BLE connection stability and auto-reconnection
+- **Status**: Next
+- **Priority**: High
+- **Context**: The app's BLE connection is entirely manual after a full disconnect. Per-leg degradation recovery exists (3 retries within an active connection via `_monitorLegHealth` in `ble_manager.dart`), but once both legs drop the app gives up completely. There is no auto-reconnect on app launch, no retry after unexpected disconnects, and no awareness of whether the disconnect was deliberate (glasses placed in cradle) or accidental (walked out of range). Real-world incidents: the glasses silently disconnect and are not noticed until notifications stop appearing — then a manual reopen and force-reconnect is required.
+- **Proposed behaviour**:
+  1. **Post-disconnect auto-reconnect with exponential backoff** — when an unexpected disconnect occurs, retry on a schedule: immediate → 30 s → 60 s → 120 s → accept connection is gone. Uses the existing `forceReconnect()` entry point (`ble_manager.dart:638`).
+  2. **Cradle-aware smart disconnect** — before clearing wear/cradle state on disconnect, persist the last known state. If the last known state was "in cradle" (`F5 08` / `F5 0B`), skip auto-reconnect — the user put the glasses away deliberately. Only auto-reconnect when last state was "worn" (`F5 06`) or unknown.
+  3. **Auto-connect on app launch** — if a previously-paired device exists, attempt connection automatically in `CompanionController.init()` without requiring manual user action.
+- **Current codebase state (from investigation)**:
+  - `lib/ble_manager.dart:1059-1119` — existing per-leg health monitor and reconnect logic (degraded → retry ×3). Only works within an active connection.
+  - `lib/ble_manager.dart:329-367` — `_onGlassesDisconnected()` — cancels all timers, resets all state, no retry. This is where the post-disconnect backoff timer would be inserted.
+  - `lib/ble_manager.dart:638-654` — `forceReconnect()` — manual reconnect entry point, usable from the backoff timer.
+  - `lib/services/device_status_service.dart:289-305` — state cleared on disconnect. Needs to persist last known wear state *before* clearing.
+  - `lib/services/companion_controller.dart:214-231` — `handleTransportRecovered()` — feature resync on leg recovery; already handles Navigate refresh and text resend.
+  - `android/.../BleManager.kt:188-218` — `reconnectLeg()` native implementation, no backoff.
+  - `android/.../CompanionForegroundService.kt` — `START_STICKY` foreground service, has no connection awareness. Could host retry logic.
+- **Acceptance**:
+  - [ ] Unexpected disconnect triggers auto-reconnect with backoff: immediate → 30 s → 60 s → 120 s → stop
+  - [ ] Deliberate disconnect (last known state: in cradle) skips auto-reconnect
+  - [ ] App launch auto-connects to last-paired device if available
+  - [ ] Last known wear/cradle state persisted across disconnect (before clearing live state)
+  - [ ] No reconnection storm — backoff schedule respected, no constant scanning for absent glasses
+  - [ ] Reconnection success triggers existing transport recovery (settings reconcile, feature resync)
+- **Design decisions still open**:
+  - Should the foreground service own the retry timer, or keep it in the Flutter BLE manager?
+  - Should there be a user-visible indicator during auto-reconnect attempts ("Reconnecting…" vs silent)?
+  - Should auto-connect on app launch be gated behind a user setting, or always-on?
+  - How to handle the edge case where glasses are powered off (not just out of range) — BLE scan will fail repeatedly.
+- **Notes**: Cross-ref the existing per-leg recovery mechanism (`_monitorLegHealth`, `_attemptLegReconnect`, `_maxReconnectAttempts = 3`) — this feature complements rather than replaces it. The existing logic handles in-connection leg degradation; this handles full disconnects. Files likely touched: `lib/ble_manager.dart`, `lib/services/device_status_service.dart`, `lib/services/companion_controller.dart`, possibly `android/.../BleManager.kt` and `CompanionForegroundService.kt`.
+
+### 3. QuickNote via hosted transcription (experiment)
 - **Status**: Next
 - **Priority**: Medium
 - **Context**: Right-hold gesture surfaces as `0x21` press, followed by a chunked `0x1e c8 ...` audio-shaped stream after release. The shape is consistent with low-bitrate voice; the existing LC3 decode path (used by Capture and Chat) may handle it. End-to-end flow: `0x21` release → buffer chunked stream → LC3 decode → OpenAI STT → push note text via `0x1e` dashboard slot.
 - **Acceptance**: Working POC where a right-hold quicknote on the glasses produces a transcribed note pushed back to the firmware dashboard. All pieces exist individually; integration is the work.
 - **Notes**: This is an experiment — the first goal is to confirm LC3 decodes the post-release stream. Cross-ref `docs/FINDINGS-taps.md` and `docs/FINDINGS-layouts.md`.
 
-### 3. Dashboard content injection
-- **Status**: Next
-- **Priority**: Low
-- **Context**: `0x1e` TX can push titled content into the firmware's dashboard grid layout — useful for summaries, reminders, or status info.
-- **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
-- **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot?
-
 ---
 
 ## Backlog — Unprioritised
 
-Nothing here yet. Reserved for future capture.
+### dashboard-injection: Dashboard content injection
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: `0x1e` TX can push titled content into the firmware's dashboard grid layout — useful for summaries, reminders, or status info.
+- **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
+- **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot? Demoted from Next — lacks a concrete use case. Revisit when a clear scenario emerges.
 
 ---
 
@@ -90,6 +118,9 @@ Nothing here yet. Reserved for future capture.
 ---
 
 ## Recently Done
+
+### Glance: "Now Playing" media integration (2026-05-06)
+Media notifications from streaming apps are now absorbed into Glance line 1 instead of cycling through the notification carousel. Line 1 shows `12:41  |  100%  |  ▶ Green Day - Dookie` when playback is active; reverts to `12:41  |  100%` when stopped. New `NotificationDisposition.mediaAbsorbed` classification. Two-tier detection: auto-detect (`isMediaStyle && category == transport`) plus per-app "Now Playing" toggle in Settings. Track text truncated with `...` at 43-char display width. DB migrated v1 → v2 (`media_override` column). Settings UI gains two toggles per app: "Now Playing" and "Mute". 6 files changed: `notification_policy.dart`, `notification_settings_store.dart`, `notification_package_preference.dart`, `glance_service.dart`, `companion_controller.dart`, `settings_page.dart`.
 
 ### Glance: notification display reworked to 3-line format (2026-05-04)
 `lib/services/glance_service.dart` (`_buildDisplayText`). The Glance notification HUD is now a compact 3-line layout: line 1 shows `HH:MM  |  <battery>` (pipe separator between time and battery); line 2 shows `<source>  ·  HH:MM` (mid-dot separator between source and posted time); line 3 is the message content, wrapping naturally via TextService. Earlier in the day the posted time was added as a fourth line; this follow-up merged source and posted time onto one line and dropped the count to three. No model or protocol change — `CompanionNotification.postedAt` was already populated. The "No notifications" idle branch is unchanged. Build green; no new analysis issues.
@@ -292,9 +323,9 @@ Prefer narrow changes in:
 Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
-  - Navigate `0x0a` cleanup (field extraction, EXIT/ARRIVED, replay scaffolding) — top of Next
+  - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — top of Next; field extraction, EXIT/ARRIVED, replay scaffolding decision
+  - BLE connection stability and auto-reconnection (`ble_manager.dart`, `device_status_service.dart`, `companion_controller.dart`) — High priority; post-disconnect backoff, cradle-aware skip, app-launch auto-connect
   - QuickNote transcription experiment (`0x21` + LC3 + STT)
-  - dashboard content injection (`0x1e` TX)
   - notification policy
   - Capture validation
 - point the agent to:

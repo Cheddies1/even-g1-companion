@@ -4,6 +4,7 @@ import 'package:demo_ai_even/services/notification_settings_store.dart';
 enum NotificationDisposition {
   blocked,
   suppressed,
+  mediaAbsorbed,
   protected,
   normal,
 }
@@ -38,8 +39,8 @@ class NotificationPolicy {
     if (_shouldSuppressOpenOnPhone(notification)) {
       return NotificationDisposition.suppressed;
     }
-    if (_isProtectedMediaNotification(notification)) {
-      return NotificationDisposition.protected;
+    if (_isMediaAbsorbedNotification(notification, packageName)) {
+      return NotificationDisposition.mediaAbsorbed;
     }
     if (notification.isOngoing) {
       return NotificationDisposition.suppressed;
@@ -53,7 +54,8 @@ class NotificationPolicy {
   static bool shouldBlockFromGlance(CompanionNotification notification) {
     final disposition = classify(notification);
     return disposition == NotificationDisposition.blocked ||
-        disposition == NotificationDisposition.suppressed;
+        disposition == NotificationDisposition.suppressed ||
+        disposition == NotificationDisposition.mediaAbsorbed;
   }
 
   static bool canDismissFromGlance(CompanionNotification notification) {
@@ -136,6 +138,33 @@ class NotificationPolicy {
         liveScoreHint.contains('ambientdata:sportsscore:');
   }
 
+  static bool _isMediaAbsorbedNotification(
+    CompanionNotification notification,
+    String normalizedPackageName,
+  ) {
+    final override =
+        NotificationSettingsStore.get.isPackageMedia(normalizedPackageName);
+    if (override == true) {
+      return true;
+    }
+    if (override == false) {
+      return false;
+    }
+    // Auto-detect: must be MediaStyle AND transport-related.
+    // Explicitly requires isMediaStyle so non-transport YouTube notifications
+    // (e.g. "New video from X") are not absorbed.
+    if (!notification.isMediaStyle) {
+      return false;
+    }
+    final category = _normalize(notification.category);
+    final channelId = _normalize(notification.channelId);
+    return category == 'transport' ||
+        channelId.contains('media') ||
+        channelId.contains('playback') ||
+        channelId.contains('transport');
+  }
+
+  // ignore: unused_element
   static bool _isProtectedMediaNotification(CompanionNotification notification) {
     final category = _normalize(notification.category);
     final channelId = _normalize(notification.channelId);

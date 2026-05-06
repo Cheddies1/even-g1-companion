@@ -23,6 +23,7 @@ class GlanceService {
   bool _isVisible = false;
   String? _pendingDismissKey;
   Future<void> _renderChain = Future<void>.value();
+  CompanionNotification? _currentMedia;
 
   bool get isVisible => _isVisible;
   int get notificationCount => _notifications.length;
@@ -44,6 +45,31 @@ class GlanceService {
       '${DateTime.now()} hydrated notifications -> count=${_notifications.length}',
       tag: 'Glance',
     );
+  }
+
+  void updateMedia(CompanionNotification notification) {
+    _currentMedia = notification;
+    AppLog.info(
+      '${DateTime.now()} media updated -> ${notification.title} / ${notification.text}',
+      tag: 'Glance',
+    );
+    if (_isVisible) {
+      _enqueueRender(autoHide: false, markInteracted: false);
+    }
+  }
+
+  void clearMedia(String key) {
+    if (_currentMedia?.key != key) {
+      return;
+    }
+    _currentMedia = null;
+    AppLog.info(
+      '${DateTime.now()} media cleared -> $key',
+      tag: 'Glance',
+    );
+    if (_isVisible) {
+      _enqueueRender(autoHide: false, markInteracted: false);
+    }
   }
 
   Future<void> ingestNotification(
@@ -187,13 +213,44 @@ class GlanceService {
     final timeLine = batteryLabel == null
         ? '$hour:$minute'
         : '$hour:$minute  |  $batteryLabel';
+    final mediaSuffix = _buildMediaSuffix(timeLine);
+    final line1 = mediaSuffix != null ? '$timeLine  |  $mediaSuffix' : timeLine;
     final current = _currentNotification();
     if (current == null) {
-      return '$timeLine\n--\nNo notifications';
+      return '$line1\n--\nNo notifications';
     }
     final postedHour = current.postedAt.hour.toString().padLeft(2, '0');
     final postedMinute = current.postedAt.minute.toString().padLeft(2, '0');
-    return '$timeLine\n${current.source}  ·  $postedHour:$postedMinute\n${current.message}';
+    return '$line1\n${current.source}  ·  $postedHour:$postedMinute\n${current.message}';
+  }
+
+  /// Builds the `▶ Artist - Track` suffix for the time line, or returns
+  /// `null` if there is no current media or the available width is too narrow.
+  ///
+  /// Line-1 budget is 43 characters. The separator `  |  ` costs 5 characters
+  /// and the `▶ ` prefix costs 2, leaving:
+  ///   available = 43 - timeLine.length - 5 - 2
+  String? _buildMediaSuffix(String timeLine) {
+    final media = _currentMedia;
+    if (media == null) {
+      return null;
+    }
+    final available = 43 - timeLine.length - 5 - 2;
+    if (available < 5) {
+      return null;
+    }
+    final title = media.title.trim();
+    final text = media.text.trim();
+    final raw = title.isNotEmpty && text.isNotEmpty
+        ? '$text - $title'
+        : (title.isNotEmpty ? title : text);
+    if (raw.isEmpty) {
+      return null;
+    }
+    final truncated = raw.length > available
+        ? '${raw.substring(0, available - 3)}...'
+        : raw;
+    return '▶ $truncated';
   }
 
   CompanionNotification? _currentNotification() {

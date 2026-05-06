@@ -687,6 +687,17 @@ class CompanionController extends ChangeNotifier {
       return;
     }
 
+    if (classification == NotificationDisposition.mediaAbsorbed) {
+      GlanceService.get.updateMedia(notification);
+      _logNotificationPolicy(
+        notification,
+        classification: classification,
+        routing: 'media-absorbed',
+      );
+      notifyListeners();
+      return;
+    }
+
     if (classification == NotificationDisposition.blocked ||
         classification == NotificationDisposition.suppressed) {
       _logNotificationPolicy(
@@ -745,6 +756,20 @@ class CompanionController extends ChangeNotifier {
           await NavigateService.get.ingestNotification(notification);
         }
       }
+      CompanionNotification? latestMedia;
+      for (final raw in rawNotifications?.whereType<Map>() ?? const <Map>[]) {
+        final notification = CompanionNotification.fromMap(raw);
+        if (NotificationPolicy.classify(notification) ==
+            NotificationDisposition.mediaAbsorbed) {
+          if (latestMedia == null ||
+              notification.postedAt.isAfter(latestMedia.postedAt)) {
+            latestMedia = notification;
+          }
+        }
+      }
+      if (latestMedia != null) {
+        GlanceService.get.updateMedia(latestMedia);
+      }
     } catch (e) {
       AppLog.error(
         '${DateTime.now()} hydrate notifications failed -> $e',
@@ -799,6 +824,7 @@ class CompanionController extends ChangeNotifier {
     final key = (rawEvent['key'] as String?) ?? '';
     final packageName = (rawEvent['packageName'] as String?) ?? '';
     await GlanceService.get.removeNotificationByKey(key);
+    GlanceService.get.clearMedia(key);
     final cleared = await NavigateService.get.clearIfMatches(
       key: key,
       packageName: packageName,

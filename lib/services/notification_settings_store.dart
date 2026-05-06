@@ -23,12 +23,27 @@ class NotificationSettingsStore extends ChangeNotifier {
   List<NotificationPackagePreference> _recentPackages =
       const <NotificationPackagePreference>[];
   Set<String> _suppressedPackages = const <String>{};
+  Set<String> _mediaPackages = const <String>{};
+  Set<String> _mediaOptOutPackages = const <String>{};
 
   bool get isInitialized => _initialized;
   List<NotificationPackagePreference> get recentPackages => _recentPackages;
 
   bool isPackageSuppressed(String packageName) {
     return _suppressedPackages.contains(packageName.trim().toLowerCase());
+  }
+
+  /// Returns `true` if the package is force-marked as media, `false` if
+  /// force-opted out, or `null` if the auto-detect heuristic should decide.
+  bool? isPackageMedia(String packageName) {
+    final normalized = packageName.trim().toLowerCase();
+    if (_mediaPackages.contains(normalized)) {
+      return true;
+    }
+    if (_mediaOptOutPackages.contains(normalized)) {
+      return false;
+    }
+    return null;
   }
 
   Future<void> init() async {
@@ -41,7 +56,7 @@ class NotificationSettingsStore extends ChangeNotifier {
       final dbPath = path.join(databasePath, 'even_companion_notifications.db');
       _db = await openDatabase(
         dbPath,
-        version: 1,
+        version: 2,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE notification_package_preferences (
@@ -49,9 +64,17 @@ class NotificationSettingsStore extends ChangeNotifier {
               display_name TEXT NOT NULL,
               suppressed INTEGER NOT NULL DEFAULT 0,
               last_seen_at INTEGER,
-              is_built_in_candidate INTEGER NOT NULL DEFAULT 0
+              is_built_in_candidate INTEGER NOT NULL DEFAULT 0,
+              media_override INTEGER
             )
           ''');
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await db.execute(
+              'ALTER TABLE notification_package_preferences ADD COLUMN media_override INTEGER',
+            );
+          }
         },
       );
       await _seedBuiltInPackages();
@@ -87,6 +110,7 @@ class NotificationSettingsStore extends ChangeNotifier {
           'last_seen_at': notification.postedAt.millisecondsSinceEpoch,
           'is_built_in_candidate':
               _defaultSuppressedPackages.containsKey(packageName) ? 1 : 0,
+          'media_override': null,
         },
       );
     } else {
@@ -141,6 +165,44 @@ class NotificationSettingsStore extends ChangeNotifier {
     await _refresh();
   }
 
+  Future<void> setPackageMedia(String packageName, bool? value) async {
+    await init();
+    final normalized = packageName.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return;
+    }
+    final existing = await _db!.query(
+      'notification_package_preferences',
+      where: 'package_name = ?',
+      whereArgs: [normalized],
+      limit: 1,
+    );
+    final mediaOverrideValue = value == null ? null : (value ? 1 : 0);
+    if (existing.isEmpty) {
+      await _db!.insert(
+        'notification_package_preferences',
+        {
+          'package_name': normalized,
+          'display_name': _defaultSuppressedPackages[normalized] ?? normalized,
+          'suppressed': 0,
+          'last_seen_at': null,
+          'is_built_in_candidate':
+              _defaultSuppressedPackages.containsKey(normalized) ? 1 : 0,
+          'media_override': mediaOverrideValue,
+        },
+      );
+    } else {
+      await _db!.update(
+        'notification_package_preferences',
+        {'media_override': mediaOverrideValue},
+        where: 'package_name = ?',
+        whereArgs: [normalized],
+      );
+    }
+    await _refresh();
+    notifyListeners();
+  }
+
   Future<void> _seedBuiltInPackages() async {
     for (final entry in _defaultSuppressedPackages.entries) {
       await _db!.insert(
@@ -172,6 +234,16 @@ class NotificationSettingsStore extends ChangeNotifier {
         .toList(growable: false);
     _suppressedPackages = rows
         .where((row) => ((row['suppressed'] as int?) ?? 0) == 1)
+        .map((row) => ((row['package_name'] as String?) ?? '').trim().toLowerCase())
+        .where((packageName) => packageName.isNotEmpty)
+        .toSet();
+    _mediaPackages = rows
+        .where((row) => (row['media_override'] as int?) == 1)
+        .map((row) => ((row['package_name'] as String?) ?? '').trim().toLowerCase())
+        .where((packageName) => packageName.isNotEmpty)
+        .toSet();
+    _mediaOptOutPackages = rows
+        .where((row) => (row['media_override'] as int?) == 0)
         .map((row) => ((row['package_name'] as String?) ?? '').trim().toLowerCase())
         .where((packageName) => packageName.isNotEmpty)
         .toSet();

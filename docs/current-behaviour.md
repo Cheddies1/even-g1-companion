@@ -70,6 +70,23 @@ source and the time the notification was originally posted on the phone
 Line 3 is the notification body; longer messages wrap naturally via
 `TextService` rather than being truncated.
 
+When a media notification is currently active (see "Current notification
+policy" below for classification details), a third segment is appended to line
+1 via a second `  |  ` separator:
+
+```text
+12:41  |  100%  |  ▶ Green Day - Dookie
+WhatsApp  ·  14:23
+Hey are you coming to the meeting?
+```
+
+The media segment is formatted as `▶ Artist - Track` and is truncated with
+`...` to fit within the 43-character display width. Media state is held in
+`_currentMedia` inside `GlanceService`, updated live as media notifications
+arrive, and cleared when the source notification is removed (i.e. playback
+stops). Media notifications do not appear in lines 2–3 of the Glance feed;
+they are absorbed into line 1 only.
+
 If the glasses have not yet pushed a battery reading (e.g. immediately after
 connect, before the first `F5 0A`), the battery field is omitted and line 1 is
 the wall-clock time alone:
@@ -140,11 +157,26 @@ At notification-ingestion time, noisy system notifications are filtered out, inc
 
 ### Current notification policy
 
-Glance now applies five notification classes:
+Glance now applies five notification dispositions:
 - `blocked`: never shown
 - `suppressed`: not shown in the ordinary Glance queue
 - `protected`: shown in the queue but never dismissed by Glance gestures
 - `normal`: shown and dismissible
+- `mediaAbsorbed`: not queued in the Glance carousel; absorbed into the Glance
+  time line as the media suffix on line 1 (see "Display format" above).
+  `shouldBlockFromGlance` returns `true` for this disposition. Media state is
+  cleared when the source notification is removed.
+
+Classification into `mediaAbsorbed` uses two-tier detection:
+1. Auto-detect: notification has `isMediaStyle == true` **and** either
+   `category == 'transport'` or `channelId` contains `media`, `playback`, or
+   `transport`.
+2. Per-app override: the "Now Playing" toggle in Settings → Notification
+   Filters sets `media_override` in SQLite, forcing the classification
+   regardless of style/channel heuristics.
+
+Applies to streaming apps such as Spotify, YouTube Music, Podcast Addict, and
+YouTube when they post media-style notifications.
 
 Current handling:
 - blocked:
@@ -165,7 +197,12 @@ Current safety rules:
 
 - the Settings screen includes a `Notification Filters` section
 - it shows recently seen packages
-- packages can be toggled suppressed / unsuppressed there
+- each package row now has two toggles:
+  - **Now Playing** — enables `mediaAbsorbed` classification for that package,
+    absorbing its notifications into the Glance time line instead of the
+    carousel; stored as `media_override` in SQLite (DB v2,
+    `notification_settings_store.dart`)
+  - **Mute** — suppresses the package entirely from Glance
 - built-in noisy-package suppression seeds currently include SmartThings and Samsung Camera
 
 ### Firmware Settings (Settings screen)

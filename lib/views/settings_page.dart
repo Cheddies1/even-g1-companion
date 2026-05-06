@@ -1,4 +1,5 @@
 import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/models/notification_package_preference.dart';
 import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/assistant_backend_config.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
@@ -248,7 +249,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Suppress noisy packages from Glance. Ongoing notifications remain handled by the built-in policy.',
+            'Suppress noisy packages or mark media apps for the Now Playing line.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: const Color(0xFF9AB7C8),
                 ),
@@ -263,33 +264,65 @@ class _SettingsPageState extends State<SettingsPage> {
             )
           else
             ...packages.take(20).map(
-                  (entry) => SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: entry.suppressed,
-                    activeThumbColor: const Color(0xFF4A8D72),
-                    title: Text(
-                      entry.displayName.isNotEmpty
-                          ? entry.displayName
-                          : entry.packageName,
-                    ),
-                    subtitle: Text(
-                      entry.packageName,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: const Color(0xFF7C8C99),
-                          ),
-                    ),
-                    secondary: entry.isBuiltInCandidate
-                        ? const Icon(Icons.tune, size: 18)
-                        : null,
-                    onChanged: (value) async {
-                      await NotificationSettingsStore.get.setPackageSuppressed(
-                        entry.packageName,
-                        value,
-                      );
-                      await CompanionController.get.refreshCompanionState();
-                    },
-                  ),
+                  (entry) => _buildPackageRow(entry),
                 ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPackageRow(NotificationPackagePreference entry) {
+    final subtitleStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: const Color(0xFF7C8C99),
+        );
+    const labelStyle = TextStyle(fontSize: 11, color: Color(0xFF7C8C99));
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: entry.isBuiltInCandidate
+          ? const Icon(Icons.tune, size: 18)
+          : null,
+      title: Text(
+        entry.displayName.isNotEmpty ? entry.displayName : entry.packageName,
+      ),
+      subtitle: Text(entry.packageName, style: subtitleStyle),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Now\nPlaying', style: labelStyle, textAlign: TextAlign.center),
+              Switch(
+                value: entry.mediaOverride == true,
+                activeThumbColor: const Color(0xFF4A8D72),
+                onChanged: (value) async {
+                  await NotificationSettingsStore.get.setPackageMedia(
+                    entry.packageName,
+                    value ? true : null,
+                  );
+                  await CompanionController.get.refreshCompanionState();
+                },
+              ),
+            ],
+          ),
+          const SizedBox(width: 8),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Mute', style: labelStyle),
+              Switch(
+                value: entry.suppressed,
+                activeThumbColor: const Color(0xFF4A8D72),
+                onChanged: (value) async {
+                  await NotificationSettingsStore.get.setPackageSuppressed(
+                    entry.packageName,
+                    value,
+                  );
+                  await CompanionController.get.refreshCompanionState();
+                },
+              ),
+            ],
+          ),
         ],
       ),
     );
