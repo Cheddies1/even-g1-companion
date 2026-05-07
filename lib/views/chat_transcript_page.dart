@@ -87,7 +87,7 @@ class _ChatTranscriptPageState extends State<ChatTranscriptPage> {
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: isUser
-                              ? const Color(0xFF2F5B4A)
+                              ? const Color(0xFF1F5E54)
                               : const Color(0xFF28313A),
                         ),
                       ),
@@ -98,7 +98,7 @@ class _ChatTranscriptPageState extends State<ChatTranscriptPage> {
                             isUser ? 'User' : 'Assistant',
                             style: theme.textTheme.labelLarge?.copyWith(
                               color: isUser
-                                  ? const Color(0xFF7FD6A8)
+                                  ? const Color(0xFF6FC4B4)
                                   : const Color(0xFF9AB7C8),
                               fontWeight: FontWeight.w700,
                             ),

@@ -237,6 +237,10 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  // Fixed widths so the header labels sit directly above the switches in every row.
+  static const double _switchColumnWidth = 56.0;
+  static const double _switchColumnGap = 8.0;
+
   Widget _buildNotificationFiltersSection() {
     final packages = NotificationSettingsStore.get.recentPackages;
     return _buildSectionCard(
@@ -262,12 +266,41 @@ class _SettingsPageState extends State<SettingsPage> {
                     color: const Color(0xFF9AB7C8),
                   ),
             )
-          else
-            ...packages.take(20).map(
-                  (entry) => _buildPackageRow(entry),
-                ),
+          else ...[
+            _buildSwitchColumnHeaders(),
+            ...packages.take(20).map(_buildPackageRow),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildSwitchColumnHeaders() {
+    const headerStyle = TextStyle(
+      fontSize: 11,
+      color: Color(0xFF7C8C99),
+    );
+    return const Row(
+      children: [
+        Spacer(),
+        SizedBox(
+          width: _switchColumnWidth,
+          child: Text(
+            'Playing',
+            style: headerStyle,
+            textAlign: TextAlign.center,
+          ),
+        ),
+        SizedBox(width: _switchColumnGap),
+        SizedBox(
+          width: _switchColumnWidth,
+          child: Text(
+            'Mute',
+            style: headerStyle,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
     );
   }
 
@@ -275,53 +308,56 @@ class _SettingsPageState extends State<SettingsPage> {
     final subtitleStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
           color: const Color(0xFF7C8C99),
         );
-    const labelStyle = TextStyle(fontSize: 11, color: Color(0xFF7C8C99));
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: entry.isBuiltInCandidate
-          ? const Icon(Icons.tune, size: 18)
-          : null,
-      title: Text(
-        entry.displayName.isNotEmpty ? entry.displayName : entry.packageName,
-      ),
-      subtitle: Text(entry.packageName, style: subtitleStyle),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Now\nPlaying', style: labelStyle, textAlign: TextAlign.center),
-              Switch(
-                value: entry.mediaOverride == true,
-                activeThumbColor: const Color(0xFF4A8D72),
-                onChanged: (value) async {
-                  await NotificationSettingsStore.get.setPackageMedia(
-                    entry.packageName,
-                    value ? true : null,
-                  );
-                  await CompanionController.get.refreshCompanionState();
-                },
-              ),
-            ],
+          if (entry.isBuiltInCandidate)
+            const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: Icon(Icons.tune, size: 18),
+            ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  entry.displayName.isNotEmpty
+                      ? entry.displayName
+                      : entry.packageName,
+                ),
+                Text(entry.packageName, style: subtitleStyle),
+              ],
+            ),
           ),
-          const SizedBox(width: 8),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Mute', style: labelStyle),
-              Switch(
-                value: entry.suppressed,
-                activeThumbColor: const Color(0xFF4A8D72),
-                onChanged: (value) async {
-                  await NotificationSettingsStore.get.setPackageSuppressed(
-                    entry.packageName,
-                    value,
-                  );
-                  await CompanionController.get.refreshCompanionState();
-                },
-              ),
-            ],
+          SizedBox(
+            width: _switchColumnWidth,
+            child: Switch(
+              value: entry.mediaOverride == true,
+              onChanged: (value) async {
+                await NotificationSettingsStore.get.setPackageMedia(
+                  entry.packageName,
+                  value ? true : null,
+                );
+                await CompanionController.get.refreshCompanionState();
+              },
+            ),
+          ),
+          const SizedBox(width: _switchColumnGap),
+          SizedBox(
+            width: _switchColumnWidth,
+            child: Switch(
+              value: entry.suppressed,
+              onChanged: (value) async {
+                await NotificationSettingsStore.get.setPackageSuppressed(
+                  entry.packageName,
+                  value,
+                );
+                await CompanionController.get.refreshCompanionState();
+              },
+            ),
           ),
         ],
       ),

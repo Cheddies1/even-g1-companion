@@ -11,7 +11,16 @@
       "Bash(awk -F',' '$7==\"0xf5\" {print $2,$3,$4,$9}' \"logs/bluetooth/traffic_baseline.csv\")",
       "Bash(awk *)",
       "Bash(flutter build *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(magick --version)",
+      "Bash(python3 -c \"from PIL import Image; print\\('PIL available'\\)\")",
+      "Bash(python3 -c \"import struct, zlib; print\\('struct+zlib available'\\)\")",
+      "Bash(dart --version)",
+      "Bash(flutter --version)",
+      "Bash(dart pub *)",
+      "Bash(flutter test *)",
+      "Bash(flutter pub *)",
+      "Bash(dart run *)"
     ]
   }
 }

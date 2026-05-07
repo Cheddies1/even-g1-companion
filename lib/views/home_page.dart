@@ -157,11 +157,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             : null,
         style: FilledButton.styleFrom(
           backgroundColor:
-              isSelected ? const Color(0xFF2F5B4A) : const Color(0xFF141A20),
+              isSelected ? const Color(0xFF1F5E54) : const Color(0xFF141A20),
           foregroundColor: Colors.white,
           side: BorderSide(
             color:
-                isSelected ? const Color(0xFF4A8D72) : const Color(0xFF28313A),
+                isSelected ? const Color(0xFF2E8A7A) : const Color(0xFF28313A),
           ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
@@ -239,22 +239,42 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (controller.activeMode == AppMode.chat && chat.isThinking) {
       pills.add('Chat thinking');
     }
+    // When there are exactly 4 pills they would flow 3+1 on a typical phone
+    // width, leaving one orphaned chip on a row by itself. Force 2x2 for that
+    // case only; all other counts flow naturally via Wrap.
+    final forceTwoColumns = pills.length == 4;
+    Widget buildChip(String label) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF141A20),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: const Color(0xFF28313A)),
+          ),
+          child: Text(label),
+        );
+
+    if (forceTwoColumns) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          const spacing = 8.0;
+          final chipWidth = (constraints.maxWidth - spacing) / 2;
+          return Wrap(
+            spacing: spacing,
+            runSpacing: spacing,
+            children: pills
+                .map(
+                  (label) => SizedBox(width: chipWidth, child: buildChip(label)),
+                )
+                .toList(growable: false),
+          );
+        },
+      );
+    }
+
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: pills
-          .map(
-            (label) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF141A20),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: const Color(0xFF28313A)),
-              ),
-              child: Text(label),
-            ),
-          )
-          .toList(growable: false),
+      children: pills.map(buildChip).toList(growable: false),
     );
   }
 
@@ -276,46 +296,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Even Companion',
-                      style: (_showCompactConnection
-                              ? theme.textTheme.titleMedium
-                              : theme.textTheme.titleLarge)
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _showCompactConnection
-                          ? '${_uiConnectionState()} • ${_healthSummary()}'
-                          : _uiConnectionState(),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: _showCompactConnection
-                            ? const Color(0xFF9AB7C8)
-                            : const Color(0xFFE7EEF4),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                tooltip: 'Settings',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SettingsPage(),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.settings),
-              ),
-            ],
+          Text(
+            _showCompactConnection
+                ? '${_uiConnectionState()} • ${_healthSummary()}'
+                : _uiConnectionState(),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: _showCompactConnection
+                  ? const Color(0xFF9AB7C8)
+                  : const Color(0xFFE7EEF4),
+            ),
           ),
           const SizedBox(height: 12),
           if (_showCompactConnection) ...[
@@ -381,30 +370,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 onPressed: _forceReconnect,
                 child: const Text('Force Reconnect'),
               ),
-              if (isScanning)
-                TextButton(
-                  onPressed: _stopScan,
-                  child: const Text('Stop Scan'),
-                ),
             ],
           ),
           if (!_showCompactConnection) ...[
             const SizedBox(height: 12),
             if (paired.isEmpty)
-              const Text('No paired glasses discovered yet.')
+              Text(
+                'No paired glasses discovered yet.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF9AB7C8),
+                ),
+              )
             else
               ...paired.map(
-                (glasses) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: OutlinedButton(
-                    onPressed: () async {
-                      final channelNumber = glasses['channelNumber']!;
-                      await BleManager.get()
-                          .connectToGlasses('Pair_$channelNumber');
-                      _refreshPage();
-                    },
-                    child: Text(
-                      'Pair ${glasses['channelNumber']}  ${glasses['leftDeviceName']} / ${glasses['rightDeviceName']}',
+                (glasses) => InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () async {
+                    final channelNumber = glasses['channelNumber']!;
+                    await BleManager.get()
+                        .connectToGlasses('Pair_$channelNumber');
+                    _refreshPage();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${glasses['leftDeviceName']} / ${glasses['rightDeviceName']}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF9AB7C8),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          'Pair ${glasses['channelNumber']}',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -598,6 +603,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Even Companion'),
+        actions: [
+          IconButton(
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SettingsPage(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.settings),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

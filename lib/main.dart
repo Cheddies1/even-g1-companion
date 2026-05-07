@@ -33,11 +33,13 @@ class EvenCompanionApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF4A8D72),
-          secondary: Color(0xFF7FD6A8),
-          surface: Color(0xFF10161C),
+          primary: Color(0xFF1F5E54),
           onPrimary: Colors.white,
-          onSecondary: Colors.black,
+          secondary: Color(0xFF1F5E54),
+          onSecondary: Colors.white,
+          secondaryContainer: Color(0xFF1F5E54),
+          onSecondaryContainer: Colors.white,
+          surface: Color(0xFF10161C),
           onSurface: Color(0xFFE7EEF4),
         ),
         scaffoldBackgroundColor: const Color(0xFF090D10),

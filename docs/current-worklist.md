@@ -89,7 +89,6 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Acceptance**: Root cause identified. Either confirmed that the current sequence is correct (and the ghost screen is a firmware quirk), or a cleaner alternative command sequence is identified and implemented.
 - **Notes**: Pre-existing issue, not caused by recent changes. Requires protocol investigation before a fix can be designed. Files likely involved: `lib/services/proto.dart` (`exit()`, line ~475), `lib/services/text_service.dart` (`stopTextSendingByOS()`), `docs/protocol-reference.md`.
 
-
 ### call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed
 - **Status**: Backlog
 - **Priority**: Unprioritised
@@ -115,6 +114,19 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 ---
 
 ## Recently Done
+
+### App icon — custom adaptive icon (2026-05-07)
+Custom adaptive launcher icon replacing the default Flutter blue-F. Foreground: white open-ring eyeglasses outline (bridge + temples) at 1024×1024 on a transparent PNG (`assets/icon/foreground.png`), generated via `tool/generate_app_icon.dart` (Dart/Skia Canvas + AA, run with `flutter test` — reproducible). Background: `#1F5E54`. `flutter_launcher_icons ^0.14.4` wired in `pubspec.yaml`. Mipmap PNGs and adaptive-icon XML written into `android/app/src/main/res/`. APK built clean.
+
+### Home / Settings UI polish — theme, layout, and structural fixes (2026-05-07)
+Six cosmetic and structural issues resolved across Home, Settings, and Chat screens:
+
+- **Theme accent**: replaced mint (`~#7DCFA0`) with `#1F5E54` (deep teal-green, "mallard neck"). Updated `lib/main.dart` ColorScheme — `primary`, `secondary`, `secondaryContainer` and their `on*` counterparts. `FilledButton.tonal` (Force Reconnect) derives from `secondaryContainer` so that override was required. Hard-coded greens swept from `home_page.dart` (mode button), `settings_page.dart` (Switch active thumbs — now theme-driven), and `chat_transcript_page.dart` (user bubbles).
+- **Home connecting state — Stop Scan**: link removed; the 15-second `scanTimer` still provides the timeout, so no functionality lost.
+- **Home connecting state — status chips**: `LayoutBuilder` forces a 2×2 grid when chip count == 4 (connecting state). Other counts (e.g. connected-state 3+2) continue through `Wrap` unaffected.
+- **Home connecting state — pair list row**: `OutlinedButton` (false affordance) replaced with `InkWell` + `Row` — device name as secondary text on the left, "Pair N" action label in primary colour on the right.
+- **Home (both states) — duplicate title**: card header dropped; settings cog moved to `AppBar.actions`; card lead content is now the connection status line.
+- **Settings notifications page — column headers**: per-row "Now Playing"/"Mute" labels replaced with a single `_buildSwitchColumnHeaders()` widget at section top; `SizedBox(width: 56)` columns align with each row's switches. "Now Playing" abbreviated to "Playing" (would have wrapped to two lines — change confirmed acceptable).
 
 ### Glance: ongoing call idle surface (2026-05-06)
 When a phone call is active and the Glance carousel display times out, the glasses now show a call HUD rather than going blank. Two lines are shown: `Ongoing call: <name>` and `Call time: M:SS` (switching to `H:MM:SS` once the call exceeds an hour). Duration is computed locally in Dart from the call connect timestamp (`notification.when`, confirmed to be set by Samsung's in-call UI to the answer time — NOT the notification post time) via a 1 Hz `Timer.periodic`. Tilt-up opens the normal notification carousel as before; tilt-down or carousel timeout returns to the call HUD. When the call ends the notification is removed, `clearCall` stops the timer, and the idle surface tears down via `Proto.exit()`. The previously-stub `showIdleSurfaceIfAvailable()` in `GlanceService` is now the live entry point for this path. New `NotificationDisposition.callAbsorbed` added to `notification_policy.dart`; call notifications bypass the existing ongoing-suppressed rule and are excluded from the Glance carousel. Detection: `com.samsung.android.incallui`, `isOngoing == true`, `isCall` getter on `CompanionNotification`. 5 files changed: `notification_policy.dart`, `companion_controller.dart`, `glance_service.dart`, `companion_notification.dart`, Kotlin listener + feed store. Known gap: if the user dismisses the last carousel notification mid-call, `removeNotificationByKey` still calls `Proto.exit()` rather than falling back to the HUD — tracked in Backlog (`call-idle-dismiss-fallback`).
