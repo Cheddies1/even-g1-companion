@@ -20,7 +20,7 @@ Active app modes:
 - `navigate` — Google Maps turn-by-turn via firmware navigation card
 - `chat` — voice loop with OpenAI-compatible backend
 
-## Current implementation status (2026-04-29)
+## Current implementation status (2026-05-07)
 
 Recently implemented:
 - **Battery + wear state** on home screen and Glance HUD (pushed by firmware, no polling)
@@ -44,6 +44,29 @@ Recently implemented:
   `0x52` session is active. `wrapText()` still exists for non-queue `0x4E`
   renders. Key constants: `_displayLineWidth = 43`,
   `_displayVisibleRows = 3`, `wordsPerTick = 2`, `drainInterval = 200ms`.
+- **Glance: Now Playing media in time line** (2026-05-06) — media
+  notifications (`NotificationDisposition.mediaAbsorbed`) absorbed into the
+  Glance time line as `> Artist - Track` suffix. 60-second timeout clears
+  stale media. Truncated to fit the 43-char line budget.
+- **Glance: ongoing call idle surface** (2026-05-06) — when a phone call
+  is active, the idle surface (post-carousel-timeout) shows a persistent
+  call HUD: `Ongoing call: <name>` + `Call time: M:SS`. Duration computed
+  locally from `notification.when` (call connect time) via a 1 Hz timer.
+  Detection: `com.samsung.android.incallui`, `category == 'call'`,
+  `isOngoing`. New `callAbsorbed` disposition in NotificationPolicy.
+  `GlanceService.showIdleSurfaceIfAvailable()` replaces the former stub.
+  Tilt-up returns to carousel; call-end clears the HUD.
+- **UI polish pass** (2026-05-07) — theme accent changed from mint
+  `#7DCFA0` to deep teal-green `#1F5E54`. Home page: removed floating Stop
+  Scan link, fixed chip wrapping (2×2 via LayoutBuilder), replaced
+  false-affordance pair row with InkWell+Row, dropped duplicate title
+  (settings cog moved to AppBar actions). Settings notifications: single
+  column headers at section top, per-row labels removed. Auto-pop dismiss
+  timer fix: content-refresh renders no longer cancel the auto-hide timer.
+  Display duration 3 s.
+- **Custom launcher icon** (2026-05-07) — adaptive icon via
+  `flutter_launcher_icons ^0.14.4`. White eyeglasses glyph on `#1F5E54`
+  background. Generator script at `tool/generate_app_icon.dart`.
 
 Under active development:
 - Navigate `0x0a` structured card — **protocol confirmed working** (full
@@ -168,7 +191,7 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - prefer narrow changes over broad rewrites
 - treat the Android notification listener and foreground service as core app foundations
 - the BMP pipeline is preserved in the codebase for potential future use (do not delete)
-- Glance has no special live-score idle surface; pinned/live score notifications stay in the normal protected notification flow
+- Glance has a call-HUD idle surface but no live-score idle surface; pinned/live score notifications stay in the normal protected notification flow
 
 ## Read first
 - [README.md](README.md) — repo overview + key confirmed findings

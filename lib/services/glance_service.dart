@@ -14,7 +14,7 @@ class GlanceService {
   static GlanceService? _instance;
   static GlanceService get get => _instance ??= GlanceService._();
 
-  static const _displayDuration = Duration(seconds: 5);
+  static const _displayDuration = Duration(seconds: 3);
   static const _maxNotifications = 20;
   static const _mediaTimeout = Duration(seconds: 60);
 
@@ -280,10 +280,11 @@ class GlanceService {
     }
     if (autoHide) {
       _restartClearTimer();
-    } else {
-      _clearTimer?.cancel();
-      _clearTimer = null;
     }
+    // When autoHide is false, leave the existing timer untouched — callers
+    // that need it cancelled (showLatestOrAdvance, close) do so before
+    // enqueuing. Content-refresh renders (media, call) must not kill a
+    // running auto-dismiss timer.
     AppLog.debug(
       '${DateTime.now()} render -> index=$_currentIndex count=${_notifications.length}',
       tag: 'Glance',
