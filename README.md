@@ -140,7 +140,7 @@ general-purpose product.
   - captured icon/map bytes still reused from the official app
   - 1-second `0x0a` `SYNC` poller to keep the session alive
   - post-bootstrap updates currently experimenting with `TRIP_STATUS + SYNC`
-  Still under active device validation.
+    Still under active device validation.
 - `Chat` — voice loop. Tilt up to start listening, tilt down to submit,
   transcript handed to an OpenAI-compatible backend, the response is
   rendered back to the glasses. Follow-up turns share an in-memory session
@@ -198,9 +198,7 @@ persisted-on-glasses values:
   or doing nothing.
 
 Both choices are stored on the glasses themselves and survive an app
-uninstall. The companion app remembers the last pick across restarts but
-deliberately does not re-send on reconnect — invasive to override anything
-the user might have changed in the official app between sessions.
+uninstall.
 
 ### Technical shape
 
@@ -324,9 +322,10 @@ Pass the raw key value — do not wrap it in square brackets.
 
 - Verbose Flutter-side logs are off by default. Enable them with
   `--dart-define="COMPANION_VERBOSE_LOGS=true"`.
+
 - Verbose native Google Maps payload dumps are off by default. Enable on a
   connected device with:
-
+  
   ```powershell
   adb shell setprop log.tag.MapsNotificationDump DEBUG
   adb logcat -s MapsNotificationDump

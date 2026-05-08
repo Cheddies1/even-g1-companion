@@ -218,7 +218,7 @@ class GlanceAssistantService {
     );
     await BleManager.invokeMethod('cancelGlassesCapture');
     await TextService.get.stopTextSendingByOS();
-    await Proto.exit();
+    await Proto.clearDisplay();
   }
 
   Future<void> reset() async {
@@ -243,7 +243,7 @@ class GlanceAssistantService {
       }
       _isDisplayVisible = false;
       await TextService.get.stopTextSendingByOS();
-      await Proto.exit();
+      await Proto.clearDisplay();
     });
   }
 

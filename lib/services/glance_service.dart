@@ -165,7 +165,7 @@ class GlanceService {
         _isVisible = false;
         _pendingDismissKey = null;
         await TextService.get.stopTextSendingByOS();
-        await Proto.exit();
+        await Proto.clearDisplay();
         AppLog.info(
           '${DateTime.now()} cleared after notification removal',
           tag: 'Glance',
@@ -227,7 +227,7 @@ class GlanceService {
     _callTimer = null;
     _isVisible = false;
     await TextService.get.stopTextSendingByOS();
-    await Proto.exit();
+    await Proto.clearDisplay();
     AppLog.info('${DateTime.now()} closed', tag: 'Glance');
   }
 

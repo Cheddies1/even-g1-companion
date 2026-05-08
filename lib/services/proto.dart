@@ -471,6 +471,24 @@ class Proto {
     return sn;
   }
 
+  /// Clear the glasses display using the official app's `0x50` display mode
+  /// control command.
+  ///
+  /// The official Even Realities app sends `0x50 06 00 00 01 01` to clear the
+  /// screen before every mode entry. Unlike [exit] (`0x18`), this command does
+  /// not risk triggering the firmware's "Even AI is listening" overlay. Prefer
+  /// this for any call site that simply wants to dismiss displayed text without
+  /// entering a new audio/streaming mode.
+  static Future<void> clearDisplay() async {
+    AppLog.debug(
+      '${DateTime.now()} clearDisplay TX: 0x50 display-mode-clear',
+      tag: 'Proto',
+    );
+    await BleManager.sendData(
+      Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]),
+    );
+  }
+
   // tell the glasses to exit function to dashboard
   static Future<bool> exit() async {
     AppLog.debug("send exit all func");
