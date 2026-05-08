@@ -198,7 +198,9 @@ persisted-on-glasses values:
   or doing nothing.
 
 Both choices are stored on the glasses themselves and survive an app
-uninstall.
+uninstall. The companion app remembers the last pick across restarts and
+re-pushes persisted values on every reconnect (the authoritative-settings
+model — see `docs/current-architecture.md`).
 
 ### Technical shape
 

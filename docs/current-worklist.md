@@ -81,13 +81,11 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Acceptance**: Audible (and similarly-behaving apps) produce a non-empty title/text pair that the Now Playing feature can display on the glasses. Apps that already populate standard notification fields (Spotify, YouTube Music, Podcast Addict) are unaffected.
 - **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Other audiobook/podcast apps may behave similarly and would benefit automatically. Files likely touched: `android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt`, possibly `lib/models/companion_notification.dart` if new fields are added for media metadata.
 
-### ghost-listening-screen: Investigate firmware "listening" screen on display clear
-- **Status**: Backlog
-- **Priority**: Unprioritised
-- **Context**: When the app sends a screen-clear command, the G1 firmware occasionally displays the "Even AI is listening, release to finish recording" screen instead of clearing cleanly. This suggests the clear/exit command sequence may be inadvertently triggering a firmware listening state.
-- **Investigation needed**: Check what `Proto.exit()` (`0x18`) and `TextService.stopTextSendingByOS()` actually send. Cross-reference with `docs/protocol-reference.md`, `docs/external-protocol-wiki-notes.md`, and Gadgetbridge `G1Constants.java`. Determine whether there is a sequence that produces a clean screen clear without triggering the voice prompt.
-- **Acceptance**: Root cause identified. Either confirmed that the current sequence is correct (and the ghost screen is a firmware quirk), or a cleaner alternative command sequence is identified and implemented.
-- **Notes**: Pre-existing issue, not caused by recent changes. Requires protocol investigation before a fix can be designed. Files likely involved: `lib/services/proto.dart` (`exit()`, line ~475), `lib/services/text_service.dart` (`stopTextSendingByOS()`), `docs/protocol-reference.md`.
+### ghost-listening-screen: ~~Investigate~~ Root cause identified — `0x18` is vendor-demo legacy
+- **Status**: Done (Glance paths fixed, 2026-05-08). Awaiting extended observation before fanning out.
+- **Root cause**: `Proto.exit()` sends opcode `0x18`, which the official Even app **never sends** (confirmed across all HCI captures). `0x18` is vendor-demo legacy; the firmware interprets it as a synthetic left-long-press-release event, triggering the "Even AI is listening" overlay when not already in a listening state. The official app uses `0x50 06 00 00 01 01` (display mode control) for screen clearing.
+- **Fix applied**: New `Proto.clearDisplay()` helper in `lib/services/proto.dart` sends `0x50` clear. Four Glance call sites swapped: `glance_service.dart:168` (empty-carousel), `glance_service.dart:230` (close/tilt-down), `glance_assistant_service.dart:221` (assistant close), `glance_assistant_service.dart:246` (assistant auto-dismiss timer). One site deliberately left as `Proto.exit()`: `glance_assistant_service.dart:133` (post-mic-stop flow, potential audio-routing dependency).
+- **Observation**: Tilt-up/down ghost screen appears resolved. 14 remaining `Proto.exit()` call sites in chat/capture/navigate/dashboard/features unchanged — follow-up if Glance experiment proves successful.
 
 ### call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed
 - **Status**: Backlog
