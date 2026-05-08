@@ -67,6 +67,20 @@ Recently implemented:
 - **Custom launcher icon** (2026-05-07) — adaptive icon via
   `flutter_launcher_icons ^0.14.4`. White eyeglasses glyph on `#1F5E54`
   background. Generator script at `tool/generate_app_icon.dart`.
+- **Native BLE lifecycle fixes — Tier 1** (2026-05-08) — capture-driven
+  analysis of HCI snoops from the official Even Realities app (cross-referenced
+  with JohnRThomas wiki and Gadgetbridge constants) identified native GATT
+  lifecycle bugs as the dominant cause of long-term BLE instability, not
+  heartbeat cadence. Six bugs fixed in
+  `android/.../bluetooth/BleManager.kt` and `MainActivity.kt`: `gatt.close()`
+  now called on disconnect to prevent GATT client exhaustion; `reconnectLeg`
+  switched to `autoConnect=true`; GATT setup serialised through a
+  `LegSetupPhase` enum (CCCD → MTU → conditional bond → `markLegReady()`);
+  missing `onMtuChanged` / `onDescriptorWrite` / `onCharacteristicWrite`
+  callbacks added; `createBond()` guarded against already-bonded devices;
+  bond-state `BroadcastReceiver` added to surface `bond_failed` to Flutter.
+  Deferred: Tier 2 (heartbeat cadence to match official app's 2 s `0x1f`)
+  and Tier 3 (reconnect tuning, connection priority for streaming).
 
 Under active development:
 - Navigate `0x0a` structured card — **protocol confirmed working** (full

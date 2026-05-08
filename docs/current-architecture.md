@@ -420,6 +420,52 @@ New methods added to `BleManager` for this feature:
 | `ble.last_channel_number` | `BleManager` on connect | `BleManager` on launch | Identifies which glasses to scan for on app start |
 | `ble.last_wear_state` | `DeviceStatusService` on every F5 wear event | `BleManager` before reconnect / on launch | Enables cradle-aware reconnect skip |
 
+### Native BLE lifecycle (Android)
+
+The `BluetoothGatt` lifecycle in
+[android/.../bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
+is now strictly managed to prevent GATT resource exhaustion and silent setup
+failures. Prior to the 2026-05-08 fix, several native GATT lifecycle bugs were
+the dominant cause of long-term BLE instability — exhausting Android's per-app
+GATT client cap over a day of drop/reconnect cycles. Analysis of HCI snoops
+from the official Even Realities app (cross-referenced with JohnRThomas wiki and
+Gadgetbridge constants) identified the root causes as lifecycle mistakes rather
+than heartbeat cadence.
+
+**Connection setup state machine.** A per-callback-closure `LegSetupPhase` enum
+(`IDLE` / `DESCRIPTOR_WRITE_PENDING` / `MTU_PENDING` / `BOND_PENDING` / `READY`)
+serialises Android GATT operations, which require only one in-flight operation at a
+time. The sequence is:
+
+1. `onServicesDiscovered` — writes the CCCD descriptor to enable notifications;
+   sets phase to `DESCRIPTOR_WRITE_PENDING`.
+2. `onDescriptorWrite` — on success, requests MTU 251; sets phase to `MTU_PENDING`.
+3. `onMtuChanged` — on success, calls `createBond()` if the device is not already
+   bonded (guards against stray re-pairing prompts on reconnects); sets phase to
+   `BOND_PENDING` or `READY`. Then calls `markLegReady(gatt)` to notify Flutter.
+
+`markLegReady(gatt)` is a helper extracted from the old monolithic
+`onServicesDiscovered`: it updates the `BlePairDevice` connection state, fires
+the initial heartbeat (`0xf4 0x01`), and calls `flutterGlassesConnected` when
+both legs are up.
+
+**Lifecycle invariants.**
+- `STATE_DISCONNECTED` in `onConnectionStateChange` now calls `gatt.close()` on
+  the received `gatt` instance and nulls the stored `BleDevice.gatt` and
+  `writeCharacteristic` references — but only when the stored ref still matches
+  the disconnecting instance, to avoid closing a freshly-created reconnect.
+- `connectToGlass` (initial connect) uses `autoConnect=false` for fast
+  time-to-connect; `reconnectLeg` uses `autoConnect=true` so the OS maintains a
+  background scan and re-establishes the link automatically when the device
+  returns into range.
+- A `bondStateReceiver: BroadcastReceiver` is registered against
+  `applicationContext` in `initBluetooth()` and unregistered in a new
+  `BleManager.deinit()` method. It filters by connected device addresses and
+  surfaces `bond_failed` to Flutter via `notifyConnectionState` when bonding
+  fails. `deinit()` is called from `MainActivity.onDestroy()`.
+- `onCharacteristicWrite` is now implemented (errors-only logging) to surface
+  write failures that were previously silent.
+
 ## Trusted event routing
 
 The app only routes trusted gesture/state events into product behaviour:

@@ -674,6 +674,8 @@ When the glasses disconnect unexpectedly, the app attempts reconnect using expon
 
 After four attempts without success, the app gives up and waits for a manual `Force Reconnect`.
 
+With the native reconnect path now using `autoConnect=true`, devices coming back into range after a drop (glasses removed and replaced, briefly pocketed, emerging from sleep) should reconnect silently within approximately 10 seconds without any manual intervention.
+
 During active reconnect attempts, the connection status shown in the app is `Reconnecting...`.
 
 ### Cradle-aware skip

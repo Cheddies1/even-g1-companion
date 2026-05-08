@@ -19,6 +19,11 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
         BlePermissionUtil.ensureNotificationPermission(this)
     }
 
+    override fun onDestroy() {
+        BleManager.instance.deinit()
+        super.onDestroy()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         BleChannelHelper.initChannel(this, flutterEngine)

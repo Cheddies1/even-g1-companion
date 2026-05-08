@@ -20,7 +20,8 @@
       "Bash(dart pub *)",
       "Bash(flutter test *)",
       "Bash(flutter pub *)",
-      "Bash(dart run *)"
+      "Bash(dart run *)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

@@ -3,6 +3,7 @@ package com.example.demo_ai_even.bluetooth
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
@@ -11,7 +12,10 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
@@ -37,10 +41,20 @@ class BleManager private constructor() {
         private const val SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
         private const val WRITE_CHARACTERISTIC_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
         private const val READ_CHARACTERISTIC_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+        private const val CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb"
 
         //  SingleInstance
         private var mInstance: BleManager? = null
         val instance: BleManager = mInstance ?: BleManager()
+    }
+
+    // Per-leg setup sequencing — each GATT callback closure carries one of these.
+    private enum class LegSetupPhase {
+        IDLE,
+        DESCRIPTOR_WRITE_PENDING,
+        MTU_PENDING,
+        BOND_PENDING,
+        READY
     }
 
     //  Context
@@ -53,6 +67,39 @@ class BleManager private constructor() {
     private val bleDevices: MutableList<BleDevice> = mutableListOf()
     private var connectedDevice: BlePairDevice? = null
     private val reconnectInFlight: MutableMap<String, Boolean> = ConcurrentHashMap()
+
+    // Bond-state receiver — registered once against applicationContext in initBluetooth,
+    // unregistered in deinit. Filters by address inside onReceive.
+    private val bondStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            } ?: return
+
+            val paired = connectedDevice ?: return
+            val isKnownDevice = device.address == paired.leftDevice?.address ||
+                    device.address == paired.rightDevice?.address
+            if (!isKnownDevice) return
+
+            val previousBond = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, -1)
+            val newBond = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)
+            val side = if (device.address == paired.leftDevice?.address) "left" else "right"
+
+            Log.i(LOG_TAG, "Bond state change: $side ${device.name} previousBond=$previousBond newBond=$newBond")
+
+            if (newBond == BluetoothDevice.BOND_NONE && previousBond == BluetoothDevice.BOND_BONDING) {
+                // Bonding was attempted and failed — encrypted writes will silently fail.
+                Log.e(LOG_TAG, "BOND FAILED for $side leg (${device.name}) — encrypted writes may fail")
+                notifyConnectionState("bond_failed")
+            } else if (newBond == BluetoothDevice.BOND_BONDED) {
+                Log.i(LOG_TAG, "Bond established for $side leg (${device.name})")
+            }
+        }
+    }
 
     /// Scan Config
     //  - Setting: Low latency
@@ -99,15 +146,14 @@ class BleManager private constructor() {
     }
 
     /// UI Thread
-    private val  mainScope: CoroutineScope = MainScope()
+    private val mainScope: CoroutineScope = MainScope()
 
     //*================= Method - Public =================*//
 
     /**
-     * Init bluetooth manager and get bluetooth adapter
-     *
-     * @param context
-     *
+     * Init bluetooth manager and get bluetooth adapter.
+     * Also registers the bond-state receiver against applicationContext so it survives
+     * activity lifecycle events.
      */
     fun initBluetooth(context: Activity) {
         weakActivity = WeakReference(context)
@@ -116,7 +162,20 @@ class BleManager private constructor() {
         } else {
             context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         }
-        Log.v(LOG_TAG, "BleManager init success")
+        val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+        context.applicationContext.registerReceiver(bondStateReceiver, filter)
+        Log.v(LOG_TAG, "BleManager init success, bond-state receiver registered")
+    }
+
+    /**
+     * Unregister receivers and release resources. Call from MainActivity.onDestroy.
+     */
+    fun deinit() {
+        try {
+            weakActivity.get()?.applicationContext?.unregisterReceiver(bondStateReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Already unregistered — safe to ignore.
+        }
     }
 
     /**
@@ -147,7 +206,7 @@ class BleManager private constructor() {
     }
 
     /**
-     *
+     * Initial connection — uses autoConnect=false for fast time-to-connect.
      */
     fun connectToGlass(deviceChannel: String, result: MethodChannel.Result) {
         Log.i(LOG_TAG, "connectToGlass: deviceChannel = $deviceChannel")
@@ -171,6 +230,7 @@ class BleManager private constructor() {
             "Connection attempt prepared: left=${leftDevice.name} (${leftDevice.address}), right=${rightDevice.name} (${rightDevice.address})"
         )
         weakActivity.get()?.let {
+            // autoConnect=false: faster initial connect; the OS attempts once.
             bluetoothAdapter.getRemoteDevice(leftDevice.address).connectGatt(it, false, bleGattCallBack())
             bluetoothAdapter.getRemoteDevice(rightDevice.address).connectGatt(it, false, bleGattCallBack())
         }
@@ -185,6 +245,11 @@ class BleManager private constructor() {
         result.success("Disconnected all devices.")
     }
 
+    /**
+     * Explicit reconnect for one leg, called from Flutter.
+     * Uses autoConnect=true so the OS will keep scanning and reconnect automatically
+     * when the device comes back into range.
+     */
     fun reconnectLeg(lr: String): Boolean {
         val side = if (lr == "L") "left" else "right"
         if (reconnectInFlight[lr] == true) {
@@ -200,14 +265,14 @@ class BleManager private constructor() {
         mainScope.launch {
             try {
                 Log.i(LOG_TAG, "Reconnect requested for $side leg: ${device.name}")
+                // Disconnect triggers onConnectionStateChange(STATE_DISCONNECTED), which
+                // closes and nulls the gatt. We don't close here to avoid double-close.
                 device.gatt?.disconnect()
-                device.gatt?.close()
-                device.gatt = null
-                device.writeCharacteristic = null
                 device.isConnect = false
                 notifyConnectionState("reconnecting")
+                // autoConnect=true: OS maintains a background scan and reconnects when in range.
                 bluetoothAdapter.getRemoteDevice(device.address)
-                    .connectGatt(activity, false, bleGattCallBack())
+                    .connectGatt(activity, true, bleGattCallBack())
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "Reconnect request failed for $side leg", e)
             } finally {
@@ -254,9 +319,17 @@ class BleManager private constructor() {
     }
 
     /**
-     *
+     * Creates a fresh GATT callback for one leg. Each instance carries its own
+     * [LegSetupPhase] so operations are strictly serialised per connection:
+     *   onServicesDiscovered → writeDescriptor
+     *   onDescriptorWrite    → requestMtu
+     *   onMtuChanged         → createBond (if not already bonded) + mark leg ready
      */
     private fun bleGattCallBack(): BluetoothGattCallback = object : BluetoothGattCallback() {
+
+        // Per-closure phase tracker — no shared state needed between legs.
+        var phase = LegSetupPhase.IDLE
+
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
             super.onConnectionStateChange(gatt, status, newState)
             val stateLabel = when (newState) {
@@ -274,14 +347,31 @@ class BleManager private constructor() {
                 notifyConnectionState("connecting")
                 gatt?.discoverServices()
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
-                connectedDevice?.let {
-                    val isLeft = gatt?.device?.address == it.leftDevice?.address
-                    val isRight = gatt?.device?.address == it.rightDevice?.address
+                // Log status first — 8/19/22/133 are the most diagnostic disconnect reasons.
+                Log.w(LOG_TAG, "Leg disconnected: device=${gatt?.device?.name} address=${gatt?.device?.address} disconnectStatus=$status")
+
+                // Close the gatt instance we received in this callback. Avoids closing a
+                // new connection if reconnectLeg has already replaced the stored reference.
+                gatt?.close()
+                phase = LegSetupPhase.IDLE
+
+                connectedDevice?.let { paired ->
+                    val isLeft = gatt?.device?.address == paired.leftDevice?.address
+                    val isRight = gatt?.device?.address == paired.rightDevice?.address
                     if (isLeft) {
-                        it.update(isLeftConnect = false)
+                        // Null stored ref only if it still matches the disconnected instance.
+                        if (paired.leftDevice?.gatt == gatt) {
+                            paired.leftDevice?.gatt = null
+                            paired.leftDevice?.writeCharacteristic = null
+                        }
+                        paired.update(isLeftConnect = false)
                         Log.i(LOG_TAG, "Left leg disconnected: ${gatt?.device?.name}")
                     } else if (isRight) {
-                        it.update(isRightConnected = false)
+                        if (paired.rightDevice?.gatt == gatt) {
+                            paired.rightDevice?.gatt = null
+                            paired.rightDevice?.writeCharacteristic = null
+                        }
+                        paired.update(isRightConnected = false)
                         Log.i(LOG_TAG, "Right leg disconnected: ${gatt?.device?.name}")
                     }
                     notifyConnectionState("disconnected")
@@ -292,83 +382,104 @@ class BleManager private constructor() {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             super.onServicesDiscovered(gatt, status)
-            Log.e(
-                LOG_TAG,
-                "BluetoothGattCallback - onServicesDiscovered: $gatt, status = $status"
-            )
-            connectedDevice?.let {
-                //  1. Save gatt
+            Log.i(LOG_TAG, "onServicesDiscovered: device=${gatt?.device?.name} status=$status")
+
+            connectedDevice?.let { paired ->
                 var isLeft = false
                 var isRight = false
-                if (gatt?.device?.address == it.leftDevice?.address) {
-                    it.update(leftGatt = gatt)
+                if (gatt?.device?.address == paired.leftDevice?.address) {
+                    paired.update(leftGatt = gatt)
                     isLeft = true
-                } else if (gatt?.device?.address == it.rightDevice?.address) {
-                    it.update(rightGatt = gatt)
+                } else if (gatt?.device?.address == paired.rightDevice?.address) {
+                    paired.update(rightGatt = gatt)
                     isRight = true
                 }
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    //  1. Check if it is already connected, and if it is, do not repeat the process
-                    if ((isLeft && it.leftDevice?.isConnect == true) ||
-                        (isRight && it.rightDevice?.isConnect == true)) {
-                        return
-                    }
-                    //  2. Get Bluetooth read-write services
-                    val server = gatt?.getService(UUID.fromString(SERVICE_UUID))
-                    //  3. Check if gatt can read character
-                    val readCharacteristic =
-                        server?.getCharacteristic(UUID.fromString(READ_CHARACTERISTIC_UUID))
-                    if (readCharacteristic == null) {
-                        Log.e(
-                            LOG_TAG,
-                            "BluetoothGattCallback - onServicesDiscovered: $gatt, Not found readCharacteristicUuid from $server"
-                        )
-                        return
-                    }
-                    gatt.setCharacteristicNotification(readCharacteristic, true)
-                    //  4. Check if gatt can write character
-                    val writeCharacteristic =
-                        server.getCharacteristic(UUID.fromString(WRITE_CHARACTERISTIC_UUID))
-                    if (writeCharacteristic == null) {
-                        Log.e(LOG_TAG, "BluetoothGattCallback - onServicesDiscovered: $gatt, Not found readCharacteristicUuid from $server")
-                        return
-                    }
-                    if (isLeft) {
-                        connectedDevice?.leftDevice?.writeCharacteristic = writeCharacteristic
-                    } else {
-                        connectedDevice?.rightDevice?.writeCharacteristic = writeCharacteristic
-                    }
-                    //  5.
-                    val descriptor =
-                        readCharacteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-                    Log.d(LOG_TAG, "BluetoothGattCallback - onServicesDiscovered: $gatt, get descriptor :${descriptor}")
-                    descriptor?.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                    val isWrite = gatt.writeDescriptor(descriptor)
-                    Log.d(LOG_TAG, "BluetoothGattCallback - onServicesDiscovered: descriptor isWrite :${isWrite}")
-                    //  6.
-                    gatt.requestMtu(251)
-                    //  7.
-                    gatt.device?.createBond()
-                    //  8. Update connect status，and check is both connected
-                    if (isLeft) {
-                        it.update(leftGatt = gatt, isLeftConnect = true)
-                        Log.i(LOG_TAG, "Left leg ready: ${it.leftDevice?.name}")
-                    } else if (isRight) {
-                        it.update(rightGatt = gatt, isRightConnected = true)
-                        Log.i(LOG_TAG, "Right leg ready: ${it.rightDevice?.name}")
-                    }
-                    requestData(byteArrayOf(0xf4.toByte(), 0x01.toByte()))
-                    if (it.isBothConnected()) {
-                        Log.i(
-                            LOG_TAG,
-                            "Both legs connected: left=${it.leftDevice?.name}, right=${it.rightDevice?.name}"
-                        )
-                        weakActivity.get()?.runOnUiThread {
-                            BleChannelHelper.bleMC.flutterGlassesConnected(it.toConnectedJson())
-                        }
-                    }
-                    notifyConnectionState(if (it.isBothConnected()) "connected" else "connecting")
+
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    Log.e(LOG_TAG, "onServicesDiscovered failed: status=$status device=${gatt?.device?.name}")
+                    return
                 }
+
+                // Skip if already marked ready (e.g. spurious re-discovery on reconnect).
+                if ((isLeft && paired.leftDevice?.isConnect == true) ||
+                    (isRight && paired.rightDevice?.isConnect == true)) {
+                    return
+                }
+
+                val server = gatt?.getService(UUID.fromString(SERVICE_UUID))
+                val readCharacteristic = server?.getCharacteristic(UUID.fromString(READ_CHARACTERISTIC_UUID))
+                if (readCharacteristic == null) {
+                    Log.e(LOG_TAG, "onServicesDiscovered: readCharacteristic not found on ${gatt?.device?.name}")
+                    return
+                }
+                gatt.setCharacteristicNotification(readCharacteristic, true)
+
+                val writeCharacteristic = server.getCharacteristic(UUID.fromString(WRITE_CHARACTERISTIC_UUID))
+                if (writeCharacteristic == null) {
+                    Log.e(LOG_TAG, "onServicesDiscovered: writeCharacteristic not found on ${gatt?.device?.name}")
+                    return
+                }
+                if (isLeft) {
+                    paired.leftDevice?.writeCharacteristic = writeCharacteristic
+                } else {
+                    paired.rightDevice?.writeCharacteristic = writeCharacteristic
+                }
+
+                // Step 1 of 3: write CCCD to enable notifications. MTU + bond follow in callbacks.
+                val descriptor = readCharacteristic.getDescriptor(UUID.fromString(CCCD_UUID))
+                descriptor?.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                val written = gatt.writeDescriptor(descriptor)
+                Log.d(LOG_TAG, "onServicesDiscovered: CCCD write initiated=$written device=${gatt.device?.name}")
+                phase = LegSetupPhase.DESCRIPTOR_WRITE_PENDING
+            }
+        }
+
+        // Step 2 of 3: descriptor write confirmed — now request MTU.
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            super.onDescriptorWrite(gatt, descriptor, status)
+            val statusLabel = if (status == BluetoothGatt.GATT_SUCCESS) "SUCCESS" else "FAILURE($status)"
+            Log.d(LOG_TAG, "onDescriptorWrite: device=${gatt.device?.name} descriptor=${descriptor.uuid} status=$statusLabel")
+
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.e(LOG_TAG, "CCCD descriptor write failed for ${gatt.device?.name} — notifications may not work")
+                return
+            }
+            if (phase != LegSetupPhase.DESCRIPTOR_WRITE_PENDING) return
+
+            phase = LegSetupPhase.MTU_PENDING
+            gatt.requestMtu(251)
+            Log.d(LOG_TAG, "onDescriptorWrite: MTU request issued for ${gatt.device?.name}")
+        }
+
+        // Step 3 of 3: MTU negotiated — conditionally bond, then mark leg ready.
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            super.onMtuChanged(gatt, mtu, status)
+            val statusLabel = if (status == BluetoothGatt.GATT_SUCCESS) "SUCCESS" else "FAILURE($status)"
+            Log.i(LOG_TAG, "onMtuChanged: device=${gatt.device?.name} mtu=$mtu status=$statusLabel")
+
+            if (phase != LegSetupPhase.MTU_PENDING) return
+
+            // Bond only if not already bonded — avoids stray re-pairing prompts on reconnects.
+            if (gatt.device.bondState != BluetoothDevice.BOND_BONDED) {
+                phase = LegSetupPhase.BOND_PENDING
+                gatt.device.createBond()
+                Log.i(LOG_TAG, "onMtuChanged: createBond() issued for ${gatt.device?.name}")
+            } else {
+                phase = LegSetupPhase.READY
+                Log.i(LOG_TAG, "onMtuChanged: device already bonded, skipping createBond() for ${gatt.device?.name}")
+            }
+
+            markLegReady(gatt)
+        }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            super.onCharacteristicWrite(gatt, characteristic, status)
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.e(LOG_TAG, "onCharacteristicWrite FAILED: device=${gatt.device?.name} char=${characteristic.uuid} status=$status")
             }
         }
 
@@ -388,7 +499,7 @@ class BleManager private constructor() {
                 //  - each pack data length must be 202
                 //  - data index: 0 = cmd, 1 = pack serial number，2～201 = real mic data
                 val isMicData = value[0] == 0xF1.toByte()
-                if(isMicData && value.size != 202) {
+                if (isMicData && value.size != 202) {
                     return@launch
                 }
                 //  eg. LC3 to PCM
@@ -397,15 +508,15 @@ class BleManager private constructor() {
                     val pcmData = Cpp.decodeLC3(lc3)!!//200
                     GlassesCaptureRecorder.appendPcmData(pcmData)
 
-                    // TODO 
+                    // TODO
                     // to implement the pcmData for asr in AI answer
-                    Log.d(this::class.simpleName,"============Lc3 data = $lc3, Pcm = $pcmData")
+                    Log.d(this::class.simpleName, "============Lc3 data = $lc3, Pcm = $pcmData")
                 }
                 BleChannelHelper.bleReceive(mapOf(
-                    "lr" to if (isLeft)  "L" else "R",
+                    "lr" to if (isLeft) "L" else "R",
                     "data" to value,
-                    "type" to if (isMicData)  "VoiceChunk" else "Receive",
-                 ))
+                    "type" to if (isMicData) "VoiceChunk" else "Receive",
+                ))
             }
         }
 
@@ -418,7 +529,36 @@ class BleManager private constructor() {
             super.onCharacteristicRead(gatt, characteristic, value, status)
             print("===========onCharacteristicRead: $value")
         }
+    }
 
+    /**
+     * Marks a leg as ready after the setup sequence completes (MTU settled).
+     * Sends the initial heartbeat, notifies Flutter of "ready" state, and fires
+     * glassesConnected when both legs are up.
+     */
+    private fun markLegReady(gatt: BluetoothGatt) {
+        val paired = connectedDevice ?: return
+        val isLeft = gatt.device.address == paired.leftDevice?.address
+        val isRight = gatt.device.address == paired.rightDevice?.address
+
+        if (isLeft) {
+            paired.update(leftGatt = gatt, isLeftConnect = true)
+            Log.i(LOG_TAG, "Left leg ready: ${paired.leftDevice?.name}")
+        } else if (isRight) {
+            paired.update(rightGatt = gatt, isRightConnected = true)
+            Log.i(LOG_TAG, "Right leg ready: ${paired.rightDevice?.name}")
+        }
+
+        // Initial heartbeat — fires after notifications are wired and MTU is settled.
+        requestData(byteArrayOf(0xf4.toByte(), 0x01.toByte()))
+
+        if (paired.isBothConnected()) {
+            Log.i(LOG_TAG, "Both legs connected: left=${paired.leftDevice?.name}, right=${paired.rightDevice?.name}")
+            weakActivity.get()?.runOnUiThread {
+                BleChannelHelper.bleMC.flutterGlassesConnected(paired.toConnectedJson())
+            }
+        }
+        notifyConnectionState(if (paired.isBothConnected()) "connected" else "connecting")
     }
 
     /**
@@ -426,7 +566,7 @@ class BleManager private constructor() {
      */
     private fun requestData(data: ByteArray, sendLeft: Boolean = false, sendRight: Boolean = false) {
         val isBothSend = !sendLeft && !sendRight
-        Log.d(LOG_TAG, "Send ${ if (isBothSend) "both" else if (sendLeft)  "left" else "right"} data = ${ByteUtil.byteToHexArray(data)}")
+        Log.d(LOG_TAG, "Send ${if (isBothSend) "both" else if (sendLeft) "left" else "right"} data = ${ByteUtil.byteToHexArray(data)}")
         if (sendLeft || isBothSend) {
             connectedDevice?.leftDevice?.sendData(data)
         }

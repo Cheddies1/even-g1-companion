@@ -96,6 +96,85 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
 - **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
 
+#### BLE stability — deferred tiers
+
+### ble-stability-tier2: Heartbeat cadence alignment with official app
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: Tier 2 of the three-tier BLE stability plan. The current heartbeat fires every 8 s on the "both connected" event only; the official Even Realities app sends `0x1f` pings at 2 s per-leg from the moment each leg connects. Half-connections (one leg up, one re-connecting) currently receive no heartbeat and can silently die.
+- **Acceptance**:
+  - [ ] Heartbeat cadence reduced from 8 s to 2 s.
+  - [ ] Heartbeats sent to both legs in parallel rather than sequentially.
+  - [ ] Per-leg heartbeat starts on individual leg connect, not only on "both connected".
+  - [ ] (Optional) Heartbeat opcode switched from `0x25` to `0x1f` to mirror the official app — cosmetic only, firmware accepts both. Decide and note rationale.
+- **Notes**: Touches `lib/services/proto.dart` and `lib/ble_manager.dart`. Tier 1 (native GATT lifecycle) should be validated on device before starting this.
+
+### ble-stability-tier3: Reconnect tuning and connection priority
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: Tier 3 of the BLE stability plan. Current auto-reconnect schedule `[0, 30, 60, 120]` gives up at ~3.5 minutes — a UX cliff for overnight or "glasses in pocket" scenarios. Also covers per-session connection priority management and tightening degraded-leg detection once Tier 2's 2 s cadence is in place.
+- **Acceptance**:
+  - [ ] Auto-reconnect schedule widened to an exponential-like curve with a long-tail floor that never permanently gives up while the foreground service is alive.
+  - [ ] Degraded-leg detection thresholds tightened: warning age 20 s → 6 s, consecutive-miss threshold 2 → 3 (only safe once Tier 2's 2 s cadence is confirmed stable).
+  - [ ] `requestConnectionPriority(HIGH)` added during nav-card replay and `0x52` streaming sessions; returns to `BALANCED` when done.
+- **Notes**: Touches `lib/ble_manager.dart` (Flutter side) and `BleManager.kt` (native side for connection priority). Depends on Tier 2 being in place before adjusting detection thresholds.
+
+### ble-hci-connection-params: Extend btsnoop parser to surface HCI LE Connection Update events
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: `logs/bluetooth/parse_btsnoop.py` currently extracts ATT-level PDUs only. Without HCI LE Connection Update events we cannot see what connection interval, slave latency, and supervision timeout the official app negotiates — the link-layer parameters that most directly govern whether a BLE link survives idle periods. Tuning Tier 2/3 without this data means tuning blind.
+- **Acceptance**: Parser surfaces HCI LE Connection Update events alongside ATT PDUs. Output includes the connection parameters (interval, latency, supervision timeout) negotiated by the official app across a representative capture.
+- **Notes**: Should ideally be done before committing to specific values in Tier 2/3. Low implementation risk — additive change to existing parse script.
+
+#### Protocol research and hardening
+
+### protocol-lifecycle: Formal lifecycle/state-machine modelling
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: The app understands many packet families empirically but lacks a formal state-machine model for rendering surfaces or mode transitions. Current approach is "this sequence works" — long-term stability requires a properly defined lifecycle model.
+- **Acceptance**: Valid lifecycle transitions defined for `0x52` streaming text, `0x0a` navigation, and `0x1e` dashboard content. For each: session start conditions, active/ready states, timeout behaviour, reconnect semantics, exit semantics, invalid transitions. Timing/lifecycle diagrams built from captures.
+- **Notes**: Potential outputs include state diagrams, lifecycle spec, reusable transport/session abstractions.
+
+### protocol-0x22: Reverse-engineer 0x22 dashboard/status family
+- **Status**: Backlog
+- **Priority**: High
+- **Context**: `0x22` is known to exist and appears tied to dashboard state. Payload semantics remain mostly unresolved — a protocol blind spot.
+- **Acceptance**: Field structure decoded. Payloads correlated against dashboard visibility, pagination, unread counts, widget selection, notification state. Determination made on whether `0x22` supports firmware UI awareness, dashboard sync, or richer glance integration.
+- **Notes**: Understanding firmware-side dashboard state may reduce future UI conflicts and reduce the need for speculative sequencing hacks.
+
+### quicknote-decode: QuickNote audio pipeline decoding
+- **Status**: Backlog
+- **Priority**: High
+- **Context**: Right-hold QuickNote path identified. `0x21` release event understood. Post-release `0x1e c8 ...` chunk stream captured and strongly resembles encoded audio (likely LC3-family). This may expose a firmware-native voice workflow that is cleaner and more reliable than the current live mic pipeline for some use cases.
+- **Acceptance**: Complete binary stream reconstructed from chunked packets. Codec format confirmed. Decode attempted via existing LC3 pipeline (`android/app/src/main/cpp/liblc3.cpp`). Audio reliably reconstructed to WAV.
+- **Notes**: Stretch goals include hosted transcription path, native-feeling quicknote transcription, and quicknote archive/replay tooling. Cross-ref `docs/FINDINGS-taps.md`, `docs/FINDINGS-layouts.md`, and the Next item `QuickNote via hosted transcription`.
+
+### transport-model: Transport and timing model formalisation
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Current pacing/retry behaviour is largely empirical. Stable timings are known but not formally modelled. Important for future rendering complexity and reliability.
+- **Acceptance**: BLE throughput limits characterised. Per-leg scheduling constraints, packet burst thresholds, timeout behaviour, and sync drift conditions documented. Safe pacing windows, stable batching rules, and degradation/recovery strategies defined.
+
+### navigate-cleanup: Navigation protocol cleanup and de-replay work
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: `0x0a` navigation path works but remains partially dependent on replay-derived scaffolding and captured assets. Navigate is operational but not yet fully "owned" at the protocol level.
+- **Acceptance**: Remaining captured/replayed dependencies removed. Static PANORAMIC_MAP replaced with a generated or optional implementation. Startup robustness, reconnect behaviour, exit semantics, and route update handling improved. Icon generation, card generation, and lifecycle fully owned.
+- **Notes**: The PANORAMIC_MAP sub-issue may remain Parked even while other parts of this item progress. Cross-ref the Parked `PANORAMIC_MAP decision` item, and the existing Next item `Navigate cleanup (composite)` — that covers immediate tactical fixes (turnDistance, EXIT/ARRIVED); this item covers broader protocol ownership and de-replay work.
+
+### protocol-audit: Protocol confidence audit
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Some protocol sections are marked "Confirmed" based on behavioural success rather than structural certainty. Accidental overconfidence in docs risks future architectural mistakes built on assumptions that merely "worked once".
+- **Acceptance**: All confidence labels in `docs/protocol-reference.md` and `docs/even-g1-event-mapping.md` reviewed. Observed behaviour, inferred semantics, and protocol certainty cleanly separated. Overconfident labels corrected.
+
+### docs-hardening: Documentation structure hardening
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Protocol truth, implementation choices, and hypotheses are partially intermixed across the documentation. The docs are now substantial enough to act as a real protocol reference, and structural clarity matters more as the corpus grows.
+- **Acceptance**: Protocol-level truth, observed behaviour, firmware hypotheses, and app implementation choices cleanly separated across the doc set. Docs are suitable as: a public reverse-engineering reference, a future SDK basis, and contributor onboarding material.
+- **Notes**: Documentation meta-task, not a code task. Likely involves `docs/protocol-reference.md`, `docs/even-g1-event-mapping.md`, `docs/current-architecture.md`, `docs/current-behaviour.md`, and the FINDINGS files.
+
 ---
 
 ## Parked
@@ -114,6 +193,22 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 ---
 
 ## Recently Done
+
+### BLE stability — Tier 1: Android native GATT lifecycle fixes (2026-05-08)
+Addressed day-over-day BLE link decay ("works fine until it doesn't") by fixing Android-native GATT lifecycle bugs. Six targeted changes to `BleManager.kt` and `MainActivity.kt`:
+
+- `gatt.close()` now called on disconnect — was leaking `BluetoothGatt` instances, the root cause of the progressive decay symptom.
+- `reconnectLeg` switched to `connectGatt(autoConnect=true)` so the OS handles background reconnection when the device returns to range.
+- GATT setup operations serialised through callbacks: `onServicesDiscovered` (CCCD write) → `onDescriptorWrite` (MTU request) → `onMtuChanged` (conditional bond + mark ready). Previously pipelined and racing.
+- New callbacks added: `onMtuChanged`, `onDescriptorWrite`, `onCharacteristicWrite` (errors-only).
+- `createBond()` guarded by `bondState != BOND_BONDED` to prevent duplicate bond attempts.
+- `BroadcastReceiver` for `ACTION_BOND_STATE_CHANGED` registered; observes bonding outcome and surfaces `bond_failed` to Flutter.
+
+Files changed: `android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt`, `android/app/src/main/kotlin/com/example/demo_ai_even/MainActivity.kt`.
+
+**Build clean. Awaiting on-device validation** — this entry will be updated once hardware testing is confirmed.
+
+Tier 2 (heartbeat cadence) and Tier 3 (reconnect tuning, connection priority) are deferred — tracked in Backlog below.
 
 ### App icon — custom adaptive icon (2026-05-07)
 Custom adaptive launcher icon replacing the default Flutter blue-F. Foreground: white open-ring eyeglasses outline (bridge + temples) at 1024×1024 on a transparent PNG (`assets/icon/foreground.png`), generated via `tool/generate_app_icon.dart` (Dart/Skia Canvas + AA, run with `flutter test` — reproducible). Background: `#1F5E54`. `flutter_launcher_icons ^0.14.4` wired in `pubspec.yaml`. Mipmap PNGs and adaptive-icon XML written into `android/app/src/main/res/`. APK built clean.
