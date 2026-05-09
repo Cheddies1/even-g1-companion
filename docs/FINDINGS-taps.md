@@ -93,7 +93,7 @@ Structure (15 bytes total):
 2. The 42-byte packets observed previously were a different family member (e.g., a session-metadata push that doesn't fire in the simple speak-and-save flow tested here).
 3. The packets concatenate differently when more notes exist; this user's note count was small.
 
-In `lib/ble_manager.dart` the right-hold mode-switch POC currently gates on `res.data.length == 42`. With current firmware this gate would never fire. Not a problem today because the user pulled that feature, but worth noting for any future re-enablement.
+The right-hold mode-switch POC in `lib/ble_manager.dart` was retired on 2026-05-08 — double-tap (`F5 20`) is now the sole mode-switch surface. The `0x21` recognition path was preserved as the `QuickNoteProbe` diagnostic log for the upcoming QuickNote feature, which will consume the post-`0x21` `0x1e c8` audio stream.
 
 ---
 

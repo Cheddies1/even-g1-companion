@@ -28,7 +28,6 @@ class CompanionController extends ChangeNotifier {
   final EventChannel _notificationChannel =
       const EventChannel(_eventNotifications);
   bool _lastReportedHasActiveDisplay = false;
-  int? _lastRightHoldModeSwitchMs;
   int? _lastDoubleTapModeSwitchMs;
 
   bool _initialized = false;
@@ -264,37 +263,6 @@ class CompanionController extends ChangeNotifier {
     await setMode(
       nextMode,
       source: 'F5_20_DoubleTap',
-      passive: true,
-    );
-  }
-
-  Future<void> handleRightHoldModeSwitchProbe() async {
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final lastSwitchMs = _lastRightHoldModeSwitchMs;
-    final debounceMs = lastSwitchMs == null ? null : nowMs - lastSwitchMs;
-
-    if (hasActiveDisplay) {
-      AppLog.debug(
-        '${DateTime.now()} RightHoldModeSwitch: ignored reason=active-display mode=${_activeMode.label} owner=$_activeDisplayOwner',
-      );
-      return;
-    }
-
-    if (debounceMs != null && debounceMs < 1500) {
-      AppLog.debug(
-        '${DateTime.now()} RightHoldModeSwitch: debounced mode=${_activeMode.label} deltaMs=$debounceMs',
-      );
-      return;
-    }
-
-    final nextMode = _activeMode.nextMode;
-    _lastRightHoldModeSwitchMs = nowMs;
-    AppLog.debug(
-      '${DateTime.now()} RightHoldModeSwitch: triggered from=${_activeMode.label} to=${nextMode.label}',
-    );
-    await setMode(
-      nextMode,
-      source: 'RightHoldR21',
       passive: true,
     );
   }

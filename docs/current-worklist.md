@@ -35,7 +35,22 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-Nothing currently in flight. Top of Next: Navigate cleanup.
+### glance-auto-clear-regression (2026-05-08, HIGH — fix before resuming QuickNote)
+- **Status**: In Flight — regression discovered end of session 2026-05-08, not yet investigated
+- **Symptom**: Automatic screen clearing in Glance mode has stopped working. Push notifications and tilt-up/look-forward displays no longer auto-clear after the expected ~3 s timeout. After a notification is displayed on the glasses the screen stays on indefinitely; same for Glance assistant displays.
+- **Two candidate causes**:
+  1. The `0x18` → `0x50` clearDisplay migration (commit `36da369`, 2026-05-08) caused a regression that was masked by a cached APK still running the old code.
+  2. Something in the QuickNote session (2026-05-08) introduced a timer or lifecycle issue that broke the auto-clear path — possibly related to `hasActiveDisplay=true owner=Capture` state seen in today's logs keeping the clear timer from firing.
+- **Investigation pointers**:
+  - Cross-ref the **ghost-listening-screen Done item** (below, Recently Done) — it documents exactly which four call sites were migrated from `Proto.exit()` to `Proto.clearDisplay()`, and the one site deliberately left on `Proto.exit()` (`glance_assistant_service.dart:133`). Start here.
+  - Confirm `Proto.clearDisplay()` (0x50) is still being called on the auto-dismiss timers in `GlanceAssistantService` and `GlanceService`.
+  - Check whether `hasActiveDisplay` can get stuck `true` and prevent the clear timer from ever firing.
+  - Files modified by today's session that are in scope: `lib/ble_manager.dart`, `lib/services/companion_controller.dart`, `lib/main.dart`, `docs/current-architecture.md`.
+- **Acceptance**: Glance push notifications and assistant displays auto-clear after ~3 s as they did before 2026-05-08. No ghost screen on tilt-up/look-forward or notification pop.
+
+### QuickNote via hosted transcription (2026-05-08, in progress — see Next #2 for full detail)
+- **Status**: In Flight — **paused pending glance-auto-clear-regression fix** (above); also blocked on GO/NO-GO test for task #3
+- **Critical blocker**: audio stream trigger protocol discovered late session; Dart patch in working tree, pending hot-reload test
 
 ---
 
@@ -53,11 +68,28 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
 ### 2. QuickNote via hosted transcription (experiment)
-- **Status**: Next
+- **Status**: In Flight (2026-05-08) — 4 of 10 tasks done, 1 blocked, 5 pending
 - **Priority**: Medium
-- **Context**: Right-hold gesture surfaces as `0x21` press, followed by a chunked `0x1e c8 ...` audio-shaped stream after release. The shape is consistent with low-bitrate voice; the existing LC3 decode path (used by Capture and Chat) may handle it. End-to-end flow: `0x21` release → buffer chunked stream → LC3 decode → OpenAI STT → push note text via `0x1e` dashboard slot.
-- **Acceptance**: Working POC where a right-hold quicknote on the glasses produces a transcribed note pushed back to the firmware dashboard. All pieces exist individually; integration is the work.
-- **Notes**: This is an experiment — the first goal is to confirm LC3 decodes the post-release stream. Cross-ref `docs/FINDINGS-taps.md` and `docs/FINDINGS-layouts.md`.
+- **Critical discovery (2026-05-08)**: The firmware does NOT stream audio unsolicited after a `0x21` release. The host must send `1e 06 00 <seq> 02 01` to the right leg ~11ms after the `0x21` to trigger the stream. Mirror-image of the left-press/`0x0e 01`/`0xF1` LC3 flow. Protocol also includes `1e 06 00 <seq> 04 01` (audio received OK) and glasses respond `1e 06 00 <seq> 04 00` to confirm. Dart patch (`Proto.quickNoteRequestAudio()` + `Proto.quickNoteAck()`, hooked into `_logCmd21`) is in the working tree. **Pending hot-reload test.**
+- **Secondary discovery**: `0x21` now fires 42 bytes in testing (was 15 bytes in the 2026-04-28 recon). The 42-byte form appears to be a "notes-list dump" with 4 record entries. Open question: will the `02 01` trigger work for the 42-byte case? See the new backlog item `quicknote-seq-counter`.
+
+**Task status as of 2026-05-08 end of session:**
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | Retire right-hold mode-cycle and fix `0x21` gate | Done — in working tree, Codex-reviewed clean |
+| 2 | Native `QuickNoteAudioBuffer` in `BleManager.kt` | Done — in working tree, Codex-reviewed (NITs addressed) |
+| 3 | LC3 decode probe (`quick_note_capture_service.dart`, `BleChannelHelper.kt`, `ble_manager.dart`) | **Blocked — GO/NO-GO test pending** (audio trigger discovery came in at end of session; patch applied, not tested) |
+| 4 | `NotesStore` + sqflite (`note.dart`, `notes_store.dart`, `main.dart`) | Done — in working tree, Codex-reviewed (init concurrency BLOCKER fixed; CHECK constraint + sort_order tiebreaker applied; sort_order rebalance deferred to #7) |
+| 5 | `QuickNoteTidyService` for OpenAI light cleanup | Pending |
+| 6 | Wire QuickNote pipeline glue | Pending |
+| 7 | `NotesPage` UI + `HomePage` card | Pending |
+| 8 | Codex peer review of full QuickNote diff (final) | Pending |
+| 9 | btsnoop recon for `0x1e c8` stream end signal | Done — findings in `docs/FINDINGS-quicknote.md` |
+| 10 | Fixtures for `QuickNoteTidyService` prompt anchors | Done — `test/fixtures/quicknote/anchor_pairs.json` + `raw_transcripts.json` |
+
+- **Diagnostic infra to revert**: `BleRx` INFO-level log tag (line 444, `ble_manager.dart`), R21Probe and QuickNoteProbe logs promoted from debug → info. Revert to debug once pipeline is wired and stable.
+- **Acceptance**: Working POC — right-hold produces a transcribed note stored locally, visible in-app. Cross-ref `docs/FINDINGS-quicknote.md`, `docs/FINDINGS-taps.md`, `docs/FINDINGS-layouts.md`.
 
 ---
 
@@ -69,6 +101,21 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Context**: `0x1e` TX can push titled content into the firmware's dashboard grid layout — useful for summaries, reminders, or status info.
 - **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
 - **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot? Demoted from Next — lacks a concrete use case. Revisit when a clear scenario emerges.
+
+### quicknote-seq-counter: Confirm outbound `0x1e` seq counter range alignment
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: The 2026-04-28 recon shows the official app uses seq values in the `0x40`–`0x42` range for outbound `0x1e` packets. The current Dart patch uses its own counter. Open question: does the firmware care about the seq range, or does any monotonically incrementing value work?
+- **Acceptance**: Empirical test or recon analysis confirms whether seq value must fall in a particular range. Dart counter adjusted if needed, or question closed as "firmware doesn't care."
+- **Notes**: Surface during QuickNote GO/NO-GO test — if the `02 01` trigger fails despite correct timing, seq range mismatch is a candidate cause.
+
+### quicknote-dashboard-push: QuickNote v2 — push transcribed note to glasses dashboard via 0x1e TX
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: QuickNote v1 ends at "transcribed note saved to phone app". The natural v2 follow-on is pushing that note text back to the glasses firmware dashboard using the `0x1e` TX opcode. Surfaced during v1 planning (2026-05-08) and captured immediately to avoid losing the protocol shape while it is fresh. Deliberately deferred — v1 scope is kept tight.
+- **Protocol**: `1e <len> 00 <seq> 03 01 00 01 00 <slot> 01 <title_len> <title> <body_len> 00 <body>`. Full field breakdown at `docs/protocol-reference.md` L444-462.
+- **Acceptance**: A completed QuickNote transcription is pushed to a named dashboard slot and readable on the glasses within a few seconds of the right-hold gesture completing.
+- **Notes**: Depends on QuickNote v1 (`quicknote via hosted transcription`, Next #2) being stable. Cross-ref `dashboard-injection` (general `0x1e` injection backlog item) — this is the concrete use case that item was waiting for.
 
 ### now-playing-mediasession: Now Playing: extract MediaSession metadata for apps with empty notification fields
 - **Status**: Backlog
@@ -93,6 +140,32 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Context**: When the user dismisses the *last* carousel notification while a call is active, `GlanceService.removeNotificationByKey` calls `Proto.exit()` directly rather than falling back to the call HUD. This leaves the glasses blank mid-call, contrary to the expected "call HUD is always the idle fallback when a call is active" behaviour.
 - **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
 - **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
+
+### mode-title-cards: Glance and Navigate mode entry title cards, plus Connected status card
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Double-tap mode switching gives no on-glasses feedback about which mode was just entered. Chat mode is already self-labelling ("chat active, tilt up to talk") and Capture mode has the `*` idle marker — neither needs a title card. Glance and Navigate are the gaps. A "Connected" card is also captured here as a natural companion: it confirms a successful BLE connection rather than signalling mode entry, but uses the same brief-flash mechanic.
+- **Acceptance**:
+  - [ ] **Glance**: On mode entry, a title card ("Glance") is shown for ~0.5 s and then automatically cleared. No persistence beyond the flash.
+  - [ ] **Navigate**: A title card ("Navigate") fires on mode entry **only when there is no active navigation session in progress**. If a nav session is already live, the title card must be suppressed entirely — a previous issue confirmed that showing an idle title while a session is bootstrapping can cancel the session start.
+  - [ ] **Connected**: On successful BLE connection or reconnection, a brief title card ("Connected") is shown on the glasses and then automatically cleared. This is a status confirmation, not a mode-entry card — but it shares the same flash mechanic and fits naturally here. Should fire on both initial connect and reconnect events; must not interfere with an already-active mode (e.g. do not interrupt a live Navigate session).
+- **Notes**: Navigate condition is the tricky part — the title card logic must gate on whether `NavigateService` has an active session before sending anything. Glance title card is straightforward; Navigate title card requires careful lifecycle awareness. The Connected card similarly needs a lifecycle-safe send: only fire if the current mode is in a quiescent state. All three sub-items can be implemented independently.
+
+### quicknotes-multi-list: QuickNotes — automatic multi-list categorisation
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Currently all transcribed notes land in a single central list. The idea is to split storage and UI into three named lists with keyword-based automatic routing at the point a note is saved (post-transcription, post-tidy).
+- **Three lists**:
+  1. **Notes** (default) — anything not matched by the other two categories
+  2. **Shopping** — triggered by leading key phrases: "Buy", "Purchase", "Pick up", "Get"
+  3. **Remember / To-Do** — triggered by leading key phrase: "Remember to"
+- **Routing logic**: keyword detection runs on the transcribed (and tidied) note text. Matching is phrase-anchored (start-of-note or after obvious sentence breaks) to reduce false positives on notes that merely mention shopping without being a shopping item.
+- **Acceptance**:
+  - [ ] A note starting with a Shopping trigger phrase routes to the Shopping list; a note starting with a Remember/To-Do phrase routes to that list; everything else goes to Notes.
+  - [ ] In the app UI (`NotesPage`), notes are shown per-list with a tab or section view — user can see each list separately.
+  - [ ] User can manually move a note between lists from the UI (drag or context menu).
+  - [ ] Existing notes (pre-feature) land in Notes by default.
+- **Notes**: Depends on QuickNote v1 (`quicknote via hosted transcription`, Next #2) being stable and the `NotesStore` schema being settled. Schema change needed: add a `list` column (enum or string) to the notes table. Routing logic lives in the tidy/save pipeline, not in the BLE layer. Cross-ref `lib/models/note.dart`, `lib/services/notes_store.dart`.
 
 #### BLE stability — deferred tiers
 
@@ -123,6 +196,18 @@ Nothing currently in flight. Top of Next: Navigate cleanup.
 - **Context**: `logs/bluetooth/parse_btsnoop.py` currently extracts ATT-level PDUs only. Without HCI LE Connection Update events we cannot see what connection interval, slave latency, and supervision timeout the official app negotiates — the link-layer parameters that most directly govern whether a BLE link survives idle periods. Tuning Tier 2/3 without this data means tuning blind.
 - **Acceptance**: Parser surfaces HCI LE Connection Update events alongside ATT PDUs. Output includes the connection parameters (interval, latency, supervision timeout) negotiated by the official app across a representative capture.
 - **Notes**: Should ideally be done before committing to specific values in Tier 2/3. Low implementation risk — additive change to existing parse script.
+
+### ble-single-leg-disconnect: Single-leg disconnect robustness investigation
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: The G1 glasses have two independent BLE connections — one per leg (left and right). In practice one leg can drop while the other stays connected: a weak RF environment, a brief obstruction, or a firmware hiccup on one side. The app already has per-leg connection state and reconnect logic, but the failure modes when only one leg drops are not well characterised. This is an investigation item — the goal is to understand the behaviour before deciding what (if anything) needs fixing.
+- **Acceptance** (investigation outcomes, not feature deliverables):
+  - [ ] Reproduce a single-leg disconnect reliably in testing (e.g. by manually disconnecting one leg from the Android Bluetooth settings while the app is active).
+  - [ ] Document what the app does in each active mode (Glance, Chat, Navigate, QuickNote capture) when only the left leg drops vs. only the right leg drops.
+  - [ ] Identify any errors, stuck state, or broken UX — e.g. does QuickNote capture become silently unavailable because the right leg (which handles the `0x21` gesture and `0x1e c8` audio stream) has gone? Does Navigate SYNC polling continue cleanly on the surviving leg?
+  - [ ] Determine whether reconnect recovery is clean: when the dropped leg rejoins, do all features resume correctly or is a manual app restart needed?
+  - [ ] Produce a short findings note (inline in this item or in a FINDINGS file) summarising any failure modes discovered and a recommended fix for each, or a confirmation that the current handling is already graceful.
+- **Notes**: Right-leg dependency is the most critical — the right leg is the host for the QuickNote gesture (`0x21`) and the audio stream. A right-leg drop during an active QuickNote capture should be considered a specific failure scenario. Cross-ref `ble-stability-tier2` and `ble-stability-tier3` — better heartbeat cadence (Tier 2) may mask some single-leg failure modes, so this investigation is best done before those tiers are in place, or tested with Tier 2 active and again without.
 
 #### Protocol research and hardening
 

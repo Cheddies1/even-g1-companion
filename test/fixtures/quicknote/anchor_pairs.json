@@ -1,0 +1,20 @@
+[
+  {
+    "id": "anchor-1-stutter-and-self-correct",
+    "raw": "um so I need to remember to to call mom about the plumbing thing er the leak in the kitchen yeah",
+    "cleaned": "Call Mum about the leak in the kitchen.",
+    "rationale": "Strip 'um/er/yeah' filler and the 'to to' stutter. Collapse 'plumbing thing' → 'the leak in the kitchen' (the speaker self-corrected). Preserve the action and the person."
+  },
+  {
+    "id": "anchor-2-mid-sentence-correction",
+    "raw": "ok so the the meeting is moved to wait no it's still tomorrow but the location changed it's now in conference room B not A",
+    "cleaned": "Meeting is still tomorrow, but moved to conference room B (was A).",
+    "rationale": "Honour the 'wait no' correction — meeting time is unchanged, only location. Keep the 'B not A' detail because it is the specific information."
+  },
+  {
+    "id": "anchor-3-thinking-aloud",
+    "raw": "thinking about the the LC3 thing for the watch app yeah I should check if the byte five field changes when the note is longer that would be interesting",
+    "cleaned": "Check whether the LC3 byte-5 field changes when the note is longer.",
+    "rationale": "Strip 'thinking about', 'yeah', 'that would be interesting' — these are thinking-aloud framing, not the note. Keep the concrete TODO."
+  }
+]

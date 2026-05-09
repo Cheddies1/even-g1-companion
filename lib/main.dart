@@ -4,6 +4,7 @@ import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/app_settings_store.dart';
 import 'package:demo_ai_even/services/chat_history_store.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
+import 'package:demo_ai_even/services/notes_store.dart';
 import 'package:demo_ai_even/views/home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -18,6 +19,7 @@ Future<void> main() async {
     AppLog.info('${DateTime.now()} companion init begin', tag: 'AppStartup');
     await AppSettingsStore.get.init();
     await ChatHistoryStore.get.init();
+    await NotesStore.get.init();
     await CompanionController.get.init();
     AppLog.info('${DateTime.now()} companion init end', tag: 'AppStartup');
   });

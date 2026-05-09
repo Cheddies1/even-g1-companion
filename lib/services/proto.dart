@@ -87,6 +87,62 @@ class Proto {
     return (startMic, (!receive.isTimeout && receive.data[1] == 0xc9));
   }
 
+  /// True while the QuickNote audio stream is expected to be in flight —
+  /// between sending `02 01` and receiving the flushed buffer in Dart.
+  /// [clearDisplay] checks this and suppresses the 0x50+0x18 sequence to
+  /// avoid killing the glasses' audio stream mid-capture.
+  static bool _quickNoteCaptureActive = false;
+  static bool get isQuickNoteCaptureActive => _quickNoteCaptureActive;
+  static void quickNoteCaptureComplete() {
+    _quickNoteCaptureActive = false;
+    AppLog.info(
+      '${DateTime.now()} QuickNote capture flag cleared',
+      tag: 'QuickNoteCapture',
+    );
+  }
+
+  /// Host's outgoing 0x1e command-channel sequence counter. Observed in the
+  /// 2026-04-28 recon as `0x41`, `0x42`, ... — monotonically increasing per
+  /// outbound packet on the QuickNote command channel.
+  static int _quickNoteSeq = 0x40;
+
+  /// QuickNote: ask the glasses to stream the audio for the just-released
+  /// note. Sends `1e 06 00 <seq> 02 01` to the right leg.
+  ///
+  /// Observed in the 2026-04-28 recon: the official Even Realities app sends
+  /// this 11ms after receiving a 15-byte `0x21` release. The glasses then
+  /// stream the audio as `0x1e c8 ...` chunks ~50ms later. Without this TX
+  /// the firmware sends no audio at all.
+  /// Requests audio for a specific note index. The [noteIndex] corresponds
+  /// to the record number in the 42-byte `0x21` notes-list dump — typically
+  /// byte 5 of the `0x21` payload gives the total count, and the newest note
+  /// is at that index (e.g. `04` when there are 4 stored notes).
+  static Future<void> quickNoteRequestAudio({String? lr, int noteIndex = 1}) async {
+    _quickNoteCaptureActive = true;
+    final seq = _quickNoteSeq & 0xff;
+    _quickNoteSeq++;
+    final data = Uint8List.fromList([0x1E, 0x06, 0x00, seq, 0x02, noteIndex]);
+    AppLog.info(
+      '${DateTime.now()} Proto.quickNoteRequestAudio seq=0x${seq.toRadixString(16).padLeft(2, '0')} bytes=${data.hexString}',
+      tag: 'QuickNoteCapture',
+    );
+    await BleManager.sendData(data, lr: lr ?? 'R');
+  }
+
+  /// QuickNote: acknowledge that the audio stream was received. Sends
+  /// `1e 06 00 <seq> 04 01` to the right leg. The glasses respond with
+  /// `1e 06 00 <seq> 04 00` (visible as RX) to close the cycle.
+  static Future<void> quickNoteAck({String? lr}) async {
+    final seq = _quickNoteSeq & 0xff;
+    _quickNoteSeq++;
+    final data = Uint8List.fromList([0x1E, 0x06, 0x00, seq, 0x04, 0x01]);
+    AppLog.info(
+      '${DateTime.now()} Proto.quickNoteAck seq=0x${seq.toRadixString(16).padLeft(2, '0')} bytes=${data.hexString}',
+      tag: 'QuickNoteCapture',
+    );
+    await BleManager.sendData(data, lr: lr ?? 'R');
+  }
+
   /// Even AI
   static int _evenaiSeq = 0;
   // AI result transmission (also compatible with AI startup and Q&A status synchronization)
@@ -480,12 +536,33 @@ class Proto {
   /// this for any call site that simply wants to dismiss displayed text without
   /// entering a new audio/streaming mode.
   static Future<void> clearDisplay() async {
-    AppLog.debug(
-      '${DateTime.now()} clearDisplay TX: 0x50 display-mode-clear',
-      tag: 'Proto',
+    if (_quickNoteCaptureActive) {
+      AppLog.info(
+        '${DateTime.now()} clearDisplay SUPPRESSED — QuickNote capture active',
+        tag: 'GlanceClear',
+      );
+      return;
+    }
+
+    // Step 1: close the display mode (0x50). The firmware acks with F5 00 but
+    // does NOT blank the physical screen.
+    AppLog.info(
+      '${DateTime.now()} clearDisplay TX: 0x50 display-mode-close',
+      tag: 'GlanceClear',
     );
     await BleManager.sendData(
       Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]),
+    );
+
+    // Step 2: exit to dashboard (0x18). This IS the command that blanks the
+    // screen. Sending 0x50 first should close the active mode so that 0x18
+    // exits cleanly without triggering the "Even AI is listening" ghost overlay.
+    AppLog.info(
+      '${DateTime.now()} clearDisplay TX: 0x18 exit-to-dashboard',
+      tag: 'GlanceClear',
+    );
+    await BleManager.sendData(
+      Uint8List.fromList([0x18]),
     );
   }
 

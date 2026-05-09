@@ -1,6 +1,8 @@
 package com.example.demo_ai_even.bluetooth
 
+import android.util.Log
 import com.example.demo_ai_even.MainActivity
+import com.example.demo_ai_even.cpp.Cpp
 import com.example.demo_ai_even.notifications.RecentNotificationsListenerService
 import com.example.demo_ai_even.service.CompanionForegroundService
 import com.example.demo_ai_even.service.GlassesCaptureRecorder
@@ -112,6 +114,8 @@ class BleMethodChannel(
             "stopGlassesCapture" -> stopGlassesCapture(call, result)
             "stopGlassesCaptureToTemp" -> stopGlassesCaptureToTemp(call, result)
             "cancelGlassesCapture" -> cancelGlassesCapture(call, result)
+            "decodeLc3Frames" -> decodeLc3Frames(call, result)
+            "getExternalFilesDir" -> getExternalFilesDir(call, result)
             else -> result.notImplemented()
         }
     }
@@ -202,6 +206,86 @@ class BleMethodChannel(
         result.success(true)
     }
 
+    /**
+     * Decodes a block of concatenated LC3 audio into raw 16-bit LE PCM.
+     *
+     * Expected arguments map:
+     *   - `audio`     → [ByteArray]  raw LC3 payload (stripped chunk payloads concatenated)
+     *   - `frameSize` → [Int]        bytes per LC3 frame (200 = live-mic hypothesis; 80 or 40 as fallbacks)
+     *
+     * Returns a [ByteArray] of concatenated PCM samples (16-bit LE, 16 kHz, mono).
+     * Frames that error are skipped (logged, not fatal) so the caller always receives
+     * whatever the decoder could produce from the good frames.
+     *
+     * If [audio] is shorter than [frameSize] the result is an empty [ByteArray].
+     */
+    fun decodeLc3Frames(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val audio = args?.get("audio") as? ByteArray
+        val frameSize = (args?.get("frameSize") as? Int) ?: 200
+
+        if (audio == null) {
+            result.error("InvalidArguments", "decodeLc3Frames: 'audio' missing or wrong type", null)
+            return
+        }
+        if (frameSize <= 0) {
+            result.error("InvalidArguments", "decodeLc3Frames: 'frameSize' must be positive", null)
+            return
+        }
+
+        val fullFrameCount = audio.size / frameSize
+        val remainder = audio.size % frameSize
+
+        if (remainder != 0) {
+            Log.w("QuickNoteCapture", "decodeLc3Frames: audio.size=${audio.size} is not a multiple of frameSize=$frameSize — $remainder trailing bytes dropped")
+        }
+
+        val pcmChunks = ArrayList<ByteArray>(fullFrameCount)
+        var totalPcmBytes = 0
+        var errorCount = 0
+
+        for (i in 0 until fullFrameCount) {
+            val frame = audio.copyOfRange(i * frameSize, (i + 1) * frameSize)
+            try {
+                val pcm = Cpp.decodeLC3(frame)
+                if (pcm != null && pcm.isNotEmpty()) {
+                    pcmChunks.add(pcm)
+                    totalPcmBytes += pcm.size
+                } else {
+                    Log.w("QuickNoteCapture", "decodeLc3Frames: frame $i returned null/empty PCM")
+                    errorCount++
+                }
+            } catch (e: Exception) {
+                Log.w("QuickNoteCapture", "decodeLc3Frames: frame $i decode error — ${e.message}")
+                errorCount++
+            }
+        }
+
+        Log.i("QuickNoteCapture", "decodeLc3Frames: frameSize=$frameSize frames=$fullFrameCount decoded=${fullFrameCount - errorCount} errors=$errorCount pcmBytes=$totalPcmBytes")
+
+        val combined = ByteArray(totalPcmBytes)
+        var offset = 0
+        for (chunk in pcmChunks) {
+            chunk.copyInto(combined, offset)
+            offset += chunk.size
+        }
+
+        result.success(combined)
+    }
+
+    /**
+     * Returns the app's primary external files directory path as a [String].
+     *
+     * This is `Context.getExternalFilesDir(null)` —
+     * typically `/sdcard/Android/data/com.example.demo_ai_even/files`.
+     * The directory is accessible via `adb pull` without root.
+     * Returns `null` if external storage is unavailable.
+     */
+    fun getExternalFilesDir(call: MethodCall, result: MethodChannel.Result) {
+        val dir = context.getExternalFilesDir(null)
+        result.success(dir?.absolutePath)
+    }
+
     //* =================== Flutter Call Native =================== *//
 
     fun flutterFoundPairedGlasses(device: BlePairDevice) = methodChannel.invokeMethod("foundPairedGlasses", device.toInfoJson())
@@ -217,5 +301,24 @@ class BleMethodChannel(
 
     fun flutterCompanionModeSwitchRequested(modeLabel: String) =
         methodChannel.invokeMethod("companionModeSwitchRequested", mapOf("modeLabel" to modeLabel))
+
+    /**
+     * Notifies Dart that a QuickNote audio buffer has been flushed and is ready for
+     * LC3 decoding.
+     *
+     * Method channel name: `method.bluetooth`
+     * Method name: `quickNoteAudioReady`
+     * Arguments map:
+     *   - `noteUid`  → [ByteArray] (8 bytes from the `0x21` payload, bytes 7..14)
+     *   - `audio`    → [ByteArray] (concatenated stripped chunk payloads; may be empty)
+     *
+     * Dart handler: `lib/ble_manager.dart` `_methodCallHandler` `case 'quickNoteAudioReady':`,
+     * dispatches to `QuickNoteCaptureService`.
+     */
+    fun flutterQuickNoteAudioReady(noteUid: ByteArray, audio: ByteArray) =
+        methodChannel.invokeMethod(
+            "quickNoteAudioReady",
+            mapOf("noteUid" to noteUid, "audio" to audio),
+        )
 
 }

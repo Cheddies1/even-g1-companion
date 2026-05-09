@@ -148,6 +148,16 @@ class BleManager private constructor() {
     /// UI Thread
     private val mainScope: CoroutineScope = MainScope()
 
+    // QuickNote audio buffer — accumulates the `0x1e c8 ...` stream that
+    // follows a right-side `0x21` release.  Flushed on stream-end or timeout.
+    private val quickNoteBuffer = QuickNoteAudioBuffer(
+        scope = mainScope,
+        onFlush = { noteUid, audioPayload ->
+            Log.i(LOG_TAG, "QuickNote flush: noteUidBytes=${noteUid.size} audioBytes=${audioPayload.size}")
+            BleChannelHelper.bleMC.flutterQuickNoteAudioReady(noteUid, audioPayload)
+        },
+    )
+
     //*================= Method - Public =================*//
 
     /**
@@ -512,11 +522,19 @@ class BleManager private constructor() {
                     // to implement the pcmData for asr in AI answer
                     Log.d(this::class.simpleName, "============Lc3 data = $lc3, Pcm = $pcmData")
                 }
+
                 BleChannelHelper.bleReceive(mapOf(
                     "lr" to if (isLeft) "L" else "R",
                     "data" to value,
                     "type" to if (isMicData) "VoiceChunk" else "Receive",
                 ))
+
+                // QuickNote audio buffering — additive pathway, runs after bleReceive
+                // so existing Dart consumers see every notification first in the original
+                // order. Opens on a right-side 0x21 (15-byte), then accumulates 0x1e c8
+                // chunks until the post-stream 0x1e (non-audio sub-code) or the watchdog
+                // fires.
+                routeToQuickNoteBuffer(value, isRight)
             }
         }
 
@@ -582,6 +600,51 @@ class BleManager private constructor() {
                     it.toConnectionStateJson(status)
                 )
             }
+        }
+    }
+
+    /**
+     * Routes an incoming notification to the [quickNoteBuffer] state machine.
+     *
+     * Must be called from [mainScope] (i.e. inside the `mainScope.launch` block in
+     * `onCharacteristicChanged`) so all buffer mutations happen on the same thread.
+     *
+     * Routing rules:
+     * - Right-side `0x21` (any length ≥ 7) → open a new QuickNote capture.
+     *   Historic firmware emitted 15 bytes; current firmware emits 42 bytes
+     *   (notes-list metadata dump). Both are valid triggers — the host sends
+     *   `02 01` from Dart to request audio regardless of `0x21` payload shape.
+     * - `0x1e` while buffer is open → delegate to [QuickNoteAudioBuffer.onCmd1e],
+     *   which appends audio chunks and flushes on non-audio sub-codes.
+     * - Any other opcode while buffer is open → defensive flush via
+     *   [QuickNoteAudioBuffer.onNonCmd1eWhileOpen].
+     *
+     * All three branches are additive: the notification still reaches [BleChannelHelper.bleReceive]
+     * after this method returns.
+     */
+    private fun routeToQuickNoteBuffer(value: ByteArray, isRight: Boolean) {
+        if (value.isEmpty()) return
+
+        val opcode = value[0].toInt() and 0xff
+
+        when {
+            opcode == 0x21 && isRight && value.size >= 7 -> {
+                quickNoteBuffer.openOnCmd21(value)
+            }
+            opcode == 0x1e && quickNoteBuffer.isOpen -> {
+                if (value.size < 2) {
+                    // Malformed frame — treat as non-audio to flush cleanly.
+                    quickNoteBuffer.onNonCmd1eWhileOpen()
+                } else {
+                    quickNoteBuffer.onCmd1e(value)
+                }
+            }
+            // Note: we deliberately do NOT flush on non-0x1e opcodes.
+            // Heartbeats (0x25), F5 status events, and other background
+            // traffic arrive constantly during the audio stream. The real
+            // end-of-stream signals are:
+            //   1. An 0x1e with a non-audio sub-code (handled by onCmd1e)
+            //   2. The 500ms watchdog timeout (handled by QuickNoteAudioBuffer)
         }
     }
 

@@ -237,10 +237,22 @@ class GlanceAssistantService {
 
   void _scheduleClear() {
     _displayClearTimer?.cancel();
+    AppLog.info(
+      '${DateTime.now()} assistant clear timer STARTED (${_responseVisibleDuration.inSeconds}s)',
+      tag: 'GlanceClear',
+    );
     _displayClearTimer = Timer(_responseVisibleDuration, () async {
       if (_isListening || _isThinking) {
+        AppLog.info(
+          '${DateTime.now()} assistant clear timer FIRED but skipped — listening=$_isListening thinking=$_isThinking',
+          tag: 'GlanceClear',
+        );
         return;
       }
+      AppLog.info(
+        '${DateTime.now()} assistant clear timer FIRED — clearing display',
+        tag: 'GlanceClear',
+      );
       _isDisplayVisible = false;
       await TextService.get.stopTextSendingByOS();
       await Proto.clearDisplay();

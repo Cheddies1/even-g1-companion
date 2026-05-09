@@ -7,6 +7,7 @@ import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/device_status_service.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/services/quick_note_capture_service.dart';
 import 'package:flutter/services.dart';
 
 typedef SendResultParse = bool Function(Uint8List value);
@@ -103,6 +104,7 @@ class BleManager {
   int? _lastCmd21EventMs;
   int? _lastCmd22EventMs;
   int? _lastRightCmd21EventMs;
+  Uint8List? _previousCmd21Payload;
   bool _resyncInFlight = false;
   int _heartbeatPauseDepth = 0;
   bool _settingsReconcileFired = false;
@@ -204,6 +206,19 @@ class BleManager {
         final modeLabel =
             (call.arguments as Map?)?['modeLabel'] as String? ?? 'Glance';
         await CompanionController.get.handleNotificationModeSwitch(modeLabel);
+        break;
+      case 'quickNoteAudioReady':
+        final args = call.arguments as Map?;
+        final noteUid = args?['noteUid'] as Uint8List?;
+        final audio = args?['audio'] as Uint8List?;
+        if (noteUid != null && audio != null) {
+          unawaited(QuickNoteCaptureService.get.handleAudioReady(noteUid, audio));
+        } else {
+          AppLog.error(
+            'quickNoteAudioReady: missing noteUid or audio in arguments',
+            tag: 'QuickNoteCapture',
+          );
+        }
         break;
       default:
         AppLog.error('Unknown method: ${call.method}', tag: 'BLE');
@@ -427,8 +442,12 @@ class BleManager {
 
     String cmd = "${res.lr}${res.getCmd().toRadixString(16).padLeft(2, '0')}";
     if (res.getCmd() != 0xf1) {
-      AppLog.debug(
+      // Temporarily promoted from debug → info while diagnosing whether the
+      // QuickNote 0x21 release frame ever reaches the host. Revert once the
+      // feature is wired and stable.
+      AppLog.info(
         "${DateTime.now()} BleManager receive cmd: $cmd, len: ${res.data.length}, data = ${res.data.hexString}",
+        tag: 'BleRx',
       );
     }
 
@@ -607,23 +626,97 @@ class BleManager {
     final rawPayload = res.data.hexString;
     final probeContext = _probeContext();
 
-    AppLog.debug(
+    AppLog.info(
       '${DateTime.now()} lr=${res.lr} len=${res.data.length} lengthField=$lengthField sequenceGuess=$sequenceGuess deltaMs=${deltaMs ?? 'n/a'} raw=$rawPayload mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
       tag: 'R21Probe',
     );
     if (res.lr == 'R') {
-      AppLog.debug(
+      AppLog.info(
         '${DateTime.now()} candidate=R21-primary lr=${res.lr} len=${res.data.length} raw=$rawPayload groups=[$grouped] mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
         tag: 'QuickNoteProbe',
       );
-      if (res.data.length == 42) {
-        unawaited(CompanionController.get.handleRightHoldModeSwitchProbe());
-      }
+
+      // QuickNote audio trigger — the firmware stores notes in a circular
+      // buffer. The 42-byte `0x21` lists all stored notes (typically 4).
+      // To find the JUST-RECORDED note, we diff against the previous `0x21`
+      // payload: the record whose 8-byte data changed is the new one.
+      final noteIndex = _detectChangedNoteIndex(res.data);
+      AppLog.info(
+        '${DateTime.now()} requesting audio for note index $noteIndex (detected via diff)',
+        tag: 'QuickNoteCapture',
+      );
+      _previousCmd21Payload = Uint8List.fromList(res.data);
+      unawaited(Proto.quickNoteRequestAudio(lr: 'R', noteIndex: noteIndex));
     }
 
     AppLog.debug(
       "${DateTime.now()} CMD21 event: lr=${res.lr}, len=${res.data.length}, lengthField=$lengthField, sequenceGuess=$sequenceGuess, deltaMs=${deltaMs ?? 'n/a'}, groups=[$grouped]",
     );
+  }
+
+  /// Parses the 42-byte `0x21` payload to find which note record changed
+  /// compared to [_previousCmd21Payload]. The payload layout is:
+  ///   bytes 0-5: header (opcode, length, seq, constants)
+  ///   byte 6: first record index (always 01)
+  ///   bytes 7-14: record 1 data (8 bytes)
+  ///   byte 15: record 2 index
+  ///   bytes 16-23: record 2 data
+  ///   byte 24: record 3 index
+  ///   bytes 25-32: record 3 data
+  ///   byte 33: record 4 index
+  ///   bytes 34-41: record 4 data
+  ///
+  /// Returns the 1-based index of the changed record, or the highest index
+  /// if no previous payload exists (first press after app start).
+  int _detectChangedNoteIndex(Uint8List current) {
+    final noteCount = current.length >= 6 ? current[5] : 1;
+
+    // For 15-byte payloads (single-note release), always index 1.
+    if (current.length < 42 || noteCount < 1) return 1;
+
+    final prev = _previousCmd21Payload;
+    if (prev == null || prev.length < 42) {
+      // No previous — fall back to highest index (most recently replaced
+      // in a fresh circular buffer tends to be the last slot, but this is
+      // a best-guess for the very first press after app start).
+      AppLog.info(
+        '${DateTime.now()} no previous 0x21 to diff — defaulting to note index $noteCount',
+        tag: 'QuickNoteCapture',
+      );
+      return noteCount;
+    }
+
+    // Each record is 9 bytes: 1-byte index + 8-byte data, starting at byte 6.
+    for (var i = 0; i < noteCount; i++) {
+      final recordStart = 6 + (i * 9);
+      final dataStart = recordStart + 1; // skip the index byte
+      final dataEnd = dataStart + 8;
+      if (dataEnd > current.length || dataEnd > prev.length) break;
+
+      bool changed = false;
+      for (var j = dataStart; j < dataEnd; j++) {
+        if (current[j] != prev[j]) {
+          changed = true;
+          break;
+        }
+      }
+      if (changed) {
+        final recordIndex = current[recordStart];
+        AppLog.info(
+          '${DateTime.now()} diff detected change at record position $i (index=$recordIndex)',
+          tag: 'QuickNoteCapture',
+        );
+        return recordIndex;
+      }
+    }
+
+    // No diff found — all records identical. Might be a re-press without
+    // speaking, or the same note replayed. Default to highest.
+    AppLog.info(
+      '${DateTime.now()} no record changed in diff — defaulting to note index $noteCount',
+      tag: 'QuickNoteCapture',
+    );
+    return noteCount;
   }
 
   void _logCmd22(BleReceive res) {

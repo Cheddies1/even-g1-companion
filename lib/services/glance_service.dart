@@ -210,6 +210,10 @@ class GlanceService {
   }
 
   Future<void> close() async {
+    AppLog.info(
+      '${DateTime.now()} close() ENTERED — isVisible=$_isVisible call=${_currentCall != null}',
+      tag: 'GlanceClear',
+    );
     _clearTimer?.cancel();
     _clearTimer = null;
     _mediaTimeoutTimer?.cancel();
@@ -422,7 +426,15 @@ class GlanceService {
 
   void _restartClearTimer() {
     _clearTimer?.cancel();
+    AppLog.info(
+      '${DateTime.now()} clear timer STARTED (${_displayDuration.inSeconds}s)',
+      tag: 'GlanceClear',
+    );
     _clearTimer = Timer(_displayDuration, () {
+      AppLog.info(
+        '${DateTime.now()} clear timer FIRED — calling close()',
+        tag: 'GlanceClear',
+      );
       close();
     });
   }

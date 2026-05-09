@@ -275,17 +275,12 @@ Phone UI path:
 - the home screen mode buttons route through the same central controller `setMode(...)` path
 - mode selection is immediate and does not depend on a temporary title-card overlay
 
-Right-hold POC path:
-- `BleManager._logCmd21(...)` observes `0x21`
-- only right-leg packets with the historical stable `len == 42` pattern are forwarded
-- `CompanionController.handleRightHoldModeSwitchProbe()` owns the decision
-- the controller only switches mode when `hasActiveDisplay == false`
-- repeated triggers are debounced for `1500ms`
-- the switch remains passive and uses the existing mode order
-- the 2026-04-28 taps capture observed `0x21` releases at length `15` rather
-  than `42`, so this gate may not match current firmware. Tracked in
-  [FINDINGS-taps.md](FINDINGS-taps.md);
-  not active user-facing functionality today
+Long-press-right release (`0x21`):
+- `BleManager._logCmd21(...)` observes `0x21` and emits the `QuickNoteProbe`
+  diagnostic log for right-leg packets, surfacing length / payload / mode
+  context for the QuickNote pipeline to consume
+- mode-switching on long-press-right was retired on 2026-05-08; double-tap
+  is now the sole mode-switch surface (see `handleDoubleTapModeSwitch`)
 
 Double-tap mode-switch path:
 - `BleManager` F5 dispatch routes `case 32:` (= `F5 0x20`) to

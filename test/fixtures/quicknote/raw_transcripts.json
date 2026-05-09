@@ -1,0 +1,42 @@
+[
+  {
+    "id": "shopping-cat-litter",
+    "topic": "Shopping list item",
+    "raw": "oh add cat litter to the to-do list er the shopping list i mean"
+  },
+  {
+    "id": "work-deploy-friday",
+    "topic": "Work TODO (deploy reschedule)",
+    "raw": "ok so the the deploy is on friday wait no actually scratch that we pushed it to monday because the the QA env is still down and ben said um he wants another pass on the the migration scripts before we ship anything yeah so monday"
+  },
+  {
+    "id": "personal-call-cara-tuesday",
+    "topic": "Personal reminder (call back)",
+    "raw": "remind me to call sara back uh sorry cara back about the tuesday thing yeah"
+  },
+  {
+    "id": "debug-reconnect-loop",
+    "topic": "Debugging idea (BLE reconnect loop)",
+    "raw": "thinking about the the reconnect loop um when the glasses drop i think we're we're firing two scans at once you know one from the the BLE callback and one from the timer er so maybe gate the timer on the connection state actually no just check if a scan is already in flight before kicking another one yeah that's simpler"
+  },
+  {
+    "id": "chore-bins-out-thursday",
+    "topic": "Household chore (bins)",
+    "raw": "bins,, out thursday night,,, the green one this week not the,, black one"
+  },
+  {
+    "id": "creative-podcast-glasses",
+    "topic": "Half-formed creative idea",
+    "raw": "had a a thought what if the glasses like read out a podcast but only the the bits you highlighted earlier in the day um kind of a daily recap thing yeah could be fun"
+  },
+  {
+    "id": "observation-fox-garden",
+    "topic": "Quick observation just witnessed",
+    "raw": "there's a fox in the garden just now pry the same one as last week"
+  },
+  {
+    "id": "meeting-followup-pricing-doc",
+    "topic": "Meeting follow-up note",
+    "raw": "ok from the pricing call james is gunna send the the updated deck by wednesday and i i need to write up the the objections doc before then um actually wait scratch that he said tuesday not wednesday yeah tuesday so i need it done monday night"
+  }
+]
