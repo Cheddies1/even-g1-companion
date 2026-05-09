@@ -147,8 +147,11 @@ Owns:
 New files (2026-05-08 / 2026-05-09):
 - [android/.../bluetooth/QuickNoteAudioBuffer.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/QuickNoteAudioBuffer.kt)
 - [lib/services/quick_note_capture_service.dart](../lib/services/quick_note_capture_service.dart)
+- [lib/services/quick_note_tidy_service.dart](../lib/services/quick_note_tidy_service.dart)
+- [lib/services/quick_note_classifier.dart](../lib/services/quick_note_classifier.dart)
 - [lib/services/notes_store.dart](../lib/services/notes_store.dart)
 - [lib/models/note.dart](../lib/models/note.dart)
+- [lib/views/notes_page.dart](../lib/views/notes_page.dart)
 
 Data flow:
 
@@ -168,7 +171,10 @@ Data flow:
     -> _writeWav (WAV file in app external storage /quicknote/)
     -> OpenAiTranscriptionService.transcribe()
     -> NotesStore.insert()                    [SQLite, raw transcript]
-    -> QuickNoteTidyService.tidy() (async)    [LLM cleanup, updates NotesStore]
+    -> QuickNoteTidyService.tidy() (async)    [LLM cleanup + classify, returns ({text, category})]
+       -> on success: NotesStore.updateTranscriptClean() + NotesStore.updateCategory()
+       -> on failure: QuickNoteClassifier.classify() [keyword regex fallback, shopping-first]
+                      NotesStore.updateCategory() with fallback category
 ```
 
 Key design decisions:
@@ -179,6 +185,11 @@ Key design decisions:
 - audio request (`1e 06 00 <seq> 02 <noteIndex>`) is sent by
   `Proto.quickNoteRequestAudio()` immediately after `0x21` is received
   (called from `BleManager.routeToQuickNoteBuffer` after opening the buffer)
+- `Proto.quickNoteAck()` (`04 01`) fires **unconditionally** at the top of
+  `handleAudioReady` — before decode or STT — so the firmware receives its
+  ack even if the decode or transcription pipeline fails. Without this, a
+  failed pipeline would leave the firmware waiting and the next long-press
+  would not work (Codex blocker fix, 2026-05-09)
 - `Proto._quickNoteCaptureActive` flag suppresses `clearDisplay()` while
   audio is in-flight, preventing the `0x50 + 0x18` sequence from killing
   the stream mid-transfer
@@ -192,7 +203,100 @@ Key design decisions:
 - note UIDs (8 bytes from the `0x21` payload, bytes 7–14) are stored in
   `NotesStore` for future note-management operations (delete/reorder)
 
-Log tag for filtering: `QuickNoteCapture`
+#### QuickNoteTidyService
+
+`QuickNoteTidyService` (`lib/services/quick_note_tidy_service.dart`) is a
+singleton that runs an LLM cleanup pass on raw STT transcripts and classifies
+each note into a category.
+
+Design:
+- uses `config.chatModel` (resolves to `gpt-4.1-mini` by default via
+  `AssistantBackendConfig`)
+- system prompt instructs the model to strip fillers, honour self-corrections,
+  preserve specific details, and return a JSON object:
+  `{"text": "cleaned note", "category": "shopping|todo|notes"}`
+- `tidy()` returns a Dart record `({String text, String category})`; the caller
+  writes both fields to `NotesStore` on success
+- `_parseResponse()` parses the JSON; an unrecognised or missing `category`
+  value falls back to `'notes'` rather than failing the whole tidy pass
+- three few-shot anchor pairs are **inlined as Dart constants** (source:
+  `test/fixtures/quicknote/anchor_pairs.json`); they are not loaded at runtime;
+  each assistant turn is JSON-formatted to match the system prompt's instruction
+- `max_completion_tokens = 200` — intentionally independent of
+  `AssistantBackendConfig.maxOutputTokens` (which is tuned for glasses display
+  width, not notes)
+- on any API error or JSON parse failure, falls back to
+  `(text: rawTranscript, category: 'notes')` so the note is never lost
+- log tag: `QuickNoteTidy`
+
+Known limitation: if the user swipe-deletes a note and taps Undo while the tidy
+call is still in-flight, the restored note receives a new autoincrement ID. The
+in-flight tidy closure holds the old ID, so its `updateTranscriptClean` and
+`updateCategory` calls are silent no-ops. The restored note keeps its raw
+transcript and default `'notes'` category. Acceptable for v1.
+
+#### Categorisation
+
+Categories: `shopping`, `todo`, `notes` (default).
+
+**Primary path — LLM (online):** `QuickNoteTidyService.tidy()` asks the model
+for both cleaned text and category in a single API call. The category is
+persisted to `NotesStore` via `updateCategory()` after the tidy text is saved.
+
+**Fallback path — keyword regex (offline):** `QuickNoteClassifier`
+(`lib/services/quick_note_classifier.dart`) is used when the API is unavailable
+or returns an unparseable response. It applies two compiled regexes in priority
+order — shopping patterns checked first (e.g. `buy`, `pick up`, `grocery`),
+then to-do patterns (e.g. `remember to`, `don't forget`, `schedule`). If
+neither matches, the note lands in `'notes'`. Case-insensitive.
+
+**Schema — v1→v2 migration:** a `category TEXT NOT NULL DEFAULT 'notes'`
+column was added to the `notes` table in `NotesStore` schema version 2. The
+`onUpgrade` handler issues `ALTER TABLE notes ADD COLUMN category TEXT NOT NULL
+DEFAULT 'notes'` for existing databases. The `CHECK` constraint present in the
+`onCreate` path is omitted in the `ALTER TABLE` statement because some Android
+SQLite versions do not support `ADD COLUMN ... CHECK`; constraint enforcement
+is handled at the app layer instead.
+
+`NotesStore` write surface for categories:
+- `insert(... category: ...)` — sets category at creation time (defaults to `'notes'`)
+- `updateCategory({id, category})` — called by the tidy pipeline after classification
+- `listAll({category: ...})` — optional category filter for per-tab queries
+
+#### Persisted `0x21` baseline
+
+`BleManager` saves the most recent 42-byte `0x21` payload to SharedPreferences
+under the key `quicknote.last_cmd21_payload` (stored as a hex string) on every
+successful note fetch. On the first `0x21` after app restart, `_previousCmd21Payload`
+is populated from this persisted value before the diff detection runs. This fixes
+the "first note after restart fetches wrong note" issue caused by an empty baseline
+forcing the diff logic into a fallback code path.
+
+Fields involved:
+- `_previousCmd21Payload: Uint8List?` — in-memory baseline for diff detection
+- `_cmd21PayloadLoaded: bool` — one-shot load flag; prevents repeated prefs reads
+- `_cmd21PayloadPrefKey = 'quicknote.last_cmd21_payload'` — SharedPreferences key
+
+#### Auto-sync of unknown notes
+
+On the first `0x21` after app launch, `BleManager._syncUnknownNotes()` compares
+all firmware note records in the 42-byte payload against `NotesStore` by note UID.
+Any record whose 8-byte UID is not already in the local store is fetched, decoded,
+transcribed, and saved through the normal `handleAudioReady` pipeline.
+
+This catches notes recorded via the official Even Realities app or while the
+companion app was closed.
+
+Design:
+- one-shot per app launch, guarded by the `_autoSyncDone: bool` flag
+- runs after the primary diff-detected fetch completes (i.e. the note that
+  triggered the `0x21` is already in-flight; `skipIndex` excludes it)
+- 2 s spacing between fetches to avoid overwhelming the BLE link
+- 3 s wait per note to allow the audio-ready callback to complete before the
+  next request
+
+Log tag for filtering: `QuickNoteCapture` (both `_syncUnknownNotes` and the
+primary capture pipeline share this tag)
 
 Protocol reference: [protocol-reference.md](protocol-reference.md) §
 "QuickNote protocol family"
@@ -716,6 +820,7 @@ When a `tag` is provided, it is rendered as a `[TAG] ` prefix so logs can be fil
 
 Canonical tags currently in use:
 - `BLE`, `Companion`, `Glance`, `GlanceAssistant`, `Chat`, `ChatBackend`, `Capture`, `Navigate`, `NavigateBmp`, `TiltIntent`, `NotificationPolicy`, `Transport`, `DeviceStatus`, `AppStartup`, `Text`, `BmpUpdate`
+- QuickNote pipeline tags: `QuickNoteCapture` (buffer, capture, auto-sync), `QuickNoteTidy` (LLM tidy pass)
 - probe tags kept distinct from their owning subsystem for targeted filtering: `R21Probe`, `QuickNoteProbe`, `RightHoldProbe`
 - legacy/demo quarantine tags: `Dashboard`, `DashboardBmp`, `EvenAI`, `Features`, `ApiService`, `DeepSeek`, `BmpPage`, `Utils`
 

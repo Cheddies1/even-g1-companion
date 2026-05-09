@@ -38,15 +38,40 @@ It is intentionally separate from:
 - right-temple long-press records audio on-glasses
 - on release, the app receives the notes-list metadata (`0x21`), requests
   the audio stream, receives LC3-encoded chunks, decodes to PCM, writes a
-  WAV file, transcribes via OpenAI STT, and stores the note in SQLite
+  WAV file, transcribes via OpenAI Whisper STT, and stores the note in SQLite
 - pipeline is implemented and working end-to-end (2026-05-08 / 2026-05-09)
-- the `proto_reference` for the wire protocol is
+- the wire protocol is documented in
   [protocol-reference.md](protocol-reference.md) § "QuickNote protocol family"
-- notes are stored via `NotesStore` (SQLite); a tidy pass (LLM cleanup) runs
-  asynchronously after the raw transcript is inserted
-- no user-visible UI for notes yet — WAV files land in the app's external
-  storage under `quicknote/` and can be pulled via `adb`
-- current status: pipeline confirmed working; notes UI is pending
+- notes are stored via `NotesStore` (SQLite); a `QuickNoteTidyService` LLM
+  cleanup pass runs asynchronously after the raw transcript is inserted and
+  updates both `transcript_clean` and `category` when complete; if the API is
+  unavailable, a keyword-regex fallback (`QuickNoteClassifier`) classifies the
+  note into `shopping`, `todo`, or `notes` (default)
+- **auto-categorisation:** every captured note is automatically assigned to one
+  of three categories — `Shopping`, `To Do`, or `Notes`. Classification is
+  performed by the same LLM tidy call (single API round-trip returns both
+  cleaned text and category as JSON); `QuickNoteClassifier` is used as an
+  offline fallback
+- **notes UI is live:** `NotesPage` (`lib/views/notes_page.dart`) shows three
+  tabs — `Shopping`, `To Do`, `Notes` — each with a badge showing the count of
+  active notes in that category. Swipe-to-delete (undo snackbar), active/done
+  status toggle, and expand/collapse for raw vs clean transcript comparison are
+  available on all tabs. Notes can be moved between categories via the trailing
+  overflow menu (`⋮`) → bottom sheet category picker.
+  The HomePage shows a Notes card with a per-category breakdown; tapping it
+  opens `NotesPage`
+- WAV files are also retained in the app's external storage under `quicknote/`
+  and can be pulled via `adb pull`
+- **persisted `0x21` baseline:** the most recent 42-byte `0x21` payload is
+  saved to SharedPreferences (`quicknote.last_cmd21_payload`) and restored on
+  the first `0x21` after app restart, so the diff detection correctly
+  identifies which note changed even after a restart
+- **auto-sync of unknown notes:** on the first `0x21` after launch, the app
+  compares all firmware note UIDs against the local store. Any UID not found
+  locally is fetched, decoded, transcribed, and saved automatically — catching
+  notes recorded via the official Even Realities app or while the companion app
+  was closed. One-shot per launch; 2 s between fetches
+- current status: pipeline and UI both implemented; notes management is usable
 
 ### Quick mode switching
 - available from the persistent Android notification

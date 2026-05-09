@@ -129,21 +129,6 @@ Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **Q
   - [ ] **Connected**: On successful BLE connection or reconnection, a brief title card ("Connected") is shown on the glasses and then automatically cleared. This is a status confirmation, not a mode-entry card — but it shares the same flash mechanic and fits naturally here. Should fire on both initial connect and reconnect events; must not interfere with an already-active mode (e.g. do not interrupt a live Navigate session).
 - **Notes**: Navigate condition is the tricky part — the title card logic must gate on whether `NavigateService` has an active session before sending anything. Glance title card is straightforward; Navigate title card requires careful lifecycle awareness. The Connected card similarly needs a lifecycle-safe send: only fire if the current mode is in a quiescent state. All three sub-items can be implemented independently.
 
-### quicknotes-multi-list: QuickNotes — automatic multi-list categorisation
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: Currently all transcribed notes land in a single central list. The idea is to split storage and UI into three named lists with keyword-based automatic routing at the point a note is saved (post-transcription, post-tidy).
-- **Three lists**:
-  1. **Notes** (default) — anything not matched by the other two categories
-  2. **Shopping** — triggered by leading key phrases: "Buy", "Purchase", "Pick up", "Get"
-  3. **Remember / To-Do** — triggered by leading key phrase: "Remember to"
-- **Routing logic**: keyword detection runs on the transcribed (and tidied) note text. Matching is phrase-anchored (start-of-note or after obvious sentence breaks) to reduce false positives on notes that merely mention shopping without being a shopping item.
-- **Acceptance**:
-  - [ ] A note starting with a Shopping trigger phrase routes to the Shopping list; a note starting with a Remember/To-Do phrase routes to that list; everything else goes to Notes.
-  - [ ] In the app UI (`NotesPage`), notes are shown per-list with a tab or section view — user can see each list separately.
-  - [ ] User can manually move a note between lists from the UI (drag or context menu).
-  - [ ] Existing notes (pre-feature) land in Notes by default.
-- **Notes**: Depends on QuickNote v1 (shipped 2026-05-09 — see Recently Done) being stable and the `NotesStore` schema being settled. Schema change needed: add a `list` column (enum or string) to the notes table. Routing logic lives in the tidy/save pipeline, not in the BLE layer. Cross-ref `lib/models/note.dart`, `lib/services/notes_store.dart`.
 
 #### BLE stability — deferred tiers
 
@@ -251,8 +236,11 @@ Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **Q
 
 ## Recently Done
 
+### quicknotes-multi-list: QuickNotes multi-list categorisation (2026-05-09)
+Three-category auto-classification via GPT piggyback on tidy step + keyword regex fallback. TabBar UI with move-between-categories picker. Schema migration v1→v2.
+
 ### QuickNote via hosted transcription — v1 pipeline complete (2026-05-08/09)
-Full right-hold → transcribed local note pipeline shipped across two sessions. All 10 tasks done; Codex peer review passed.
+Full right-hold → transcribed local note pipeline shipped across two sessions. All 10 tasks done; Codex peer review passed with 2 blockers fixed (ack on error paths, undo/tidy race documented) and 1 NIT resolved (tidy log tag). Persistence (0x21 baseline on restart) and auto-sync (unknown notes fetched from glasses on first press after launch) added post-review.
 
 **Protocol discoveries:**
 - Firmware does NOT stream audio unsolicited — host must send `1e 06 00 <seq> 02 <noteIndex>` to right leg after `0x21` to request the stream.
@@ -266,9 +254,9 @@ Full right-hold → transcribed local note pipeline shipped across two sessions.
 - `QuickNoteAudioBuffer.kt` — native BLE chunk accumulator
 - `quick_note_capture_service.dart` — LC3 decode → WAV probe, GO/NO-GO gate PASSED
 - `QuickNoteTidyService` — GPT-4.1-mini with 3-pair few-shot prompt, falls back to raw on failure
-- Pipeline glue — decode → WAV → OpenAI Whisper STT → `NotesStore.insert(raw)` → async tidy → `NotesStore.updateTranscriptClean`; firmware ack (`04 01`) sent after audio received
-- `note.dart` + `notes_store.dart` — sqflite schema with sort_order, status, raw/clean transcript fields; rebalance logic for precision
-- `NotesPage` UI — `ReorderableListView`, swipe-to-delete, status toggle, expand/collapse raw vs clean, empty state
+- Pipeline glue — decode → WAV → OpenAI Whisper STT → `NotesStore.insert(raw)` → async tidy → `NotesStore.updateTranscriptClean`; firmware ack (`04 01`) fires unconditionally (blocker fix); ack now sent after audio received on all paths including errors
+- `note.dart` + `notes_store.dart` — sqflite schema with sort_order, status, raw/clean transcript fields; rebalance logic for precision; persisted 0x21 baseline fixes first-note-after-restart bug
+- `NotesPage` UI — `ReorderableListView`, swipe-to-delete, status toggle, expand/collapse raw vs clean, empty state; auto-syncs unknown glasses notes on first press after launch
 - `HomePage` notes card — active note count
 
 **Polish remaining**: diagnostic log revert, probe WAV cleanup, save notification — tracked as Next #2.
