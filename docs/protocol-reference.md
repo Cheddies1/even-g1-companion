@@ -462,9 +462,10 @@ Observed reality (`Confirmed` for note content push):
   (both confirmed against the on-screen dashboard rendering)
 
 Notes:
-- `0x1e` appears as both TX (host → glasses, pushing content into dashboard
-  slots) and RX (glasses → host, the post-quicknote-release audio stream
-  documented separately). The two directions carry different payloads.
+- `0x1e` is heavily overloaded — it appears in three distinct roles:
+  TX dashboard content push (this section), TX QuickNote audio
+  request/ack, and RX QuickNote audio stream. See "QuickNote protocol
+  family" below for the full `0x1e` disambiguation table.
 - the `0x06` three-step transaction family handles the transactional
   framing around dashboard updates; `0x1e` carries the actual slot content.
 
@@ -579,38 +580,6 @@ Implementation:
 - TX command: [Proto.setDoubleTapAction](../lib/services/proto.dart)
 - UI / persistence: same triplet as Head-up settings
 
-## Quicknote post-release stream: `0x1e c8 ...`
-
-Source:
-- 2026-04-28 settings capture, Phase 3 (right-hold quicknotes of varying
-  duration: ~10 s long, ~5 s short, ~3 s silence)
-
-Observed reality (`Suspected`, medium confidence — structure is clear but
-codec is not yet decoded):
-
-- after every `0x21` quicknote-release (the `R21` family already
-  documented), the firmware emits a chunked binary stream back to the host
-  on opcode `0x1e`
-- per-chunk framing:
-  ```
-  1e c8 00 <seq1> 02 61 00 <seq2> 00 01 <~130 bytes binary data>
-  ```
-  with `seq1` and `seq2 = seq1 + 1` increasing monotonically through each
-  burst
-- frame counts scale with recording duration (~50 frames for 3 s silence,
-  ~100 frames for 10 s) at ~140 bytes per chunk and ~10 frames/s — roughly
-  11 kbit/s, in the range of low-bitrate voice codecs like LC3
-- byte distribution and sequencing are consistent with **encoded audio**;
-  not yet decoded
-
-Notes:
-- this is the BLE path the user can tap to recreate the firmware's
-  quicknote behaviour in the companion app (record → on-device or hosted
-  transcription → stored note)
-- decode work would start with the existing LC3 path in
-  [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp)
-- out of scope for the current code; documented as a future feature
-
 ## Note management: `0x06 ... / 0x22` ack
 
 Source:
@@ -699,17 +668,283 @@ Observed reality:
   (`0x1f`) at ~2 s cadence; firmware accepts both, so the `0x25` heartbeat in
   this app remains valid
 
-## QuickNote / `0x21`
+## QuickNote protocol family
 
-Vendor/demo reference:
-- not described in the old README excerpt
+Sources:
+- 2026-04-28 recon HCI snoop (`logs/quicknote/btsnoop_hci.log`) — official
+  Even Realities app traffic; parsed as
+  `logs/bluetooth/traffic.csv` / `logs/bluetooth/summary.txt`
+- 2026-05-08 / 2026-05-09 live device testing — custom companion app on
+  firmware 1.6.6, right-temple long-press, multiple cycles
+- Full evidence write-up: [FINDINGS-quicknote.md](FINDINGS-quicknote.md)
 
-Observed reality:
-- `Suspected`
-- right-hold QuickNote behaviour is best explained by a release-time `R21` packet family
-- payload meaning is still unknown
-- do not overstate this beyond current investigation notes
+The QuickNote path is entirely separate from the left-temple Even AI path.
+Both ultimately carry LC3 audio, but they use different opcodes, different
+triggering handshakes, and different stream framing. See "Comparison with
+left-temple Even AI" at the end of this section.
 
-See:
-- [investigation-notes.md](investigation-notes.md)
-- [python-sdk-comparison-notes.md](python-sdk-comparison-notes.md)
+The opcode `0x1e` is overloaded across three distinct uses:
+
+| Direction | Sub-code / form | Meaning |
+|-----------|-----------------|---------|
+| TX host→glasses | `1e <len> 00 <seq> 03 01 ...` | Dashboard slot content push (see "Dashboard data slots" above) |
+| TX host→glasses | `1e 06 00 <seq> 02 <idx>` | QuickNote audio request |
+| TX host→glasses | `1e 06 00 <seq> 04 01` | QuickNote audio received acknowledgement |
+| RX glasses→host | `1e c8 00 <seq> 02 <field> 00 <seq+1> 00 01 <payload>` | QuickNote audio stream chunk |
+| RX glasses→host | `1e 06 00 <seq> 04 00` | QuickNote stream-end confirmation |
+
+Disambiguate by direction and the second byte: `0xc8` (or any value in the
+audio-length range) signals an audio chunk; `0x06` with payload `04 00` or
+`04 01` is a control frame.
+
+---
+
+### Right-temple long-press release: `0x21`
+
+`Confirmed` (2026-05-08, live device, multiple cycles)
+
+The `0x21` frame fires on **release** of a sufficiently long right-temple
+press. There is no corresponding press-down event (contrast with the
+left-temple `F5 17` press-down / `F5 18` release pair).
+
+Two payload variants have been observed:
+
+#### 15-byte variant (single-note release)
+
+```
+21 0f 00 <seq> 01 01 01 <8 bytes note data>
+```
+
+Observed in the 2026-04-28 recon (single right-press cycle, official Even
+Realities app). Byte 1 = `0x0f` = 15 (total frame length). This appears
+to be a "just saved this specific note" release.
+
+Example: `21 0f 00 0a 01 01 01 ec 16 f1 69 ac c2 41 cc`
+
+Byte map:
+
+| Bytes | Value | Meaning |
+|-------|-------|---------|
+| 0 | `21` | Opcode |
+| 1 | `0f` | Frame length (15) |
+| 2 | `00` | Constant |
+| 3 | `0a` | Sequence |
+| 4–6 | `01 01 01` | Constant prefix |
+| 7–14 | `ec 16 f1 69 ac c2 41 cc` | Note UID / data |
+
+The 8-byte tail at bytes 7–14 matches the UID structure used in the `0x06`
+note-management transactions (see "Note management" section). `Suspected`:
+this field is the UID of the just-saved note.
+
+#### 42-byte variant (notes-list metadata dump)
+
+```
+21 2a 00 <seq> 01 <count> <count × (1-byte index + 8 bytes data)>
+```
+
+`Confirmed` (2026-05-08, live device). Byte 1 = `0x2a` = 42 (total frame
+length). This variant is emitted by firmware 1.6.6 on the custom companion
+app at every right-temple long-press release, regardless of display state.
+The firmware interprets it as a **notes-list metadata dump**: a complete
+enumeration of all currently stored notes.
+
+Example: `21 2a 00 17 01 04 01 f7 ce 93 65 ed c4 be e4 02 90 cf 93 65 f8
+22 06 e3 03 cc cf 93 65 5e 38 18 1a 04 36 d0 93 65 3a 90 44 a2`
+
+Byte map:
+
+| Bytes | Value | Meaning |
+|-------|-------|---------|
+| 0 | `21` | Opcode |
+| 1 | `2a` | Frame length (42) |
+| 2 | `00` | Constant |
+| 3 | `17` | Sequence (increments per press: `0x13`, `0x15`, `0x16`, `0x17` observed) |
+| 4 | `01` | Constant |
+| 5 | `04` | Note count (4 stored notes in this sample) |
+| 6 | `01` | Index of first record |
+| 7–14 | `f7 ce 93 65 ed c4 be e4` | Record 1 data — 4-byte timestamp-like field + 4 bytes UID |
+| 15 | `02` | Index of second record |
+| 16–23 | `90 cf 93 65 f8 22 06 e3` | Record 2 data |
+| 24 | `03` | Index of third record |
+| 25–32 | `cc cf 93 65 5e 38 18 1a` | Record 3 data |
+| 33 | `04` | Index of fourth record |
+| 34–41 | `36 d0 93 65 3a 90 44 a2` | Record 4 data |
+
+The repeating `xx xx 93 65` pattern across records is consistent with
+Unix timestamps (seconds since epoch, little-endian, upper bytes `93 65` =
+2026-era timestamps). This supports the interpretation that each record
+carries a creation timestamp and a 4-byte note UID.
+
+**Circular 4-slot buffer** (`Suspected`): the firmware appears to maintain
+a fixed 4-slot circular buffer. Indices are `01..04`. Across multiple
+recording sessions, the same-indexed slot changes its 8-byte data while
+other slots remain constant — consistent with oldest-slot replacement on
+each new note. "Circular" is inferred from this pattern across a single
+live session; direct observation of slot wrap-around (note 5 overwriting
+note 1) has not yet been captured.
+
+**Diff-based new-note detection** (`Confirmed`, 2026-05-08): to identify
+which note was just recorded, compare the current 42-byte payload against
+the previously stored one. The record whose 8-byte data changed is the
+newly recorded note. Do not assume "highest index = newest" — the circular
+buffer means the newest slot may have any index.
+
+**Which variant will you see?** (`Suspected`): the 15-byte variant was
+observed only in the 2026-04-28 recon with the official Even Realities
+app. The 42-byte variant was observed exclusively in 2026-05-08 live
+testing with the custom companion app. Whether the firmware selects the
+variant based on app state, connection flags, firmware version, or some
+other factor is not yet known.
+
+---
+
+### Host-initiated audio request handshake
+
+`Confirmed` (2026-05-08, re-analysis of 2026-04-28 recon TX traffic)
+
+**The firmware does NOT stream audio unsolicited.** After the `0x21`
+release, the host must explicitly request audio. Without this request, the
+firmware sends nothing.
+
+The full handshake, observed in the 2026-04-28 recon capture:
+
+| Step | Dir | Delay from `0x21` | Hex | Meaning |
+|------|-----|-------------------|-----|---------|
+| 1 | RX | 0 ms | `21 0f 00 0a 01 01 01 ec 16 f1 69 ac c2 41 cc` | Right-press release (`0x21`, 15 bytes) |
+| 2 | **TX** | +11 ms | **`1e 06 00 41 02 01`** | **Host requests audio for note index 01** |
+| 3 | RX | +63 ms | `1e c8 00 00 02 31 00 01 00 01 <190 bytes>` | First audio chunk (seq 0x00) |
+| … | RX | … | 47 more `1e c8` chunks | seq 0x01..0x2f |
+| 4 | RX | +358 ms | `1e 5a 00 30 02 31 00 31 00 01 <80 bytes>` | Trailing chunk, shorter (seq 0x30) |
+| 5 | **TX** | +386 ms | **`1e 06 00 42 04 01`** | **Host acknowledges audio received** |
+| 6 | RX | +430 ms | `1e 06 00 42 04 00` | Glasses confirm cycle closed |
+
+**Audio request frame structure:**
+```
+1e 06 00 <seq> 02 <noteIndex>
+```
+- `1e` = opcode (same `0x1e` channel as the audio)
+- `06` = total frame length (6 bytes)
+- `00` = constant
+- `<seq>` = host's monotonically incrementing sequence counter; observed
+  starting at `0x41` in the recon. The firmware appears to accept any
+  value.
+- `02` = "send audio" sub-command
+- `<noteIndex>` = the 1-based index of the note to retrieve. Use `01`
+  after a 15-byte `0x21` (only one note context). For a 42-byte `0x21`,
+  use the index of the slot whose data changed (diff detection).
+
+**Acknowledgement frame structure:**
+```
+1e 06 00 <seq> 04 01
+```
+Sent by the host after the audio stream is complete. The firmware responds
+with `1e 06 00 <seq> 04 00` to confirm the cycle is closed.
+
+---
+
+### Audio stream: `0x1e c8 ...` chunks
+
+`Confirmed` (2026-04-28 recon capture, confirmed against 2026-05-08 live
+device — audio decoded to speech)
+
+Every audio chunk has the form:
+
+```
+1e c8 00 <seq1>  02 <field5>  00 <seq2>  00 01  <190 bytes audio payload>
+```
+
+| Byte(s) | Example | Meaning |
+|---------|---------|---------|
+| 0 | `1e` | Opcode |
+| 1 | `c8` | `0xc8` = 200 for full-size chunks. **This byte is the total chunk length in bytes**, not a fixed magic constant. The trailing (shorter) chunk uses `0x5a` = 90. |
+| 2 | `00` | Constant |
+| 3 | `seq1` | Monotonic sequence 0x00..0x30 across a cycle |
+| 4 | `02` | Constant |
+| 5 | `31` | Field of unknown meaning — `0x31` in 2026-04-28, `0x61` in an earlier capture. Possibly a session ID or codec variant. Does not affect decoding. |
+| 6 | `00` | Constant |
+| 7 | `seq2` | Equals `seq1 + 1` (so 0x01..0x31) |
+| 8–9 | `00 01` | Constant |
+| 10..end | — | Audio payload (190 bytes for full chunks; shorter for the trailing chunk) |
+
+**Byte 1 serves double duty:** it is the total chunk length AND an implicit
+"is this an audio chunk" signal. Any `0x1e` frame where byte 1 is outside
+the plausible audio-length range (e.g. `0x06` for control frames) is not
+an audio chunk and signals stream end.
+
+**Stream-end detection:** watch for any `0x1e` notification where byte 1
+is NOT in the audio-chunk range (approximately `0x40..0xc8`). In the recon
+capture this was `1e 06 00 42 04 00`. A 500 ms watchdog timeout is an
+additional safety net.
+
+**Stream statistics** (2026-04-28 recon, one complete cycle):
+- 48 audio chunks total (47 full + 1 trailing)
+- 47 × 190 + 80 = 9,010 payload bytes
+- ~295 ms from first to last `0xc8` chunk
+- Consistent with a ~3–5 second recording at LC3 compression ratios
+- For a typical 3–8 second note: expect 30–55 chunks
+
+---
+
+### Audio codec and frame slicing
+
+`Confirmed` (2026-05-08, successfully decoded to speech)
+
+- **Codec:** LC3 (same codec as the live-mic `0xF1` path)
+- **Sample rate:** 16 kHz, mono, 16-bit PCM after decode
+- **LC3 frame size: 200 bytes** — this matches the live-mic `0xF1` path
+  (which slices at `value.copyOfRange(2, 202)`, i.e. 200-byte frames)
+- **BLE chunk payload: 190 bytes** per full chunk (200-byte BLE frame minus
+  the 10-byte header)
+
+**Critical:** LC3 frame boundaries do NOT align with BLE chunk boundaries.
+Each BLE chunk carries 190 bytes of payload, but each LC3 frame is 200
+bytes. The correct decode procedure is:
+
+1. Concatenate all payload bytes (stripping the 10-byte header from each
+   chunk) into a single byte array.
+2. Slice the concatenated array at 200-byte intervals.
+3. Decode each 200-byte slice as one LC3 frame.
+
+Slicing at 190-byte intervals (following chunk boundaries) produces
+audible clicks because each "frame" straddles two real LC3 frames.
+
+---
+
+### Diff-based note detection
+
+`Confirmed` (2026-05-08, live device)
+
+When the 42-byte `0x21` variant is in use, the host cannot assume that the
+highest-indexed slot is the newest recording. The circular buffer may write
+to any slot. To find the just-recorded note:
+
+1. Cache the previous `0x21` payload on every release.
+2. On the next `0x21` release, compare the 8-byte data for each slot
+   against the cached version.
+3. The slot whose 8-byte data differs from the cached value is the new
+   recording.
+4. Use that slot's index as `<noteIndex>` in the audio request frame.
+
+---
+
+### Comparison with left-temple Even AI flow
+
+| Aspect | Left temple (Even AI) | Right temple (QuickNote) |
+|--------|----------------------|--------------------------|
+| Press-down event | `F5 17` (RX) | None |
+| Release event | `F5 18` (RX) | `0x21` (RX) — on release only |
+| Host triggers mic | `0x0e 01` (TX) — sent on `F5 17` | `1e 06 00 <seq> 02 <idx>` (TX) — sent on `0x21` |
+| Audio stream | `0xF1 <seq> <LC3>` (RX) | `0x1e c8 00 <seq> ... <LC3>` (RX) |
+| Host ends mic | `0x0e 00` (TX) — sent on `F5 18` | `1e 06 00 <seq> 04 01` (TX) — sent after stream ends |
+| Codec | LC3, 200-byte frames | LC3, 200-byte frames |
+| Recording locus | Live — mic streams in real time | Pre-recorded — firmware stores on-glasses, streams on request |
+
+Both paths use the LC3 codec at 200-byte frames. The key architectural
+difference is that the Even AI path streams audio live from the mic as the
+user speaks, whereas QuickNote records on-glasses and transfers the
+complete audio buffer only when the host explicitly requests it.
+
+See also:
+- [FINDINGS-quicknote.md](FINDINGS-quicknote.md) — full evidence write-up
+  including raw frame tables, chunk counts, and open questions
+- [even-g1-event-mapping.md](even-g1-event-mapping.md) — event catalogue

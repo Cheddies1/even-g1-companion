@@ -82,9 +82,10 @@ chunks and end the stream.
 State machine on `0x1e` RX:
 
 1. While capture inactive: ignore `0x1e` audio chunks (no `0x21` seen recently).
-2. On `0x21` RX (right-side): open a new QuickNote buffer, record the 8-byte
-   note-UID tail (bytes 7–14 of the `0x21` payload) for future use, start
-   timeout watchdog (e.g. 1 s).
+2. On `0x21` RX (right-side, any length ≥ 7): open a new QuickNote buffer,
+   record the 8-byte note-UID tail (bytes 7–14 of the `0x21` payload) for
+   future use, start timeout watchdog (500 ms). The buffer opens on both
+   the 15-byte and 42-byte `0x21` variants — length ≥ 7 is the only guard.
 3. On subsequent `0x1e` RX while buffer is open:
    - If byte 1 == `0xc8` (or, more robustly, byte 1 is in the typical
      audio range, e.g. ≥ 0x40): strip the 10-byte header and append the
@@ -93,7 +94,8 @@ State machine on `0x1e` RX:
 4. On any non-`0x1e` opcode arriving while buffer is open: **flush**
    (defensive — unlikely to happen mid-stream but cheap to handle).
 5. On timeout (no `0x1e` for > 500 ms while buffer is open): **flush**
-   (safety net for malformed end-of-stream).
+   (safety net for malformed end-of-stream). 500 ms is the implemented
+   watchdog timeout.
 
 Concrete primary trigger:
 
@@ -191,8 +193,16 @@ a hot-reload + long-press test).
   stream range from 1 ms to 30 ms. This is BLE delivery cadence (driven by
   connection interval), not audio framerate. Don't tune timeouts off
   inter-frame gap — tune off the post-stream gap.
-- **No 0x1e TX from host during the cycle** — host doesn't ack chunks. Pure
-  push from the glasses.
+- ~~No 0x1e TX from host during the cycle~~ — **superseded by the
+  host-initiated handshake discovery (2026-05-08).** The host sends
+  `1e 06 00 <seq> 02 01` to trigger the stream and `1e 06 00 <seq> 04 01`
+  to acknowledge receipt. This was missed in the initial analysis because
+  only RX traffic was reviewed; re-analysis of TX traffic confirmed it.
+- **42-byte `0x21` variant and audio streaming** — as of 2026-05-09, the
+  pipeline opens a QuickNote capture buffer on any right-side `0x21` of
+  length ≥ 7 (covering both the 15-byte and 42-byte variants). Whether
+  sending `02 <idx>` after a 42-byte release successfully triggers an audio
+  stream on firmware 1.6.6 is pending live confirmation.
 
 ## Confidence
 

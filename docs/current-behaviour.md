@@ -34,12 +34,26 @@ It is intentionally separate from:
 - voice-driven conversational mode
 - implemented end-to-end; responses streamed word-by-word to the glasses via `0x52` live streaming text (host-managed scrolling, 3 visible rows, ~43 chars/row, paced 2 words/200 ms)
 
+### QuickNote
+- right-temple long-press records audio on-glasses
+- on release, the app receives the notes-list metadata (`0x21`), requests
+  the audio stream, receives LC3-encoded chunks, decodes to PCM, writes a
+  WAV file, transcribes via OpenAI STT, and stores the note in SQLite
+- pipeline is implemented and working end-to-end (2026-05-08 / 2026-05-09)
+- the `proto_reference` for the wire protocol is
+  [protocol-reference.md](protocol-reference.md) § "QuickNote protocol family"
+- notes are stored via `NotesStore` (SQLite); a tidy pass (LLM cleanup) runs
+  asynchronously after the raw transcript is inserted
+- no user-visible UI for notes yet — WAV files land in the app's external
+  storage under `quicknote/` and can be pulled via `adb`
+- current status: pipeline confirmed working; notes UI is pending
+
 ### Quick mode switching
 - available from the persistent Android notification
 - available from the app UI mode selector
 - *(inactive)* narrow idle-only right-hold POC via right-leg `R21` — superseded
-  by the `F5 20` double-tap path. The `len == 42` gate does not match current
-  firmware (emits `R21` at length 15); not active user-facing functionality.
+  by the `F5 20` double-tap path. Right-hold is now consumed by the QuickNote
+  pipeline rather than mode switching.
   See [FINDINGS-taps.md](FINDINGS-taps.md)
 - available via double-tap on either temple, contingent on the official
   Even Realities app's "double-tap action" being any host-handled feature

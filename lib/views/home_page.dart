@@ -9,8 +9,10 @@ import 'package:demo_ai_even/services/chat_service.dart';
 import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/device_status_service.dart';
 import 'package:demo_ai_even/services/glance_service.dart';
+import 'package:demo_ai_even/services/notes_store.dart';
 import 'package:demo_ai_even/views/chat_transcript_page.dart';
 import 'package:demo_ai_even/views/features_page.dart';
+import 'package:demo_ai_even/views/notes_page.dart';
 import 'package:demo_ai_even/views/settings_page.dart';
 import 'package:flutter/material.dart';
 
@@ -84,6 +86,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     CompanionController.get.addListener(_refreshPage);
     DeviceStatusService.get.addListener(_refreshPage);
     ChatHistoryStore.get.addListener(_refreshPage);
+    NotesStore.get.addListener(_refreshPage);
     ChatHistoryStore.get.init();
     _initBrightnessFromStore();
   }
@@ -577,6 +580,51 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildNotesCard() {
+    final activeCount = NotesStore.get.notes
+        .where((n) => n.status == 'active')
+        .length;
+    final subtitle = activeCount == 1 ? '1 active note' : '$activeCount active notes';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const NotesPage()),
+        );
+      },
+      child: _buildSectionCard(
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Notes',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: const Color(0xFF9AB7C8),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right,
+              color: Color(0xFF7C8C99),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLegacySection() {
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
@@ -657,6 +705,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           const SizedBox(height: 16),
           _buildChatLogSection(),
           const SizedBox(height: 16),
+          _buildNotesCard(),
+          const SizedBox(height: 16),
           _buildLegacySection(),
         ],
       ),
@@ -670,6 +720,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     CompanionController.get.removeListener(_refreshPage);
     DeviceStatusService.get.removeListener(_refreshPage);
     ChatHistoryStore.get.removeListener(_refreshPage);
+    NotesStore.get.removeListener(_refreshPage);
     super.dispose();
   }
 }

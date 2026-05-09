@@ -4,7 +4,10 @@ import 'dart:typed_data';
 
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/services/app_log.dart';
+import 'package:demo_ai_even/services/notes_store.dart';
+import 'package:demo_ai_even/services/openai_transcription_service.dart';
 import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/services/quick_note_tidy_service.dart';
 
 /// Receives a flushed QuickNote audio payload from the BLE layer, decodes it
 /// from LC3 to PCM via the native JNI decoder, and writes a WAV file the user
@@ -66,6 +69,11 @@ class QuickNoteCaptureService {
     // Clear the capture-active flag so clearDisplay() resumes working.
     Proto.quickNoteCaptureComplete();
 
+    // Send the firmware ack (04 01) immediately to close the transfer cycle.
+    // Must fire unconditionally — even if decode/STT fails, the firmware
+    // needs to know we received the audio so the next long-press works.
+    unawaited(Proto.quickNoteAck(lr: 'R'));
+
     final uidHex = noteUid
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
@@ -96,13 +104,10 @@ class QuickNoteCaptureService {
       return;
     }
 
-    bool anySuccess = false;
+    String? successWavPath;
     for (final frameSize in _frameSizeCandidates) {
       final pcm = await _decodeLc3(audio, frameSize);
-      if (pcm == null) {
-        // Method channel error — already logged inside _decodeLc3.
-        continue;
-      }
+      if (pcm == null) continue;
       if (pcm.isEmpty) {
         AppLog.info(
           '${DateTime.now()} frameSize=$frameSize produced 0 PCM bytes — trying next candidate',
@@ -111,8 +116,7 @@ class QuickNoteCaptureService {
         continue;
       }
 
-      final fileName =
-          'probe_${timestamp}_${uidHex}_f$frameSize.wav';
+      final fileName = 'probe_${timestamp}_${uidHex}_f$frameSize.wav';
       final wavPath = '$outputDir/$fileName';
       try {
         await _writeWav(wavPath, pcm);
@@ -120,10 +124,7 @@ class QuickNoteCaptureService {
           '${DateTime.now()} WAV saved: $wavPath (frameSize=$frameSize pcmBytes=${pcm.length})',
           tag: _tag,
         );
-        anySuccess = true;
-        // After a successful primary, don't bother with fallbacks unless the
-        // caller explicitly wants comparison files. For the probe, one good WAV
-        // is enough.
+        successWavPath = wavPath;
         break;
       } catch (e) {
         AppLog.error(
@@ -133,12 +134,100 @@ class QuickNoteCaptureService {
       }
     }
 
-    if (!anySuccess) {
+    if (successWavPath == null) {
       AppLog.error(
         '${DateTime.now()} all frame-size candidates failed — no WAV written for uidHex=$uidHex',
         tag: _tag,
       );
+      return;
     }
+
+    // --- STT → NotesStore → async tidy ---
+    await _transcribeAndStore(successWavPath, noteUid);
+  }
+
+  /// Transcribes [wavPath] via OpenAI Whisper, inserts into [NotesStore],
+  /// then asynchronously tidies the raw transcript and updates the row.
+  Future<void> _transcribeAndStore(String wavPath, Uint8List noteUid) async {
+    final createdAt = DateTime.now().millisecondsSinceEpoch;
+
+    // Step 1: Transcribe the WAV.
+    String? rawTranscript;
+    String? error;
+    try {
+      final stt = OpenAiTranscriptionService();
+      rawTranscript = await stt.transcribe(wavPath);
+      AppLog.info(
+        '${DateTime.now()} STT result: "${rawTranscript.length > 80 ? '${rawTranscript.substring(0, 80)}...' : rawTranscript}"',
+        tag: _tag,
+      );
+    } on ChatTranscriptionException catch (e) {
+      AppLog.error('${DateTime.now()} STT failed: $e', tag: _tag);
+      error = e.message;
+    } catch (e) {
+      AppLog.error('${DateTime.now()} STT unexpected error: $e', tag: _tag);
+      error = e.toString();
+    }
+
+    // Step 2: Insert into NotesStore immediately (raw transcript visible in UI).
+    final noteId = await NotesStore.get.insert(
+      createdAt: createdAt,
+      transcriptRaw: rawTranscript,
+      status: 'active',
+      sortOrder: createdAt.toDouble(),
+      noteUid: noteUid,
+      error: error,
+    );
+    AppLog.info(
+      '${DateTime.now()} note inserted: id=$noteId raw=${rawTranscript != null ? "yes" : "no"} error=${error ?? "none"}',
+      tag: _tag,
+    );
+
+    // Step 3: If raw transcript exists, tidy it asynchronously.
+    if (rawTranscript != null && rawTranscript.isNotEmpty) {
+      _tidyAsync(noteId, rawTranscript);
+    }
+  }
+
+  /// Runs the tidy service in the background. Does not block the caller.
+  /// If tidy fails, the raw transcript remains — the note is still usable.
+  ///
+  /// Known limitation: if the user swipe-deletes this note and taps Undo
+  /// while tidy is in-flight, the restored note gets a new autoincrement ID.
+  /// The tidy closure still holds the old ID, so the update is a silent no-op.
+  /// The restored note keeps its raw transcript. Acceptable for v1.
+  void _tidyAsync(int noteId, String rawTranscript) {
+    // Import will resolve once the TidyService agent delivers the file.
+    // For now, schedule it as a fire-and-forget async block.
+    unawaited(() async {
+      try {
+        // Lazy-import pattern: QuickNoteTidyService will be created by the
+        // background agent. If it doesn't exist yet, this will be a compile
+        // error that we fix when the agent returns.
+        final tidy = await _callTidyService(rawTranscript);
+        if (tidy != null && tidy.isNotEmpty && tidy != rawTranscript) {
+          await NotesStore.get.updateTranscriptClean(
+            id: noteId,
+            transcriptClean: tidy,
+          );
+          AppLog.info(
+            '${DateTime.now()} tidy complete for note $noteId: "${tidy.length > 60 ? '${tidy.substring(0, 60)}...' : tidy}"',
+            tag: _tag,
+          );
+        }
+      } catch (e) {
+        AppLog.error(
+          '${DateTime.now()} tidy failed for note $noteId: $e',
+          tag: _tag,
+        );
+        // Don't update error on the note — raw transcript is still valid.
+      }
+    }());
+  }
+
+  /// Calls the tidy service to clean up the raw transcript.
+  Future<String?> _callTidyService(String rawTranscript) async {
+    return QuickNoteTidyService.get.tidy(rawTranscript);
   }
 
   /// Calls the native `decodeLc3Frames` method with the given [audio] bytes and

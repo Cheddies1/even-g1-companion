@@ -17,7 +17,7 @@ Working well:
 - Chat mode works end-to-end with OpenAI-backed STT + assistant responses, paced `0x52` streaming, host-managed scrolling
 - Navigate mode boots and stays alive on the firmware `0x0a` card path (full 108-packet interleaved replay, dynamic TRIP_STATUS, 1-second SYNC poller, post-bootstrap TRIP_STATUS+SYNC updates, idle-prompt suppression)
 - Quick mode switching works from app UI and persistent notification
-- Right-hold QuickNote POC exists (gesture captured; transcription not yet wired)
+- Right-hold QuickNote: full pipeline live (gesture → LC3 decode → WAV → Whisper STT → GPT-4.1-mini tidy → local notes store → in-app UI)
 - Per-leg BLE health and reconnect logic exists
 - Battery + wear state ingested and displayed (home screen pills, Glance HUD)
 - Brightness slider + auto toggle (push side)
@@ -35,22 +35,7 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-### glance-auto-clear-regression (2026-05-08, HIGH — fix before resuming QuickNote)
-- **Status**: In Flight — regression discovered end of session 2026-05-08, not yet investigated
-- **Symptom**: Automatic screen clearing in Glance mode has stopped working. Push notifications and tilt-up/look-forward displays no longer auto-clear after the expected ~3 s timeout. After a notification is displayed on the glasses the screen stays on indefinitely; same for Glance assistant displays.
-- **Two candidate causes**:
-  1. The `0x18` → `0x50` clearDisplay migration (commit `36da369`, 2026-05-08) caused a regression that was masked by a cached APK still running the old code.
-  2. Something in the QuickNote session (2026-05-08) introduced a timer or lifecycle issue that broke the auto-clear path — possibly related to `hasActiveDisplay=true owner=Capture` state seen in today's logs keeping the clear timer from firing.
-- **Investigation pointers**:
-  - Cross-ref the **ghost-listening-screen Done item** (below, Recently Done) — it documents exactly which four call sites were migrated from `Proto.exit()` to `Proto.clearDisplay()`, and the one site deliberately left on `Proto.exit()` (`glance_assistant_service.dart:133`). Start here.
-  - Confirm `Proto.clearDisplay()` (0x50) is still being called on the auto-dismiss timers in `GlanceAssistantService` and `GlanceService`.
-  - Check whether `hasActiveDisplay` can get stuck `true` and prevent the clear timer from ever firing.
-  - Files modified by today's session that are in scope: `lib/ble_manager.dart`, `lib/services/companion_controller.dart`, `lib/main.dart`, `docs/current-architecture.md`.
-- **Acceptance**: Glance push notifications and assistant displays auto-clear after ~3 s as they did before 2026-05-08. No ghost screen on tilt-up/look-forward or notification pop.
-
-### QuickNote via hosted transcription (2026-05-08, in progress — see Next #2 for full detail)
-- **Status**: In Flight — **paused pending glance-auto-clear-regression fix** (above); also blocked on GO/NO-GO test for task #3
-- **Critical blocker**: audio stream trigger protocol discovered late session; Dart patch in working tree, pending hot-reload test
+Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **QuickNote polish** (Next #2).
 
 ---
 
@@ -67,29 +52,15 @@ Working, but still needs real-world observation:
   - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
 - **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
-### 2. QuickNote via hosted transcription (experiment)
-- **Status**: In Flight (2026-05-08) — 4 of 10 tasks done, 1 blocked, 5 pending
+### 2. QuickNote polish
+- **Status**: Next
 - **Priority**: Medium
-- **Critical discovery (2026-05-08)**: The firmware does NOT stream audio unsolicited after a `0x21` release. The host must send `1e 06 00 <seq> 02 01` to the right leg ~11ms after the `0x21` to trigger the stream. Mirror-image of the left-press/`0x0e 01`/`0xF1` LC3 flow. Protocol also includes `1e 06 00 <seq> 04 01` (audio received OK) and glasses respond `1e 06 00 <seq> 04 00` to confirm. Dart patch (`Proto.quickNoteRequestAudio()` + `Proto.quickNoteAck()`, hooked into `_logCmd21`) is in the working tree. **Pending hot-reload test.**
-- **Secondary discovery**: `0x21` now fires 42 bytes in testing (was 15 bytes in the 2026-04-28 recon). The 42-byte form appears to be a "notes-list dump" with 4 record entries. Open question: will the `02 01` trigger work for the 42-byte case? See the new backlog item `quicknote-seq-counter`.
-
-**Task status as of 2026-05-08 end of session:**
-
-| # | Task | Status |
-|---|------|--------|
-| 1 | Retire right-hold mode-cycle and fix `0x21` gate | Done — in working tree, Codex-reviewed clean |
-| 2 | Native `QuickNoteAudioBuffer` in `BleManager.kt` | Done — in working tree, Codex-reviewed (NITs addressed) |
-| 3 | LC3 decode probe (`quick_note_capture_service.dart`, `BleChannelHelper.kt`, `ble_manager.dart`) | **Blocked — GO/NO-GO test pending** (audio trigger discovery came in at end of session; patch applied, not tested) |
-| 4 | `NotesStore` + sqflite (`note.dart`, `notes_store.dart`, `main.dart`) | Done — in working tree, Codex-reviewed (init concurrency BLOCKER fixed; CHECK constraint + sort_order tiebreaker applied; sort_order rebalance deferred to #7) |
-| 5 | `QuickNoteTidyService` for OpenAI light cleanup | Pending |
-| 6 | Wire QuickNote pipeline glue | Pending |
-| 7 | `NotesPage` UI + `HomePage` card | Pending |
-| 8 | Codex peer review of full QuickNote diff (final) | Pending |
-| 9 | btsnoop recon for `0x1e c8` stream end signal | Done — findings in `docs/FINDINGS-quicknote.md` |
-| 10 | Fixtures for `QuickNoteTidyService` prompt anchors | Done — `test/fixtures/quicknote/anchor_pairs.json` + `raw_transcripts.json` |
-
-- **Diagnostic infra to revert**: `BleRx` INFO-level log tag (line 444, `ble_manager.dart`), R21Probe and QuickNoteProbe logs promoted from debug → info. Revert to debug once pipeline is wired and stable.
-- **Acceptance**: Working POC — right-hold produces a transcribed note stored locally, visible in-app. Cross-ref `docs/FINDINGS-quicknote.md`, `docs/FINDINGS-taps.md`, `docs/FINDINGS-layouts.md`.
+- **Context**: QuickNote v1 pipeline is complete and peer-reviewed (all 10 tasks done, persistence and auto-sync shipped 2026-05-09). Three housekeeping items remain before the feature is considered settled.
+- **Acceptance** — all of the following:
+  - [ ] Revert diagnostic logs to debug: `BleRx` INFO-level log tag (`ble_manager.dart`), R21Probe and QuickNoteProbe info promotions — revert to `AppLog.debug`.
+  - [ ] Clean up probe WAV files written to device storage during LC3 GO/NO-GO testing (`quick_note_capture_service.dart`).
+  - [ ] Visual or haptic feedback when a note is fully saved — user currently gets no on-device confirmation that the pipeline completed (toast, glasses display flash, or similar).
+- **Notes**: Cross-ref `docs/FINDINGS-quicknote.md`, `lib/services/quick_note_capture_service.dart`.
 
 ---
 
@@ -102,12 +73,8 @@ Working, but still needs real-world observation:
 - **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
 - **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot? Demoted from Next — lacks a concrete use case. Revisit when a clear scenario emerges.
 
-### quicknote-seq-counter: Confirm outbound `0x1e` seq counter range alignment
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: The 2026-04-28 recon shows the official app uses seq values in the `0x40`–`0x42` range for outbound `0x1e` packets. The current Dart patch uses its own counter. Open question: does the firmware care about the seq range, or does any monotonically incrementing value work?
-- **Acceptance**: Empirical test or recon analysis confirms whether seq value must fall in a particular range. Dart counter adjusted if needed, or question closed as "firmware doesn't care."
-- **Notes**: Surface during QuickNote GO/NO-GO test — if the `02 01` trigger fails despite correct timing, seq range mismatch is a candidate cause.
+### quicknote-seq-counter: ~~Confirm outbound `0x1e` seq counter range~~
+- **Status**: Done — closed 2026-05-09. Seq counter starting at `0x40` works fine; firmware does not enforce a specific range. Dart counter unchanged.
 
 ### quicknote-dashboard-push: QuickNote v2 — push transcribed note to glasses dashboard via 0x1e TX
 - **Status**: Backlog
@@ -115,7 +82,7 @@ Working, but still needs real-world observation:
 - **Context**: QuickNote v1 ends at "transcribed note saved to phone app". The natural v2 follow-on is pushing that note text back to the glasses firmware dashboard using the `0x1e` TX opcode. Surfaced during v1 planning (2026-05-08) and captured immediately to avoid losing the protocol shape while it is fresh. Deliberately deferred — v1 scope is kept tight.
 - **Protocol**: `1e <len> 00 <seq> 03 01 00 01 00 <slot> 01 <title_len> <title> <body_len> 00 <body>`. Full field breakdown at `docs/protocol-reference.md` L444-462.
 - **Acceptance**: A completed QuickNote transcription is pushed to a named dashboard slot and readable on the glasses within a few seconds of the right-hold gesture completing.
-- **Notes**: Depends on QuickNote v1 (`quicknote via hosted transcription`, Next #2) being stable. Cross-ref `dashboard-injection` (general `0x1e` injection backlog item) — this is the concrete use case that item was waiting for.
+- **Notes**: Depends on QuickNote v1 (shipped 2026-05-09 — see Recently Done) being stable in the field. Cross-ref `dashboard-injection` (general `0x1e` injection backlog item) — this is the concrete use case that item was waiting for.
 
 ### now-playing-mediasession: Now Playing: extract MediaSession metadata for apps with empty notification fields
 - **Status**: Backlog
@@ -141,6 +108,17 @@ Working, but still needs real-world observation:
 - **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
 - **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
 
+### glance-heads-up-timings: Adaptive tilt-up intent delay in Glance mode
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: The app has a deliberate "tilt up with intent" delay before triggering the look-up function in Glance mode (show and delete the most recent notification). This guard exists because casual head movements — cracking the neck, taking a drink — can otherwise trigger the carousel accidentally. The current delay is applied uniformly on every tilt-up, but the intent filter is only necessary from idle. Once the user is actively cycling through notifications, they are already committed and the delay just adds friction.
+- **Acceptance**:
+  - [ ] **From idle** (no notification currently on screen): tilt-up retains the existing intent delay before triggering.
+  - [ ] **Mid-carousel** (a notification is on screen and the user is cycling): tilt-up triggers immediately with zero delay.
+  - [ ] **Back to idle** (display clears, carousel exhausted): the full intent delay is restored before the next tilt-up fires.
+  - [ ] No accidental triggers from casual head movements while idle.
+- **Notes**: State transition is: idle (delay) → notification displayed (zero delay) → idle (delay). The "mid-carousel" state is entered the moment a notification is shown and exited when the display clears. The carousel-active flag likely lives in `GlanceService` alongside the existing tilt-up intent logic. No protocol changes — purely a timing/state change in the gesture handling path. Cross-ref `lib/services/glance_service.dart` and `lib/services/companion_controller.dart`.
+
 ### mode-title-cards: Glance and Navigate mode entry title cards, plus Connected status card
 - **Status**: Backlog
 - **Priority**: Low
@@ -165,7 +143,7 @@ Working, but still needs real-world observation:
   - [ ] In the app UI (`NotesPage`), notes are shown per-list with a tab or section view — user can see each list separately.
   - [ ] User can manually move a note between lists from the UI (drag or context menu).
   - [ ] Existing notes (pre-feature) land in Notes by default.
-- **Notes**: Depends on QuickNote v1 (`quicknote via hosted transcription`, Next #2) being stable and the `NotesStore` schema being settled. Schema change needed: add a `list` column (enum or string) to the notes table. Routing logic lives in the tidy/save pipeline, not in the BLE layer. Cross-ref `lib/models/note.dart`, `lib/services/notes_store.dart`.
+- **Notes**: Depends on QuickNote v1 (shipped 2026-05-09 — see Recently Done) being stable and the `NotesStore` schema being settled. Schema change needed: add a `list` column (enum or string) to the notes table. Routing logic lives in the tidy/save pipeline, not in the BLE layer. Cross-ref `lib/models/note.dart`, `lib/services/notes_store.dart`.
 
 #### BLE stability — deferred tiers
 
@@ -225,12 +203,8 @@ Working, but still needs real-world observation:
 - **Acceptance**: Field structure decoded. Payloads correlated against dashboard visibility, pagination, unread counts, widget selection, notification state. Determination made on whether `0x22` supports firmware UI awareness, dashboard sync, or richer glance integration.
 - **Notes**: Understanding firmware-side dashboard state may reduce future UI conflicts and reduce the need for speculative sequencing hacks.
 
-### quicknote-decode: QuickNote audio pipeline decoding
-- **Status**: Backlog
-- **Priority**: High
-- **Context**: Right-hold QuickNote path identified. `0x21` release event understood. Post-release `0x1e c8 ...` chunk stream captured and strongly resembles encoded audio (likely LC3-family). This may expose a firmware-native voice workflow that is cleaner and more reliable than the current live mic pipeline for some use cases.
-- **Acceptance**: Complete binary stream reconstructed from chunked packets. Codec format confirmed. Decode attempted via existing LC3 pipeline (`android/app/src/main/cpp/liblc3.cpp`). Audio reliably reconstructed to WAV.
-- **Notes**: Stretch goals include hosted transcription path, native-feeling quicknote transcription, and quicknote archive/replay tooling. Cross-ref `docs/FINDINGS-taps.md`, `docs/FINDINGS-layouts.md`, and the Next item `QuickNote via hosted transcription`.
+### quicknote-decode: ~~QuickNote audio pipeline decoding~~
+- **Status**: Done — closed 2026-05-09. LC3 confirmed at 200-byte frames; full stream reconstructed; audio intelligible. Hosted transcription path shipped as v1 (see Recently Done). Full detail in `docs/FINDINGS-quicknote.md`.
 
 ### transport-model: Transport and timing model formalisation
 - **Status**: Backlog
@@ -276,6 +250,33 @@ Working, but still needs real-world observation:
 ---
 
 ## Recently Done
+
+### QuickNote via hosted transcription — v1 pipeline complete (2026-05-08/09)
+Full right-hold → transcribed local note pipeline shipped across two sessions. All 10 tasks done; Codex peer review passed.
+
+**Protocol discoveries:**
+- Firmware does NOT stream audio unsolicited — host must send `1e 06 00 <seq> 02 <noteIndex>` to right leg after `0x21` to request the stream.
+- `0x21` fires as 42 bytes on this firmware (circular buffer notes-list dump, 4 records); diff-based detection required to identify the just-recorded note.
+- LC3 frame size is 200 bytes; BLE chunk payloads are 190 bytes — must concatenate then re-slice, not treat chunk boundaries as frame boundaries.
+- Defensive flush on non-`0x1e` packets was too aggressive; removed. Rely on sub-code change + 500 ms watchdog instead.
+- Screen-clear after pipeline: `0x50` alone does not blank the display; `0x50 + 0x18` sequence required. (Also fixes the glance-auto-clear-regression that was open at end of 2026-05-08.)
+- Seq counter starting at `0x40` works; firmware does not enforce a range.
+
+**What shipped:**
+- `QuickNoteAudioBuffer.kt` — native BLE chunk accumulator
+- `quick_note_capture_service.dart` — LC3 decode → WAV probe, GO/NO-GO gate PASSED
+- `QuickNoteTidyService` — GPT-4.1-mini with 3-pair few-shot prompt, falls back to raw on failure
+- Pipeline glue — decode → WAV → OpenAI Whisper STT → `NotesStore.insert(raw)` → async tidy → `NotesStore.updateTranscriptClean`; firmware ack (`04 01`) sent after audio received
+- `note.dart` + `notes_store.dart` — sqflite schema with sort_order, status, raw/clean transcript fields; rebalance logic for precision
+- `NotesPage` UI — `ReorderableListView`, swipe-to-delete, status toggle, expand/collapse raw vs clean, empty state
+- `HomePage` notes card — active note count
+
+**Polish remaining**: diagnostic log revert, probe WAV cleanup, save notification — tracked as Next #2.
+
+Full protocol detail in `docs/FINDINGS-quicknote.md`.
+
+### Glance auto-clear regression — fixed (2026-05-09)
+Root cause: `0x50` clearDisplay alone does not blank the display in all firmware states; the correct sequence is `0x50` followed by `0x18`. The regression surfaced at end of the 2026-05-08 session after the `0x18` → `0x50` migration. Fix confirmed working on device (combo restores auto-clear in Glance mode). Cross-ref `ghost-listening-screen` Done item for the original migration context.
 
 ### BLE stability — Tier 1: Android native GATT lifecycle fixes (2026-05-08)
 Addressed day-over-day BLE link decay ("works fine until it doesn't") by fixing Android-native GATT lifecycle bugs. Six targeted changes to `BleManager.kt` and `MainActivity.kt`:
@@ -392,11 +393,13 @@ Persisted-on-glasses settings (head-up + double-tap):
   on connect (non-invasive — superseded by authoritative model, see 2026-05-01 Recently Done). The settings themselves persist on the
   glasses' firmware regardless.
 
-Quicknote post-release stream:
-- `0x21` release is followed by a chunked binary stream on `0x1e c8 ...`,
-  scaling with recording duration and shaped like a low-bitrate voice
-  codec. Documented but not decoded; future feature for "companion-app
-  quicknotes with hosted transcription".
+Quicknote post-release stream (Confirmed, 2026-05-09):
+- `0x21` fires 42 bytes — circular buffer notes-list dump (4 records); diff-based detection identifies the just-recorded note.
+- Host must send `1e 06 00 <seq> 02 <noteIndex>` to right leg to trigger audio stream — firmware does NOT stream unsolicited.
+- LC3 codec confirmed at 200-byte frames; BLE chunks are 190 bytes — concatenate then re-slice.
+- `0x1e c8 ...` chunked stream fully decoded, audio intelligible. Full pipeline shipped (see Recently Done).
+- Ack sequence: host sends `1e 06 00 <seq> 04 01`; glasses respond `1e 06 00 <seq> 04 00`.
+- Full write-up in `docs/FINDINGS-quicknote.md`.
 
 Note-management family `0x06`:
 - Three-step transaction with an 8-byte note UID, used by the official

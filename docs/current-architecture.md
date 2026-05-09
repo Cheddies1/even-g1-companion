@@ -142,6 +142,61 @@ Owns:
   The glasses stay on whatever was shown before until the first Maps
   notification triggers the full nav card bootstrap.
 
+### QuickNote
+
+New files (2026-05-08 / 2026-05-09):
+- [android/.../bluetooth/QuickNoteAudioBuffer.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/QuickNoteAudioBuffer.kt)
+- [lib/services/quick_note_capture_service.dart](../lib/services/quick_note_capture_service.dart)
+- [lib/services/notes_store.dart](../lib/services/notes_store.dart)
+- [lib/models/note.dart](../lib/models/note.dart)
+
+Data flow:
+
+```
+0x21 RX (right-temple release, any length >= 7)
+  -> BleManager.routeToQuickNoteBuffer()
+  -> QuickNoteAudioBuffer.openOnCmd21()       [Kotlin — opens buffer, captures 8-byte note UID]
+  -> subsequent 0x1e c8 chunks arrive
+  -> QuickNoteAudioBuffer.onCmd1e()           [Kotlin — strips 10-byte header, accumulates payloads]
+  -> non-audio 0x1e or 500ms watchdog fires
+  -> QuickNoteAudioBuffer.flush()             [Kotlin — concatenates payloads]
+  -> BleChannelHelper.flutterQuickNoteAudioReady(noteUid, audioPayload)
+  -> BleManager._methodCallHandler (Dart)
+  -> QuickNoteCaptureService.handleAudioReady()
+    -> Proto.quickNoteAck()                   [sends 1e 06 00 <seq> 04 01 to right leg]
+    -> decodeLc3Frames (JNI, frameSize=200)   [LC3 -> PCM]
+    -> _writeWav (WAV file in app external storage /quicknote/)
+    -> OpenAiTranscriptionService.transcribe()
+    -> NotesStore.insert()                    [SQLite, raw transcript]
+    -> QuickNoteTidyService.tidy() (async)    [LLM cleanup, updates NotesStore]
+```
+
+Key design decisions:
+- `QuickNoteAudioBuffer` runs on the `mainScope` coroutine already used by
+  `BleManager.onCharacteristicChanged` — no locking required
+- the buffer opens on any right-side `0x21` with length ≥ 7, covering both
+  the 15-byte (single-note) and 42-byte (notes-list dump) variants
+- audio request (`1e 06 00 <seq> 02 <noteIndex>`) is sent by
+  `Proto.quickNoteRequestAudio()` immediately after `0x21` is received
+  (called from `BleManager.routeToQuickNoteBuffer` after opening the buffer)
+- `Proto._quickNoteCaptureActive` flag suppresses `clearDisplay()` while
+  audio is in-flight, preventing the `0x50 + 0x18` sequence from killing
+  the stream mid-transfer
+- LC3 frame size is **200 bytes**, matching the live-mic `0xF1` path; BLE
+  payloads are 190 bytes each (after stripping the 10-byte header). The
+  concatenated payload is sliced at 200-byte intervals before decoding.
+- frame-size probing order: `[200, 80, 40]` — 200 is the expected value;
+  80 and 40 are LC3 fallbacks if 200-byte framing returns zero PCM
+- `Proto._quickNoteSeq` starts at `0x40` and increments per outbound frame,
+  matching the `0x41` / `0x42` sequence observed in the recon capture
+- note UIDs (8 bytes from the `0x21` payload, bytes 7–14) are stored in
+  `NotesStore` for future note-management operations (delete/reorder)
+
+Log tag for filtering: `QuickNoteCapture`
+
+Protocol reference: [protocol-reference.md](protocol-reference.md) §
+"QuickNote protocol family"
+
 ### Device status
 - [lib/services/device_status_service.dart](../lib/services/device_status_service.dart)
 

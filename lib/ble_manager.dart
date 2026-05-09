@@ -7,8 +7,10 @@ import 'package:demo_ai_even/services/companion_controller.dart';
 import 'package:demo_ai_even/services/device_status_service.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/services/notes_store.dart';
 import 'package:demo_ai_even/services/quick_note_capture_service.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 typedef SendResultParse = bool Function(Uint8List value);
 
@@ -105,6 +107,8 @@ class BleManager {
   int? _lastCmd22EventMs;
   int? _lastRightCmd21EventMs;
   Uint8List? _previousCmd21Payload;
+  bool _cmd21PayloadLoaded = false;
+  bool _autoSyncDone = false;
   bool _resyncInFlight = false;
   int _heartbeatPauseDepth = 0;
   bool _settingsReconcileFired = false;
@@ -611,7 +615,7 @@ class BleManager {
     }
   }
 
-  void _logCmd21(BleReceive res) {
+  Future<void> _logCmd21(BleReceive res) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final deltaMs =
         _lastCmd21EventMs == null ? null : nowMs - _lastCmd21EventMs!;
@@ -636,6 +640,12 @@ class BleManager {
         tag: 'QuickNoteProbe',
       );
 
+      // Load persisted baseline on first 0x21 after app launch.
+      if (!_cmd21PayloadLoaded) {
+        _cmd21PayloadLoaded = true;
+        await _loadPersistedCmd21Payload();
+      }
+
       // QuickNote audio trigger — the firmware stores notes in a circular
       // buffer. The 42-byte `0x21` lists all stored notes (typically 4).
       // To find the JUST-RECORDED note, we diff against the previous `0x21`
@@ -646,7 +656,17 @@ class BleManager {
         tag: 'QuickNoteCapture',
       );
       _previousCmd21Payload = Uint8List.fromList(res.data);
+      unawaited(_persistCmd21Payload(res.data));
       unawaited(Proto.quickNoteRequestAudio(lr: 'R', noteIndex: noteIndex));
+
+      // On first 0x21 after launch, also check for any notes on the glasses
+      // that aren't in our local store (e.g. recorded via the official app
+      // or while our app was closed). Fire-and-forget — runs after the
+      // primary fetch completes.
+      if (!_autoSyncDone) {
+        _autoSyncDone = true;
+        unawaited(_syncUnknownNotes(res.data, skipIndex: noteIndex));
+      }
     }
 
     AppLog.debug(
@@ -717,6 +737,108 @@ class BleManager {
       tag: 'QuickNoteCapture',
     );
     return noteCount;
+  }
+
+  /// On first `0x21` after launch, checks all note records against NotesStore.
+  /// Any record whose 8-byte UID isn't already stored gets fetched, decoded,
+  /// transcribed, and saved — catching notes recorded via the official app or
+  /// while our app was closed.
+  ///
+  /// [skipIndex] is the note already being fetched by the primary diff path.
+  Future<void> _syncUnknownNotes(Uint8List cmd21, {required int skipIndex}) async {
+    if (cmd21.length < 42) return;
+    final noteCount = cmd21.length >= 6 ? cmd21[5] : 0;
+    if (noteCount < 1) return;
+
+    final store = NotesStore.get;
+    final existingNotes = await store.listAll();
+    final existingUids = <String>{};
+    for (final note in existingNotes) {
+      if (note.noteUid != null) {
+        existingUids.add(note.noteUid!
+            .map((b) => b.toRadixString(16).padLeft(2, '0'))
+            .join());
+      }
+    }
+
+    for (var i = 0; i < noteCount; i++) {
+      final recordStart = 6 + (i * 9);
+      final recordIndex = cmd21[recordStart];
+      if (recordIndex == skipIndex) continue;
+
+      final dataStart = recordStart + 1;
+      final dataEnd = dataStart + 8;
+      if (dataEnd > cmd21.length) break;
+
+      final uidHex = cmd21
+          .sublist(dataStart, dataEnd)
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join();
+
+      if (existingUids.contains(uidHex)) continue;
+
+      AppLog.info(
+        '${DateTime.now()} auto-sync: note index $recordIndex (uid=$uidHex) not in local store — fetching',
+        tag: 'QuickNoteCapture',
+      );
+
+      // Small delay between fetches to avoid overwhelming the BLE link.
+      // The primary note fetch is already in flight; wait for it to finish.
+      await Future.delayed(const Duration(seconds: 2));
+      await Proto.quickNoteRequestAudio(lr: 'R', noteIndex: recordIndex);
+
+      // The audio will arrive via the normal buffer → handleAudioReady path.
+      // Wait for it to complete before fetching the next one.
+      await Future.delayed(const Duration(seconds: 3));
+    }
+
+    AppLog.info(
+      '${DateTime.now()} auto-sync complete',
+      tag: 'QuickNoteCapture',
+    );
+  }
+
+  static const _cmd21PayloadPrefKey = 'quicknote.last_cmd21_payload';
+
+  /// Loads the last-seen `0x21` payload from SharedPreferences so the diff
+  /// detection works correctly on the first press after app restart.
+  Future<void> _loadPersistedCmd21Payload() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hex = prefs.getString(_cmd21PayloadPrefKey);
+      if (hex != null && hex.isNotEmpty) {
+        final bytes = <int>[];
+        for (var i = 0; i < hex.length - 1; i += 2) {
+          bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+        }
+        _previousCmd21Payload = Uint8List.fromList(bytes);
+        AppLog.info(
+          '${DateTime.now()} loaded persisted 0x21 baseline (${bytes.length} bytes)',
+          tag: 'QuickNoteCapture',
+        );
+      }
+    } catch (e) {
+      AppLog.error(
+        '${DateTime.now()} failed to load persisted 0x21 baseline: $e',
+        tag: 'QuickNoteCapture',
+      );
+    }
+  }
+
+  /// Persists the current `0x21` payload to SharedPreferences.
+  Future<void> _persistCmd21Payload(Uint8List payload) async {
+    try {
+      final hex = payload
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cmd21PayloadPrefKey, hex);
+    } catch (e) {
+      AppLog.error(
+        '${DateTime.now()} failed to persist 0x21 payload: $e',
+        tag: 'QuickNoteCapture',
+      );
+    }
   }
 
   void _logCmd22(BleReceive res) {
