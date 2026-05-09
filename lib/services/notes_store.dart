@@ -44,7 +44,7 @@ class NotesStore extends ChangeNotifier {
     final dbPath = path.join(databasePath, 'even_companion_notes.db');
     _db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE notes (
@@ -56,12 +56,23 @@ class NotesStore extends ChangeNotifier {
                               CHECK (status IN ('active', 'done')),
             sort_order      REAL NOT NULL,
             note_uid        BLOB,
+            category        TEXT NOT NULL DEFAULT 'notes'
+                              CHECK (category IN ('shopping', 'todo', 'notes')),
             error           TEXT
           )
         ''');
         await db.execute(
           'CREATE INDEX idx_notes_sort_order ON notes(sort_order DESC)',
         );
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // ALTER TABLE ADD COLUMN does not support CHECK constraints on all
+          // Android SQLite versions. Validation is enforced at the app layer.
+          await db.execute(
+            "ALTER TABLE notes ADD COLUMN category TEXT NOT NULL DEFAULT 'notes'",
+          );
+        }
       },
     );
     await _refreshNotes();
@@ -76,6 +87,9 @@ class NotesStore extends ChangeNotifier {
   ///
   /// Pass [createdAt] as millisecondsSinceEpoch UTC. If [sortOrder] equals
   /// [createdAt.toDouble()] the note will sort chronologically by default.
+  ///
+  /// [category] must be one of 'shopping', 'todo', or 'notes'. Defaults to
+  /// 'notes' when not supplied.
   Future<int> insert({
     required int createdAt,
     String? transcriptRaw,
@@ -83,6 +97,7 @@ class NotesStore extends ChangeNotifier {
     required String status,
     required double sortOrder,
     Uint8List? noteUid,
+    String category = 'notes',
     String? error,
   }) async {
     await init();
@@ -95,6 +110,7 @@ class NotesStore extends ChangeNotifier {
         'status': status,
         'sort_order': sortOrder,
         'note_uid': noteUid,
+        'category': category,
         'error': error,
       },
     );
@@ -124,6 +140,23 @@ class NotesStore extends ChangeNotifier {
     await _db!.update(
       'notes',
       {'transcript_clean': transcriptClean},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    await _refreshNotes();
+  }
+
+  /// Updates the [category] for the note identified by [id].
+  ///
+  /// [category] must be one of 'shopping', 'todo', or 'notes'.
+  Future<void> updateCategory({
+    required int id,
+    required String category,
+  }) async {
+    await init();
+    await _db!.update(
+      'notes',
+      {'category': category},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -174,13 +207,30 @@ class NotesStore extends ChangeNotifier {
   /// Returns all notes ordered by [sortOrder] descending (largest = top of list).
   ///
   /// When [includeDone] is false, notes with `status = 'done'` are excluded.
+  /// When [category] is supplied, only notes matching that category are returned.
   /// The cached [notes] getter gives the same result synchronously after any
   /// mutation has fired [notifyListeners].
-  Future<List<Note>> listAll({bool includeDone = true}) async {
+  Future<List<Note>> listAll({
+    bool includeDone = true,
+    String? category,
+  }) async {
     await init();
+
+    final conditions = <String>[];
+    final args = <Object?>[];
+
+    if (!includeDone) {
+      conditions.add("status = 'active'");
+    }
+    if (category != null) {
+      conditions.add('category = ?');
+      args.add(category);
+    }
+
     final rows = await _db!.query(
       'notes',
-      where: includeDone ? null : "status = 'active'",
+      where: conditions.isEmpty ? null : conditions.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
       orderBy: 'sort_order DESC, created_at DESC, id DESC',
     );
     return rows.map(Note.fromMap).toList(growable: false);

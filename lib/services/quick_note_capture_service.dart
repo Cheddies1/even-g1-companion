@@ -7,6 +7,7 @@ import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/notes_store.dart';
 import 'package:demo_ai_even/services/openai_transcription_service.dart';
 import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/services/quick_note_classifier.dart';
 import 'package:demo_ai_even/services/quick_note_tidy_service.dart';
 
 /// Receives a flushed QuickNote audio payload from the BLE layer, decodes it
@@ -170,12 +171,16 @@ class QuickNoteCaptureService {
     }
 
     // Step 2: Insert into NotesStore immediately (raw transcript visible in UI).
+    // Use the keyword classifier for an initial category. The async tidy step
+    // will overwrite this with the LLM-classified value if it succeeds.
+    final initialCategory = QuickNoteClassifier.classify(rawTranscript ?? '');
     final noteId = await NotesStore.get.insert(
       createdAt: createdAt,
       transcriptRaw: rawTranscript,
       status: 'active',
       sortOrder: createdAt.toDouble(),
       noteUid: noteUid,
+      category: initialCategory,
       error: error,
     );
     AppLog.info(
@@ -191,42 +196,68 @@ class QuickNoteCaptureService {
 
   /// Runs the tidy service in the background. Does not block the caller.
   /// If tidy fails, the raw transcript remains — the note is still usable.
+  /// On failure, the keyword classifier provides a category fallback.
   ///
   /// Known limitation: if the user swipe-deletes this note and taps Undo
   /// while tidy is in-flight, the restored note gets a new autoincrement ID.
   /// The tidy closure still holds the old ID, so the update is a silent no-op.
   /// The restored note keeps its raw transcript. Acceptable for v1.
   void _tidyAsync(int noteId, String rawTranscript) {
-    // Import will resolve once the TidyService agent delivers the file.
-    // For now, schedule it as a fire-and-forget async block.
     unawaited(() async {
       try {
-        // Lazy-import pattern: QuickNoteTidyService will be created by the
-        // background agent. If it doesn't exist yet, this will be a compile
-        // error that we fix when the agent returns.
-        final tidy = await _callTidyService(rawTranscript);
-        if (tidy != null && tidy.isNotEmpty && tidy != rawTranscript) {
+        final result = await _callTidyService(rawTranscript);
+        final tidiedText = result.text;
+        final category = result.category;
+
+        if (tidiedText.isNotEmpty && tidiedText != rawTranscript) {
           await NotesStore.get.updateTranscriptClean(
             id: noteId,
-            transcriptClean: tidy,
+            transcriptClean: tidiedText,
           );
           AppLog.info(
-            '${DateTime.now()} tidy complete for note $noteId: "${tidy.length > 60 ? '${tidy.substring(0, 60)}...' : tidy}"',
+            '${DateTime.now()} tidy complete for note $noteId: '
+            '"${tidiedText.length > 60 ? '${tidiedText.substring(0, 60)}...' : tidiedText}"',
             tag: _tag,
           );
         }
+
+        await NotesStore.get.updateCategory(id: noteId, category: category);
+        AppLog.info(
+          '${DateTime.now()} category set for note $noteId: $category',
+          tag: _tag,
+        );
       } catch (e) {
         AppLog.error(
           '${DateTime.now()} tidy failed for note $noteId: $e',
           tag: _tag,
         );
-        // Don't update error on the note — raw transcript is still valid.
+        // Fall back to keyword classification so the note has a meaningful
+        // category even when the LLM call errors.
+        try {
+          final fallbackCategory =
+              QuickNoteClassifier.classify(rawTranscript);
+          await NotesStore.get.updateCategory(
+            id: noteId,
+            category: fallbackCategory,
+          );
+          AppLog.info(
+            '${DateTime.now()} keyword fallback category for note $noteId: $fallbackCategory',
+            tag: _tag,
+          );
+        } catch (updateError) {
+          AppLog.error(
+            '${DateTime.now()} category fallback update failed for note $noteId: $updateError',
+            tag: _tag,
+          );
+        }
       }
     }());
   }
 
   /// Calls the tidy service to clean up the raw transcript.
-  Future<String?> _callTidyService(String rawTranscript) async {
+  Future<({String text, String category})> _callTidyService(
+    String rawTranscript,
+  ) async {
     return QuickNoteTidyService.get.tidy(rawTranscript);
   }
 

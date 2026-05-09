@@ -2,6 +2,54 @@ import 'package:demo_ai_even/models/note.dart';
 import 'package:demo_ai_even/services/notes_store.dart';
 import 'package:flutter/material.dart';
 
+// ---------------------------------------------------------------------------
+// Category metadata
+// ---------------------------------------------------------------------------
+
+class _CategoryMeta {
+  const _CategoryMeta({
+    required this.key,
+    required this.label,
+    required this.icon,
+    required this.emptyTitle,
+    required this.emptyHint,
+  });
+
+  final String key;
+  final String label;
+  final IconData icon;
+  final String emptyTitle;
+  final String emptyHint;
+}
+
+const _categories = <_CategoryMeta>[
+  _CategoryMeta(
+    key: 'shopping',
+    label: 'Shopping',
+    icon: Icons.shopping_cart_outlined,
+    emptyTitle: 'No shopping items',
+    emptyHint: "Say 'buy' or 'add to shopping list'",
+  ),
+  _CategoryMeta(
+    key: 'todo',
+    label: 'To Do',
+    icon: Icons.check_circle_outline,
+    emptyTitle: 'No tasks',
+    emptyHint: "Say 'remember to' or 'need to'",
+  ),
+  _CategoryMeta(
+    key: 'notes',
+    label: 'Notes',
+    icon: Icons.note_outlined,
+    emptyTitle: 'No notes yet',
+    emptyHint: 'Long-press the right temple to record one',
+  ),
+];
+
+// ---------------------------------------------------------------------------
+// NotesPage
+// ---------------------------------------------------------------------------
+
 class NotesPage extends StatefulWidget {
   const NotesPage({super.key});
 
@@ -9,18 +57,21 @@ class NotesPage extends StatefulWidget {
   State<NotesPage> createState() => _NotesPageState();
 }
 
-class _NotesPageState extends State<NotesPage> {
+class _NotesPageState extends State<NotesPage> with TickerProviderStateMixin {
+  late final TabController _tabController;
   final Set<int> _expandedNoteIds = {};
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: _categories.length, vsync: this);
     NotesStore.get.addListener(_refresh);
   }
 
   @override
   void dispose() {
     NotesStore.get.removeListener(_refresh);
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -42,13 +93,12 @@ class _NotesPageState extends State<NotesPage> {
     if (diff.inHours < 24) return '${diff.inHours} h ago';
     if (diff.inDays < 7) return '${diff.inDays} d ago';
 
-    // Older than a week: show local date.
     final local = created.toLocal();
     return '${local.day}/${local.month}/${local.year}';
   }
 
   // ---------------------------------------------------------------------------
-  // Reorder logic
+  // Reorder logic (category-scoped)
   // ---------------------------------------------------------------------------
 
   /// Computes the new [sortOrder] for the item moved to [newIndex] within
@@ -57,15 +107,12 @@ class _NotesPageState extends State<NotesPage> {
   /// [notes] is the list *after* the item has been removed from its old
   /// position and *before* it is inserted at [newIndex].
   double _computeSortOrder(List<Note> notes, int newIndex) {
-    // Top of the list.
     if (newIndex == 0) {
       return notes.isEmpty ? 1000.0 : notes[0].sortOrder + 1.0;
     }
-    // Bottom of the list.
     if (newIndex >= notes.length) {
       return notes.last.sortOrder - 1.0;
     }
-    // Middle: fractional midpoint between the two neighbours.
     return (notes[newIndex - 1].sortOrder + notes[newIndex].sortOrder) / 2.0;
   }
 
@@ -79,7 +126,6 @@ class _NotesPageState extends State<NotesPage> {
   }
 
   Future<void> _rebalanceAll(List<Note> notes) async {
-    // Assign even integer spacing in DESC order (top note gets the highest value).
     final count = notes.length;
     for (int i = 0; i < count; i++) {
       final newOrder = (count - i) * 1000.0;
@@ -89,24 +135,33 @@ class _NotesPageState extends State<NotesPage> {
     }
   }
 
-  Future<void> _onReorder(int oldIndex, int newIndex) async {
-    final notes = List<Note>.from(NotesStore.get.notes);
-    if (oldIndex < 0 || oldIndex >= notes.length) return;
+  /// Handles reorder within a single category tab. Indices are relative to
+  /// the filtered list, not the full [NotesStore.get.notes] list.
+  Future<void> _onReorder(
+    String category,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    final filtered = NotesStore.get.notes
+        .where((n) => n.category == category)
+        .toList(growable: true);
 
-    // ReorderableListView gives newIndex *before* the item is removed, so when
-    // dragging downward the effective insertion index is one lower.
+    if (oldIndex < 0 || oldIndex >= filtered.length) return;
+
     if (newIndex > oldIndex) newIndex -= 1;
     if (newIndex == oldIndex) return;
 
-    final moved = notes.removeAt(oldIndex);
-    final newOrder = _computeSortOrder(notes, newIndex);
+    final moved = filtered.removeAt(oldIndex);
+    final newOrder = _computeSortOrder(filtered, newIndex);
 
     await NotesStore.get.reorder(id: moved.id, sortOrder: newOrder);
 
-    // After the store refresh, check whether the gap has collapsed.
-    final refreshed = NotesStore.get.notes;
-    if (_needsRebalance(refreshed)) {
-      await _rebalanceAll(List<Note>.from(refreshed));
+    final refreshedFiltered = NotesStore.get.notes
+        .where((n) => n.category == category)
+        .toList(growable: false);
+
+    if (_needsRebalance(refreshedFiltered)) {
+      await _rebalanceAll(List<Note>.from(refreshedFiltered));
     }
   }
 
@@ -124,8 +179,6 @@ class _NotesPageState extends State<NotesPage> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            // Re-insert with the same sort order and timestamps so it returns
-            // to approximately the same position.
             await NotesStore.get.insert(
               createdAt: note.createdAt,
               transcriptRaw: note.transcriptRaw,
@@ -134,6 +187,7 @@ class _NotesPageState extends State<NotesPage> {
               sortOrder: note.sortOrder,
               noteUid: note.noteUid,
               error: note.error,
+              category: note.category,
             );
           },
         ),
@@ -148,6 +202,80 @@ class _NotesPageState extends State<NotesPage> {
   Future<void> _toggleStatus(Note note) async {
     final next = note.status == 'done' ? 'active' : 'done';
     await NotesStore.get.updateStatus(id: note.id, status: next);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Move-to-category bottom sheet
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showMovePicker(Note note) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF10161C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 8,
+                  ),
+                  child: Text(
+                    'Move to...',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: const Color(0xFF7C8C99),
+                        ),
+                  ),
+                ),
+                ..._categories.map((meta) {
+                  final isCurrent = note.category == meta.key;
+                  return ListTile(
+                    leading: Icon(
+                      meta.icon,
+                      color: isCurrent
+                          ? const Color(0xFF2E8A7A)
+                          : const Color(0xFF9AB7C8),
+                    ),
+                    title: Text(
+                      meta.label,
+                      style: TextStyle(
+                        color: isCurrent
+                            ? const Color(0xFF2E8A7A)
+                            : const Color(0xFFD4DDE5),
+                      ),
+                    ),
+                    trailing: isCurrent
+                        ? const Icon(
+                            Icons.check,
+                            size: 18,
+                            color: Color(0xFF2E8A7A),
+                          )
+                        : null,
+                    onTap: isCurrent
+                        ? null
+                        : () async {
+                            Navigator.of(sheetContext).pop();
+                            await NotesStore.get.updateCategory(
+                              id: note.id,
+                              category: meta.key,
+                            );
+                          },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -249,7 +377,7 @@ class _NotesPageState extends State<NotesPage> {
                         ],
                       ),
                     ),
-                    // Timestamp + expand hint.
+                    // Timestamp + expand hint + move button.
                     const SizedBox(width: 8),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -271,6 +399,19 @@ class _NotesPageState extends State<NotesPage> {
                           ),
                         ],
                       ],
+                    ),
+                    // Category-move button — separate from expand column so the
+                    // tap target is always reachable regardless of expand state.
+                    GestureDetector(
+                      onTap: () => _showMovePicker(note),
+                      child: const Padding(
+                        padding: EdgeInsets.only(left: 6, top: 2),
+                        child: Icon(
+                          Icons.more_vert,
+                          size: 18,
+                          color: Color(0xFF7C8C99),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -330,40 +471,42 @@ class _NotesPageState extends State<NotesPage> {
   }
 
   // ---------------------------------------------------------------------------
-  // Build
+  // Per-category list (shared by all three TabBarView children)
   // ---------------------------------------------------------------------------
 
-  @override
-  Widget build(BuildContext context) {
-    final notes = NotesStore.get.notes;
-    final theme = Theme.of(context);
+  Widget _buildCategoryList(BuildContext context, _CategoryMeta meta) {
+    final notes = NotesStore.get.notes
+        .where((n) => n.category == meta.key)
+        .toList(growable: false);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notes'),
+    if (notes.isEmpty) {
+      return _buildEmptyState(Theme.of(context), meta);
+    }
+
+    return ReorderableListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: notes.length,
+      onReorder: (oldIndex, newIndex) =>
+          _onReorder(meta.key, oldIndex, newIndex),
+      proxyDecorator: (child, index, animation) => Material(
+        color: Colors.transparent,
+        child: child,
       ),
-      body: notes.isEmpty
-          ? _buildEmptyState(theme)
-          : ReorderableListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: notes.length,
-              onReorder: _onReorder,
-              proxyDecorator: (child, index, animation) => Material(
-                color: Colors.transparent,
-                child: child,
-              ),
-              itemBuilder: (context, index) {
-                final note = notes[index];
-                return KeyedSubtree(
-                  key: ValueKey(note.id),
-                  child: _buildNoteTile(context, note),
-                );
-              },
-            ),
+      itemBuilder: (context, index) {
+        final note = notes[index];
+        return KeyedSubtree(
+          key: ValueKey(note.id),
+          child: _buildNoteTile(context, note),
+        );
+      },
     );
   }
 
-  Widget _buildEmptyState(ThemeData theme) {
+  // ---------------------------------------------------------------------------
+  // Empty state (per category)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildEmptyState(ThemeData theme, _CategoryMeta meta) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -371,20 +514,20 @@ class _NotesPageState extends State<NotesPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.mic_none,
+              meta.icon,
               size: 48,
               color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
             ),
             const SizedBox(height: 16),
             Text(
-              'No notes yet',
+              meta.emptyTitle,
               style: theme.textTheme.titleMedium?.copyWith(
                 color: const Color(0xFF7C8C99),
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Long-press the right temple to record one.',
+              meta.emptyHint,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: const Color(0xFF7C8C99),
@@ -392,6 +535,41 @@ class _NotesPageState extends State<NotesPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    final allNotes = NotesStore.get.notes;
+
+    int activeCount(String categoryKey) => allNotes
+        .where((n) => n.category == categoryKey && n.status != 'done')
+        .length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notes'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: _categories.map((meta) {
+            final count = activeCount(meta.key);
+            return Tab(
+              icon: Icon(meta.icon),
+              text: count > 0 ? '${meta.label} ($count)' : meta.label,
+            );
+          }).toList(growable: false),
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: _categories
+            .map((meta) => _buildCategoryList(context, meta))
+            .toList(growable: false),
       ),
     );
   }

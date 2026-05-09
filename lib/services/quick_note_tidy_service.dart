@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:demo_ai_even/services/app_log.dart';
 import 'package:demo_ai_even/services/assistant_backend_config.dart';
 import 'package:dio/dio.dart';
@@ -35,39 +37,52 @@ class QuickNoteTidyService {
       'actually", use their correction). Do NOT summarise aggressively — keep '
       'specific details, names, numbers, and action items.\n'
       '\n'
-      'Return ONLY the cleaned note text. No quotes, no preamble, no '
-      'explanation.';
+      'Also classify the note as one of: shopping (items to buy or a shopping '
+      'list), todo (tasks, reminders, actions to take), or notes (everything '
+      'else including observations, ideas, and general reminders).\n'
+      '\n'
+      'Return a JSON object: {"text": "cleaned note", "category": "shopping|todo|notes"}';
 
   // Few-shot anchor pairs inlined from test/fixtures/quicknote/anchor_pairs.json.
   // These ground the model on the expected cleanup behaviour: stripping filler,
-  // honouring self-corrections, and collapsing thinking-aloud framing into the
-  // concrete note.
+  // honouring self-corrections, collapsing thinking-aloud framing, and
+  // classifying into the correct category.
+  // The assistant turns use JSON format to match the system prompt's instruction.
   static const _anchorPairs = [
     (
       raw:
           'um so I need to remember to to call mom about the plumbing thing er the leak in the kitchen yeah',
-      cleaned: 'Call Mum about the leak in the kitchen.',
+      cleaned:
+          '{"text": "Call Mum about the leak in the kitchen.", "category": "todo"}',
     ),
     (
       raw:
           'ok so the the meeting is moved to wait no it\'s still tomorrow but the location changed it\'s now in conference room B not A',
       cleaned:
-          'Meeting is still tomorrow, but moved to conference room B (was A).',
+          '{"text": "Meeting is still tomorrow, but moved to conference room B (was A).", "category": "notes"}',
     ),
     (
       raw:
           'thinking about the the LC3 thing for the watch app yeah I should check if the byte five field changes when the note is longer that would be interesting',
       cleaned:
-          'Check whether the LC3 byte-5 field changes when the note is longer.',
+          '{"text": "Check whether the LC3 byte-5 field changes when the note is longer.", "category": "todo"}',
     ),
   ];
 
-  /// Returns a cleaned version of [rawTranscript].
+  /// Returns a cleaned version of [rawTranscript] together with its category.
   ///
-  /// On any API error, logs at info level and returns [rawTranscript] unchanged.
-  Future<String> tidy(String rawTranscript) async {
+  /// The record fields are:
+  /// - [text]: the cleaned note text.
+  /// - [category]: one of 'shopping', 'todo', or 'notes'.
+  ///
+  /// On any API error, or if the response cannot be parsed as JSON, falls back
+  /// to `(text: rawTranscript, category: 'notes')` so the caller never loses
+  /// the original note.
+  Future<({String text, String category})> tidy(String rawTranscript) async {
+    final fallback = (text: rawTranscript, category: 'notes');
+
     if (rawTranscript.trim().isEmpty) {
-      return rawTranscript;
+      return fallback;
     }
 
     final config = AssistantBackendConfig.resolve();
@@ -76,7 +91,7 @@ class QuickNoteTidyService {
         '${DateTime.now()} QuickNoteTidy skipped — no API key configured',
         tag: _tag,
       );
-      return rawTranscript;
+      return fallback;
     }
 
     final messages = _buildMessages(rawTranscript);
@@ -96,20 +111,57 @@ class QuickNoteTidyService {
           '${DateTime.now()} QuickNoteTidy: API returned empty content — returning raw',
           tag: _tag,
         );
-        return rawTranscript;
+        return fallback;
       }
-      final tidied = content.trim();
-      AppLog.info(
-        '${DateTime.now()} QuickNoteTidy: raw=${rawTranscript.length}chars tidied=${tidied.length}chars',
-        tag: _tag,
-      );
-      return tidied;
+      return _parseResponse(content.trim(), rawTranscript);
     } catch (e) {
       AppLog.info(
         '${DateTime.now()} QuickNoteTidy failed — returning raw. Error: $e',
         tag: _tag,
       );
-      return rawTranscript;
+      return fallback;
+    }
+  }
+
+  /// Parses the JSON response from the model into a text+category record.
+  ///
+  /// Expected format: {"text": "...", "category": "shopping|todo|notes"}.
+  /// On any parse failure, returns the raw transcript with category 'notes'.
+  ({String text, String category}) _parseResponse(
+    String content,
+    String rawTranscript,
+  ) {
+    try {
+      final decoded = jsonDecode(content) as Map<String, dynamic>;
+      final text = decoded['text'] as String?;
+      final category = decoded['category'] as String?;
+
+      final validCategories = {'shopping', 'todo', 'notes'};
+      final resolvedCategory =
+          (category != null && validCategories.contains(category))
+              ? category
+              : 'notes';
+
+      if (text == null || text.trim().isEmpty) {
+        AppLog.info(
+          '${DateTime.now()} QuickNoteTidy: JSON missing text field — returning raw',
+          tag: _tag,
+        );
+        return (text: rawTranscript, category: resolvedCategory);
+      }
+
+      AppLog.info(
+        '${DateTime.now()} QuickNoteTidy: raw=${rawTranscript.length}chars '
+        'tidied=${text.length}chars category=$resolvedCategory',
+        tag: _tag,
+      );
+      return (text: text.trim(), category: resolvedCategory);
+    } catch (e) {
+      AppLog.info(
+        '${DateTime.now()} QuickNoteTidy: JSON parse failed — returning raw. Error: $e',
+        tag: _tag,
+      );
+      return (text: rawTranscript, category: 'notes');
     }
   }
 

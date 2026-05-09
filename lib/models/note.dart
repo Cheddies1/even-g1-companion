@@ -12,6 +12,7 @@ import 'dart:typed_data';
 ///   is preserved without any extra logic. Fractional values allow reordering between existing
 ///   notes without renumbering.
 /// [noteUid] is the 8-byte UID from the firmware 0x21 payload; null until assigned.
+/// [category] is one of 'shopping', 'todo', or 'notes' (default).
 /// [error] is set if STT or any pipeline step fails; null on success.
 class Note {
   const Note({
@@ -22,6 +23,7 @@ class Note {
     required this.status,
     required this.sortOrder,
     this.noteUid,
+    this.category = 'notes',
     this.error,
   });
 
@@ -32,6 +34,7 @@ class Note {
   final String status;
   final double sortOrder;
   final Uint8List? noteUid;
+  final String category;
   final String? error;
 
   DateTime get createdAtUtc => DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true);
@@ -45,6 +48,7 @@ class Note {
       status: map['status'] as String,
       sortOrder: (map['sort_order'] as num).toDouble(),
       noteUid: map['note_uid'] as Uint8List?,
+      category: (map['category'] as String?) ?? 'notes',
       error: map['error'] as String?,
     );
   }
@@ -57,6 +61,7 @@ class Note {
     String? status,
     double? sortOrder,
     Object? noteUid = _absent,
+    String? category,
     Object? error = _absent,
   }) {
     return Note(
@@ -68,6 +73,7 @@ class Note {
       status: status ?? this.status,
       sortOrder: sortOrder ?? this.sortOrder,
       noteUid: noteUid == _absent ? this.noteUid : noteUid as Uint8List?,
+      category: category ?? this.category,
       error: error == _absent ? this.error : error as String?,
     );
   }

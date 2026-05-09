@@ -581,10 +581,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildNotesCard() {
-    final activeCount = NotesStore.get.notes
-        .where((n) => n.status == 'active')
+    final allNotes = NotesStore.get.notes;
+    final shopping = allNotes
+        .where((n) => n.category == 'shopping' && n.status != 'done')
         .length;
-    final subtitle = activeCount == 1 ? '1 active note' : '$activeCount active notes';
+    final todo = allNotes
+        .where((n) => n.category == 'todo' && n.status != 'done')
+        .length;
+    final notes = allNotes
+        .where((n) => n.category == 'notes' && n.status != 'done')
+        .length;
+
+    final parts = <String>[
+      if (shopping > 0) '$shopping shopping',
+      if (todo > 0) '$todo to do',
+      if (notes > 0) '$notes notes',
+    ];
+    final subtitle = parts.isEmpty ? 'No active notes' : parts.join(', ');
 
     return InkWell(
       borderRadius: BorderRadius.circular(18),
