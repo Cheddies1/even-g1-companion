@@ -1253,6 +1253,29 @@ class BleManager {
     if (wasConnected && !isConnected) {
       _handleFullDisconnect(source: 'ConnectionStateChanged');
       _maybeStartAutoReconnect();
+    } else if (isConnected) {
+      // Single-leg disconnect: one leg dropped but the other is still up.
+      // The full-disconnect path above won't fire because isConnected is
+      // still true. We need to detect which leg just dropped and trigger
+      // an immediate reconnect for it.
+      for (final lr in ['L', 'R']) {
+        final state = legState(lr);
+        if (!state.connected &&
+            state.deviceName.isNotEmpty &&
+            state.reconnectAttempts == 0 &&
+            !state.reconnectInFlight) {
+          AppLog.info(
+            '${DateTime.now()} Transport: single-leg disconnect detected -> $lr, triggering reconnect',
+            tag: 'BLE',
+          );
+          _updateLegState(
+            lr,
+            state.copyWith(reconnectAttempts: 1),
+            source: 'SingleLegDisconnect',
+          );
+          unawaited(_attemptLegReconnect(lr));
+        }
+      }
     }
   }
 
@@ -1337,10 +1360,20 @@ class BleManager {
     for (final lr in ['L', 'R']) {
       final state = legState(lr);
       if (!state.connected) {
-        if (state.reconnectAttempts > 0 &&
-            state.reconnectAttempts < _maxReconnectAttempts &&
+        if (state.reconnectAttempts < _maxReconnectAttempts &&
             !state.reconnectInFlight &&
             state.deviceName.isNotEmpty) {
+          // Belt-and-braces: if reconnectAttempts is still 0 (e.g. the
+          // single-leg-disconnect handler in _applyConnectionPayload missed
+          // this leg, or a race condition left it at 0), bump it to 1 so
+          // _attemptLegReconnect can proceed.
+          if (state.reconnectAttempts == 0) {
+            _updateLegState(
+              lr,
+              state.copyWith(reconnectAttempts: 1),
+              source: 'MonitorBumpFromZero',
+            );
+          }
           unawaited(_attemptLegReconnect(lr));
         }
         continue;
