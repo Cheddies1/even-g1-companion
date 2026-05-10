@@ -903,6 +903,23 @@ class BleManager {
   }
 
   Future<void> forceReconnect() async {
+    // Reset per-leg health state so reconnect starts from a clean slate.
+    // Without this, stale reconnectAttempts/reconnectInFlight from a
+    // previous failed reconnect cycle can leave legs stuck.
+    for (final lr in ['L', 'R']) {
+      final state = legState(lr);
+      if (state.reconnectAttempts > 0 || state.reconnectInFlight) {
+        _updateLegState(
+          lr,
+          state.copyWith(
+            reconnectAttempts: 0,
+            reconnectInFlight: false,
+          ),
+          source: 'ForceReconnectReset',
+        );
+      }
+    }
+
     String? channelNumber = _lastConnectedChannelNumber;
     if (channelNumber == null || channelNumber.isEmpty) {
       for (final entry in pairedGlasses) {
@@ -1253,25 +1270,19 @@ class BleManager {
     if (wasConnected && !isConnected) {
       _handleFullDisconnect(source: 'ConnectionStateChanged');
       _maybeStartAutoReconnect();
-    } else if (isConnected) {
-      // Single-leg disconnect: one leg dropped but the other is still up.
-      // The full-disconnect path above won't fire because isConnected is
-      // still true. We need to detect which leg just dropped and trigger
-      // an immediate reconnect for it.
+    } else if (wasConnected && isConnected) {
+      // Single-leg disconnect: we HAD a full connection (wasConnected) and
+      // still have at least one leg up (isConnected). The gate on
+      // wasConnected prevents false positives during initial connection
+      // setup, when one leg is up but the other is still mid-GATT-discovery.
       for (final lr in ['L', 'R']) {
         final state = legState(lr);
         if (!state.connected &&
             state.deviceName.isNotEmpty &&
-            state.reconnectAttempts == 0 &&
             !state.reconnectInFlight) {
           AppLog.info(
             '${DateTime.now()} Transport: single-leg disconnect detected -> $lr, triggering reconnect',
             tag: 'BLE',
-          );
-          _updateLegState(
-            lr,
-            state.copyWith(reconnectAttempts: 1),
-            source: 'SingleLegDisconnect',
           );
           unawaited(_attemptLegReconnect(lr));
         }
@@ -1360,20 +1371,12 @@ class BleManager {
     for (final lr in ['L', 'R']) {
       final state = legState(lr);
       if (!state.connected) {
+        // Belt-and-braces: attempt reconnect for any disconnected leg that
+        // hasn't exhausted its attempts, regardless of the current count.
+        // _attemptLegReconnect() handles the increment internally.
         if (state.reconnectAttempts < _maxReconnectAttempts &&
             !state.reconnectInFlight &&
             state.deviceName.isNotEmpty) {
-          // Belt-and-braces: if reconnectAttempts is still 0 (e.g. the
-          // single-leg-disconnect handler in _applyConnectionPayload missed
-          // this leg, or a race condition left it at 0), bump it to 1 so
-          // _attemptLegReconnect can proceed.
-          if (state.reconnectAttempts == 0) {
-            _updateLegState(
-              lr,
-              state.copyWith(reconnectAttempts: 1),
-              source: 'MonitorBumpFromZero',
-            );
-          }
           unawaited(_attemptLegReconnect(lr));
         }
         continue;
@@ -1421,6 +1424,24 @@ class BleManager {
       );
       AppLog.error(
           '${DateTime.now()} Transport: reconnect request rejected -> lr=$lr');
+    } else {
+      // Watchdog: if autoConnect=true silently pends with no callback for
+      // 30 seconds, clear reconnectInFlight so the health monitor can retry.
+      // Without this, a leg can get permanently stuck in reconnectInFlight.
+      Future.delayed(const Duration(seconds: 30), () {
+        final current = legState(lr);
+        if (current.reconnectInFlight && !current.connected) {
+          AppLog.info(
+            '${DateTime.now()} Transport: reconnect watchdog expired -> lr=$lr, clearing reconnectInFlight',
+            tag: 'BLE',
+          );
+          _updateLegState(
+            lr,
+            current.copyWith(reconnectInFlight: false),
+            source: 'ReconnectWatchdog',
+          );
+        }
+      });
     }
   }
 
