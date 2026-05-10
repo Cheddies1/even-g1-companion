@@ -62,9 +62,37 @@ Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **Q
   - [ ] Visual or haptic feedback when a note is fully saved — user currently gets no on-device confirmation that the pipeline completed (toast, glasses display flash, or similar).
 - **Notes**: Cross-ref `docs/FINDINGS-quicknote.md`, `lib/services/quick_note_capture_service.dart`.
 
+### 3. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
+- **Status**: Next
+- **Priority**: Low
+- **Context**: The keyword classifier fires on "to do" broadly, so phrases like "make a note to X" get tagged as todo before GPT runs. GPT classification is generally correct; the keyword fallback (which sets the initial category) catches too widely.
+- **Acceptance**:
+  - [ ] Either tighten keyword patterns to exclude constructions like "make a note to …" from the todo trigger, or suppress the keyword-derived category until GPT confirms/overrides it.
+  - [ ] "Make a note to X" phrases consistently land in the Notes category, not Todo.
+  - [ ] Existing unambiguous todo phrases ("remind me to", "I need to") still classified correctly.
+- **Notes**: Polish item — the feature works well overall. No protocol changes; purely a classifier adjustment in the categorisation logic.
+
 ---
 
 ## Backlog — Unprioritised
+
+### package-rename: Rename package from com.example to com.eddie.evencompanion
+- **Status**: Backlog
+- **Priority**: High
+- **Context**: The app still carries its forked-from-example package name (`com.example.demo_ai_even`). The project has long since matured past that origin and the name is actively annoying. Target application ID: `com.eddie.evencompanion` (exact name Eddie's call). Small in terms of logic but touches many files across Android and Flutter.
+- **Scope**:
+  - Android: `AndroidManifest.xml`, Kotlin source directory tree (`com/example/demo_ai_even/` → `com/eddie/evencompanion/`), all Kotlin `package` declarations, `build.gradle` / `build.gradle.kts` `applicationId` and `namespace`, any R8/ProGuard rules that reference the old package.
+  - Flutter/Dart: any platform-channel method channel names that embed the package string; `pubspec.yaml` if it carries a package reference.
+  - iOS: bundle identifier, if iOS is in scope.
+  - Residual strings: `Files Most Likely Relevant Next` paths in this worklist reference `com/example/demo_ai_even/` — update after rename.
+- **Acceptance**:
+  - [ ] Application ID is `com.eddie.evencompanion` (or the name Eddie confirms) in `build.gradle` and `AndroidManifest.xml`.
+  - [ ] All Kotlin files carry the new `package com.eddie.evencompanion[.subpackage]` declaration; no `com.example` strings remain in source or config.
+  - [ ] App builds clean (`flutter build apk` or equivalent) with no residual reference errors.
+  - [ ] App installs and runs on device after manual uninstall of the old package.
+  - [ ] All BLE functionality works post-reinstall (re-pairing may be required and is accepted).
+  - [ ] R8/ProGuard rules (if any reference the old name) updated and release build confirmed clean.
+- **Notes**: The OS treats a package rename as a new app — uninstall of the old package before install is required. Eddie is aware and accepts this. Any `SharedPreferences` or SQLite DB data keyed to the old package path will not carry over automatically; confirm whether migration is needed (notes store, settings). Cross-ref: file paths in the `Files Most Likely Relevant Next` section and in `BLE stability — Tier 1` Done entry (hardcoded `com/example/demo_ai_even/` paths) will need updating in docs too.
 
 ### dashboard-injection: Dashboard content injection
 - **Status**: Backlog
@@ -160,17 +188,8 @@ Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **Q
 - **Acceptance**: Parser surfaces HCI LE Connection Update events alongside ATT PDUs. Output includes the connection parameters (interval, latency, supervision timeout) negotiated by the official app across a representative capture.
 - **Notes**: Should ideally be done before committing to specific values in Tier 2/3. Low implementation risk — additive change to existing parse script.
 
-### ble-single-leg-disconnect: Single-leg disconnect robustness investigation
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: The G1 glasses have two independent BLE connections — one per leg (left and right). In practice one leg can drop while the other stays connected: a weak RF environment, a brief obstruction, or a firmware hiccup on one side. The app already has per-leg connection state and reconnect logic, but the failure modes when only one leg drops are not well characterised. This is an investigation item — the goal is to understand the behaviour before deciding what (if anything) needs fixing.
-- **Acceptance** (investigation outcomes, not feature deliverables):
-  - [ ] Reproduce a single-leg disconnect reliably in testing (e.g. by manually disconnecting one leg from the Android Bluetooth settings while the app is active).
-  - [ ] Document what the app does in each active mode (Glance, Chat, Navigate, QuickNote capture) when only the left leg drops vs. only the right leg drops.
-  - [ ] Identify any errors, stuck state, or broken UX — e.g. does QuickNote capture become silently unavailable because the right leg (which handles the `0x21` gesture and `0x1e c8` audio stream) has gone? Does Navigate SYNC polling continue cleanly on the surviving leg?
-  - [ ] Determine whether reconnect recovery is clean: when the dropped leg rejoins, do all features resume correctly or is a manual app restart needed?
-  - [ ] Produce a short findings note (inline in this item or in a FINDINGS file) summarising any failure modes discovered and a recommended fix for each, or a confirmation that the current handling is already graceful.
-- **Notes**: Right-leg dependency is the most critical — the right leg is the host for the QuickNote gesture (`0x21`) and the audio stream. A right-leg drop during an active QuickNote capture should be considered a specific failure scenario. Cross-ref `ble-stability-tier2` and `ble-stability-tier3` — better heartbeat cadence (Tier 2) may mask some single-leg failure modes, so this investigation is best done before those tiers are in place, or tested with Tier 2 active and again without.
+### ble-single-leg-disconnect: ~~Single-leg disconnect robustness~~
+- **Status**: Done — closed 2026-05-10. See Recently Done.
 
 #### Protocol research and hardening
 
@@ -235,6 +254,17 @@ Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **Q
 ---
 
 ## Recently Done
+
+### ble-single-leg-disconnect: Single-leg disconnect robustness (2026-05-10)
+Root cause: only the "both legs down" path triggered auto-reconnect; a single-leg drop was not handled. Fixed across two commits (`2ba1e31` initial fix, `ff20b98` Codex hardening).
+
+**What shipped:**
+- Single-leg drop now triggers auto-reconnect (previously a no-op).
+- Three Codex-review blockers fixed: false-positive reconnect trigger during initial connect, off-by-one in reconnect counter, `reconnectInFlight` flag left set after a failed attempt.
+- 30-second watchdog timer added to recover from a stuck `autoConnect`.
+- `forceReconnect()` now resets stale per-leg health state before attempting reconnect.
+
+Files changed: `android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt`, `lib/ble_manager.dart`.
 
 ### quicknotes-multi-list: QuickNotes multi-list categorisation (2026-05-09)
 Three-category auto-classification via GPT piggyback on tidy step + keyword regex fallback. TabBar UI with move-between-categories picker. Schema migration v1→v2.
