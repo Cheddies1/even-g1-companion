@@ -689,10 +689,15 @@ Current runtime behaviour:
 - heartbeat success is tracked per leg
 - repeated heartbeat/request failures can mark one leg degraded without declaring the whole session dead
 - degraded legs can trigger bounded reconnect attempts
+- **single-leg disconnects now trigger automatic reconnect:** if one leg drops while the other
+  stays up, the app detects this and attempts to restore the dropped leg without any manual
+  action or full-session teardown. Previously, only a full both-legs-down disconnect triggered
+  automatic recovery for a single-leg drop.
 - when transport recovers, the app resends the current active content to help both lenses converge again
 
 Practical effect:
 - one eye can remain usable while the other is recovering
+- single-leg drops auto-recover without requiring a manual `Force Reconnect`
 - Navigate display divergence should self-correct more often after recovery
 - a restart/reconnect should no longer be the only way to recover from every partial transport problem
 
@@ -724,6 +729,20 @@ Before starting auto-reconnect, the app checks the last known wear state (persis
 Auto-reconnect proceeds only when the last recorded wear state was worn (`F5 06`) or is not yet known (the app has never received a wear-state event from the current pairing).
 
 The persisted wear state survives both disconnection and app restart, so the cradle-check works correctly even if the app is restarted while the glasses are in their case.
+
+### Single-leg auto-reconnect
+
+If one leg disconnects whilst the other remains connected (for example, the left temple briefly
+goes out of range), the app detects this and attempts to restore the dropped leg automatically.
+Up to 3 per-leg reconnect attempts are made. No full-session teardown is triggered, and no
+manual `Force Reconnect` is needed.
+
+The check is gated on the session having been fully connected at least once before (`wasConnected`),
+which prevents false triggers during initial connection setup when the two legs connect a few
+milliseconds apart.
+
+If Android's `autoConnect=true` reconnect path silently pends with no callback (a known Android
+behaviour), a 30-second watchdog clears the in-flight flag so the health monitor can retry.
 
 ### App-launch auto-connect
 

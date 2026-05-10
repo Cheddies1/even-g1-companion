@@ -529,8 +529,16 @@ Heartbeat handling:
 
 Reconnect handling (per-leg):
 - degraded legs trigger bounded reconnect attempts through the native bridge
+- single-leg disconnects also trigger automatic reconnect: `_applyConnectionPayload()` has a
+  `wasConnected && isConnected` branch that detects one leg going down whilst the other
+  remains up and calls `_attemptLegReconnect()` immediately for the dropped leg
+- the `wasConnected` gate prevents false positives during initial connection setup, when one
+  leg may be connected but the other is still mid-GATT-discovery
 - reconnect is per-leg, not always full-session teardown
-- reconnect attempts are intentionally bounded to avoid loops or storms
+- reconnect attempts are intentionally bounded (`_maxReconnectAttempts = 3`) to avoid loops or storms
+- **30s watchdog:** after calling `reconnectLeg` (which uses `autoConnect=true`), Android can
+  silently pend with no GATT callback. A `Future.delayed(30s)` clears `reconnectInFlight` when
+  it expires without a successful connection, unblocking the health monitor to retry
 
 Resync handling:
 - when a degraded leg recovers, Flutter requests a lightweight content resync
@@ -549,12 +557,20 @@ Navigate-specific transport protection:
 
 Full-session disconnect detection and auto-reconnect are a distinct concern from the per-leg degraded handling above.
 
-**Dead-code fix note:** `_onGlassesDisconnected()` in `ble_manager.dart` was historically dead code. Android's GATT stack routes disconnect events through `_onGlassesConnectionStateChanged()` / `_applyConnectionPayload()`, not through `_onGlassesDisconnected()`. As a result, timer cleanup (heartbeat, reconnect monitor) never ran on real disconnects. This has been fixed: `_applyConnectionPayload()` now detects a full disconnect via a `wasConnected && !isConnected` transition check, and performs the full cleanup and auto-reconnect trigger from there.
+**Dead-code fix note:** `_onGlassesDisconnected()` in `ble_manager.dart` was historically dead code. Android's GATT stack routes disconnect events through `_onGlassesConnectionStateChanged()` / `_applyConnectionPayload()`, not through `_onGlassesDisconnected()`. As a result, timer cleanup (heartbeat, reconnect monitor) never ran on real disconnects. This has been fixed: `_applyConnectionPayload()` now handles two distinct disconnect cases:
+
+- `wasConnected && !isConnected` — full disconnect: performs timer cleanup and triggers the full-session `_maybeStartAutoReconnect()` backoff sequence
+- `wasConnected && isConnected` — single-leg disconnect: the other leg is still up; calls `_attemptLegReconnect()` directly for the dropped leg without tearing down the full session
+
+The shared `wasConnected` gate prevents either branch from firing during initial connection setup.
 
 Full-session auto-reconnect behaviour (`BleManager`):
 - on detecting a full disconnect, checks the last wear state from `AppSettingsStore`
 - if last wear state is `inCradle` (`F5 08` / `F5 0B`), auto-reconnect is skipped
 - if last wear state is `worn` (`F5 06`) or unknown, reconnect proceeds using `forceReconnect()`
+- `forceReconnect()` resets `reconnectAttempts` and `reconnectInFlight` to zero for both legs
+  before starting, so stale state from a previous failed reconnect cycle cannot block the new
+  attempt. This applies both to manual "Force Reconnect" triggers and to the auto-reconnect path.
 - backoff schedule: immediate → 30 s → 60 s → 120 s (four attempts total)
 - after four unsuccessful attempts, auto-reconnect stops and waits for manual action
 - the channel number used for reconnect is persisted in `AppSettingsStore`
