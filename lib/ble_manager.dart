@@ -1,14 +1,14 @@
 import 'dart:async';
-import 'package:demo_ai_even/models/app_mode.dart';
-import 'package:demo_ai_even/services/app_settings_store.dart';
-import 'package:demo_ai_even/services/ble.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/companion_controller.dart';
-import 'package:demo_ai_even/services/device_status_service.dart';
-import 'package:demo_ai_even/services/evenai.dart';
-import 'package:demo_ai_even/services/proto.dart';
-import 'package:demo_ai_even/services/notes_store.dart';
-import 'package:demo_ai_even/services/quick_note_capture_service.dart';
+import 'package:even_companion/models/app_mode.dart';
+import 'package:even_companion/services/app_settings_store.dart';
+import 'package:even_companion/services/ble.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/companion_controller.dart';
+import 'package:even_companion/services/device_status_service.dart';
+import 'package:even_companion/services/evenai.dart';
+import 'package:even_companion/services/proto.dart';
+import 'package:even_companion/services/notes_store.dart';
+import 'package:even_companion/services/quick_note_capture_service.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

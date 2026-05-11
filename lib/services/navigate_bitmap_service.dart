@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:demo_ai_even/models/companion_notification.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/features_services.dart';
+import 'package:even_companion/models/companion_notification.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/features_services.dart';
 import 'package:flutter/material.dart';
 
 class NavigateBitmapService {

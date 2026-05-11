@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:demo_ai_even/models/chat_message.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/assistant_backend_config.dart';
-import 'package:demo_ai_even/services/chat_backend.dart';
+import 'package:even_companion/models/chat_message.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/assistant_backend_config.dart';
+import 'package:even_companion/services/chat_backend.dart';
 import 'package:dio/dio.dart';
 
 class OpenAiChatBackend implements ChatBackend {

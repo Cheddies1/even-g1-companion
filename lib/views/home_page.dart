@@ -1,19 +1,19 @@
 import 'dart:async';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/models/app_mode.dart';
-import 'package:demo_ai_even/services/app_settings_store.dart';
-import 'package:demo_ai_even/services/chat_history_store.dart';
-import 'package:demo_ai_even/services/capture_service.dart';
-import 'package:demo_ai_even/services/chat_service.dart';
-import 'package:demo_ai_even/services/companion_controller.dart';
-import 'package:demo_ai_even/services/device_status_service.dart';
-import 'package:demo_ai_even/services/glance_service.dart';
-import 'package:demo_ai_even/services/notes_store.dart';
-import 'package:demo_ai_even/views/chat_transcript_page.dart';
-import 'package:demo_ai_even/views/features_page.dart';
-import 'package:demo_ai_even/views/notes_page.dart';
-import 'package:demo_ai_even/views/settings_page.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/models/app_mode.dart';
+import 'package:even_companion/services/app_settings_store.dart';
+import 'package:even_companion/services/chat_history_store.dart';
+import 'package:even_companion/services/capture_service.dart';
+import 'package:even_companion/services/chat_service.dart';
+import 'package:even_companion/services/companion_controller.dart';
+import 'package:even_companion/services/device_status_service.dart';
+import 'package:even_companion/services/glance_service.dart';
+import 'package:even_companion/services/notes_store.dart';
+import 'package:even_companion/views/chat_transcript_page.dart';
+import 'package:even_companion/views/features_page.dart';
+import 'package:even_companion/views/notes_page.dart';
+import 'package:even_companion/views/settings_page.dart';
 import 'package:flutter/material.dart';
 
 class HomePage extends StatefulWidget {

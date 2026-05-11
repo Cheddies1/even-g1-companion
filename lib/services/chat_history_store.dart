@@ -1,5 +1,5 @@
-import 'package:demo_ai_even/models/chat_message_record.dart';
-import 'package:demo_ai_even/models/chat_session_record.dart';
+import 'package:even_companion/models/chat_message_record.dart';
+import 'package:even_companion/models/chat_session_record.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';

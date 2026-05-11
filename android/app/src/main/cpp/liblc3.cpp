@@ -12,7 +12,7 @@
 
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_example_demo_1ai_1even_cpp_Cpp_decodeLC3(JNIEnv *env, jclass instance, jbyteArray lc3Data) {
+Java_com_eddie_evencompanion_cpp_Cpp_decodeLC3(JNIEnv *env, jclass instance, jbyteArray lc3Data) {
 //    __android_log_print(ANDROID_LOG_INFO, "cpp", "JNI decodeLC3 called!");
     jbyte *lc3Bytes = env->GetByteArrayElements(lc3Data, nullptr);
     int lc3Length = env->GetArrayLength(lc3Data);
@@ -73,7 +73,7 @@ Java_com_example_demo_1ai_1even_cpp_Cpp_decodeLC3(JNIEnv *env, jclass instance, 
 
 
 extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_example_demo_1ai_1even_cpp_Cpp_rnNoise(JNIEnv *env, jclass clazz,jlong st, jfloatArray input) {
+Java_com_eddie_evencompanion_cpp_Cpp_rnNoise(JNIEnv *env, jclass clazz,jlong st, jfloatArray input) {
     jfloat *inputArray = env->GetFloatArrayElements(input, NULL);
 //    jfloat *outputArray = env->GetFloatArrayElements(output, NULL);
 
@@ -87,11 +87,11 @@ Java_com_example_demo_1ai_1even_cpp_Cpp_rnNoise(JNIEnv *env, jclass clazz,jlong 
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_example_demo_1ai_1even_cpp_Cpp_createRNNoiseState(JNIEnv *env, jclass clazz) {
+Java_com_eddie_evencompanion_cpp_Cpp_createRNNoiseState(JNIEnv *env, jclass clazz) {
     return (jlong) rnnoise_create(NULL);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_demo_1ai_1even_cpp_Cpp_destroyRNNoiseState(JNIEnv *env, jclass clazz, jlong st) {
+Java_com_eddie_evencompanion_cpp_Cpp_destroyRNNoiseState(JNIEnv *env, jclass clazz, jlong st) {
     rnnoise_destroy((DenoiseState*) st);
 }

@@ -1,16 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/models/chat_message.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/chat_backend.dart';
-import 'package:demo_ai_even/services/chat_history_store.dart';
-import 'package:demo_ai_even/services/openai_chat_backend.dart';
-import 'package:demo_ai_even/services/openai_transcription_service.dart';
-import 'package:demo_ai_even/services/proto.dart';
-import 'package:demo_ai_even/services/streaming_render_queue.dart';
-import 'package:demo_ai_even/services/text_service.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/models/chat_message.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/chat_backend.dart';
+import 'package:even_companion/services/chat_history_store.dart';
+import 'package:even_companion/services/openai_chat_backend.dart';
+import 'package:even_companion/services/openai_transcription_service.dart';
+import 'package:even_companion/services/proto.dart';
+import 'package:even_companion/services/streaming_render_queue.dart';
+import 'package:even_companion/services/text_service.dart';
 
 class ChatService {
   static const _closeGestureGraceWindow = Duration(milliseconds: 1500);

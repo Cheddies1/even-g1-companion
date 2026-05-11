@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.notifications
+package com.eddie.evencompanion.notifications
 
 import android.app.Notification
 import android.content.Context
@@ -16,7 +16,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
-import com.example.demo_ai_even.bluetooth.BleChannelHelper
+import com.eddie.evencompanion.bluetooth.BleChannelHelper
 import java.io.ByteArrayOutputStream
 import java.util.Locale
 

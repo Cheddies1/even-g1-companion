@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.notifications
+package com.eddie.evencompanion.notifications
 
 data class DashboardNotificationEntry(
     val key: String,

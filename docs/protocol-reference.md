@@ -183,7 +183,7 @@ Observed reality:
 - this path is now reused for Capture-mode WAV recording scaffolding
 
 Relevant implementation:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt)
 - [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp)
 
 ## Text / AI result sending: `0x4E`

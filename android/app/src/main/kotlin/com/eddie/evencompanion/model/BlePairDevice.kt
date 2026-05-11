@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.model
+package com.eddie.evencompanion.model
 
 import android.bluetooth.BluetoothGatt
 

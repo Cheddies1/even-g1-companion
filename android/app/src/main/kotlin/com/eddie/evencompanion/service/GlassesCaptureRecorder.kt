@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.service
+package com.eddie.evencompanion.service
 
 import android.content.Context
 import android.content.ContentValues

@@ -1,5 +1,5 @@
-import 'package:demo_ai_even/models/note.dart';
-import 'package:demo_ai_even/services/notes_store.dart';
+import 'package:even_companion/models/note.dart';
+import 'package:even_companion/services/notes_store.dart';
 import 'package:flutter/material.dart';
 
 // ---------------------------------------------------------------------------

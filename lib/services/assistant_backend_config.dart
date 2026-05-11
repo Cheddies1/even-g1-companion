@@ -1,4 +1,4 @@
-import 'package:demo_ai_even/services/app_settings_store.dart';
+import 'package:even_companion/services/app_settings_store.dart';
 
 class AssistantBackendConfig {
   const AssistantBackendConfig({

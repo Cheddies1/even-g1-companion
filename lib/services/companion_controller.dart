@@ -1,18 +1,18 @@
 import 'dart:async';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/models/app_mode.dart';
-import 'package:demo_ai_even/models/companion_notification.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/capture_service.dart';
-import 'package:demo_ai_even/services/chat_service.dart';
-import 'package:demo_ai_even/services/features_services.dart';
-import 'package:demo_ai_even/services/glance_assistant_service.dart';
-import 'package:demo_ai_even/services/glance_service.dart';
-import 'package:demo_ai_even/services/navigate_service.dart';
-import 'package:demo_ai_even/services/notification_policy.dart';
-import 'package:demo_ai_even/services/notification_settings_store.dart';
-import 'package:demo_ai_even/services/text_service.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/models/app_mode.dart';
+import 'package:even_companion/models/companion_notification.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/capture_service.dart';
+import 'package:even_companion/services/chat_service.dart';
+import 'package:even_companion/services/features_services.dart';
+import 'package:even_companion/services/glance_assistant_service.dart';
+import 'package:even_companion/services/glance_service.dart';
+import 'package:even_companion/services/navigate_service.dart';
+import 'package:even_companion/services/notification_policy.dart';
+import 'package:even_companion/services/notification_settings_store.dart';
+import 'package:even_companion/services/text_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 

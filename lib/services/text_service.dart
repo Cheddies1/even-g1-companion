@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:math';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/evenai.dart';
-import 'package:demo_ai_even/services/proto.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/evenai.dart';
+import 'package:even_companion/services/proto.dart';
 
 class TextService {
   static TextService? _instance;

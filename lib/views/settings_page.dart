@@ -1,10 +1,10 @@
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/models/notification_package_preference.dart';
-import 'package:demo_ai_even/services/app_settings_store.dart';
-import 'package:demo_ai_even/services/assistant_backend_config.dart';
-import 'package:demo_ai_even/services/companion_controller.dart';
-import 'package:demo_ai_even/services/device_status_service.dart';
-import 'package:demo_ai_even/services/notification_settings_store.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/models/notification_package_preference.dart';
+import 'package:even_companion/services/app_settings_store.dart';
+import 'package:even_companion/services/assistant_backend_config.dart';
+import 'package:even_companion/services/companion_controller.dart';
+import 'package:even_companion/services/device_status_service.dart';
+import 'package:even_companion/services/notification_settings_store.dart';
 import 'package:flutter/material.dart';
 
 class SettingsPage extends StatefulWidget {

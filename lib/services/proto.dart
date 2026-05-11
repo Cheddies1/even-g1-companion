@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/evenai_proto.dart';
-import 'package:demo_ai_even/services/nav_icon_generator.dart';
-import 'package:demo_ai_even/services/nav_replay_data.dart';
-import 'package:demo_ai_even/utils/utils.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/evenai_proto.dart';
+import 'package:even_companion/services/nav_icon_generator.dart';
+import 'package:even_companion/services/nav_replay_data.dart';
+import 'package:even_companion/utils/utils.dart';
 
 class _NavReplayLegStats {
   int packetCount = 0;

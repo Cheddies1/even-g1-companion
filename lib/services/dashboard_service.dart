@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/dashboard_bitmap_service.dart';
-import 'package:demo_ai_even/services/proto.dart';
-import 'package:demo_ai_even/services/text_service.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/dashboard_bitmap_service.dart';
+import 'package:even_companion/services/proto.dart';
+import 'package:even_companion/services/text_service.dart';
 import 'package:flutter/services.dart';
 
 enum DashboardState {

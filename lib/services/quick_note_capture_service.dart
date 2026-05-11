@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/notes_store.dart';
-import 'package:demo_ai_even/services/openai_transcription_service.dart';
-import 'package:demo_ai_even/services/proto.dart';
-import 'package:demo_ai_even/services/quick_note_classifier.dart';
-import 'package:demo_ai_even/services/quick_note_tidy_service.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/notes_store.dart';
+import 'package:even_companion/services/openai_transcription_service.dart';
+import 'package:even_companion/services/proto.dart';
+import 'package:even_companion/services/quick_note_classifier.dart';
+import 'package:even_companion/services/quick_note_tidy_service.dart';
 
 /// Receives a flushed QuickNote audio payload from the BLE layer, decodes it
 /// from LC3 to PCM via the native JNI decoder, and writes a WAV file the user

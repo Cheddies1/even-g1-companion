@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.service
+package com.eddie.evencompanion.service
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -11,9 +11,9 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.example.demo_ai_even.MainActivity
-import com.example.demo_ai_even.R
-import com.example.demo_ai_even.bluetooth.BleChannelHelper
+import com.eddie.evencompanion.MainActivity
+import com.eddie.evencompanion.R
+import com.eddie.evencompanion.bluetooth.BleChannelHelper
 
 class CompanionForegroundService : Service() {
 
@@ -116,7 +116,7 @@ class CompanionForegroundService : Service() {
 
     companion object {
         private const val CHANNEL_ID = "even_companion_mode"
-        private const val ACTION_SET_MODE = "com.example.demo_ai_even.action.SET_MODE"
+        private const val ACTION_SET_MODE = "com.eddie.evencompanion.action.SET_MODE"
         private const val EXTRA_MODE_LABEL = "modeLabel"
         private const val NOTIFICATION_ID = 4102
 

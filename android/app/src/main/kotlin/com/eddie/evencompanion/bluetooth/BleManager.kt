@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.bluetooth
+package com.eddie.evencompanion.bluetooth
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -19,11 +19,11 @@ import android.content.IntentFilter
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
-import com.example.demo_ai_even.cpp.Cpp
-import com.example.demo_ai_even.model.BleDevice
-import com.example.demo_ai_even.model.BlePairDevice
-import com.example.demo_ai_even.service.GlassesCaptureRecorder
-import com.example.demo_ai_even.utils.ByteUtil
+import com.eddie.evencompanion.cpp.Cpp
+import com.eddie.evencompanion.model.BleDevice
+import com.eddie.evencompanion.model.BlePairDevice
+import com.eddie.evencompanion.service.GlassesCaptureRecorder
+import com.eddie.evencompanion.utils.ByteUtil
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope

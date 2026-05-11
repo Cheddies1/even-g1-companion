@@ -31,7 +31,14 @@
       "Bash(powershell -Command '@'\\\\'' *)",
       "Bash(powershell -Command 'Get-Content -Raw $env:TEMP\\\\qn_prompt.txt | codex exec -s read-only -')",
       "Bash(./gradlew :app:compileDebugKotlin)",
-      "Bash(sort -t: -k2 -n)"
+      "Bash(sort -t: -k2 -n)",
+      "Bash(grep -v \":0$\")",
+      "Bash(ls android/app/src/androidTest)",
+      "Bash(ls android/app/src/test)",
+      "Bash(ls android/app/proguard-rules.pro)",
+      "Bash(xargs grep -l \"com\\\\.example\\\\.demo_ai_even\")",
+      "Bash(grep -r \"demo_ai_even\" lib/ android/app/src docs/ pubspec.yaml)",
+      "Bash(grep -r \"Java_com_example\" android/app/src/main/cpp/)"
     ]
   }
 }

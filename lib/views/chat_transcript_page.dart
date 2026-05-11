@@ -1,6 +1,6 @@
-import 'package:demo_ai_even/models/chat_message_record.dart';
-import 'package:demo_ai_even/models/chat_session_record.dart';
-import 'package:demo_ai_even/services/chat_history_store.dart';
+import 'package:even_companion/models/chat_message_record.dart';
+import 'package:even_companion/models/chat_session_record.dart';
+import 'package:even_companion/services/chat_history_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 

@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.utils
+package com.eddie.evencompanion.utils
 
 object ByteUtil {
 

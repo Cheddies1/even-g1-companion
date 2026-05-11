@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:demo_ai_even/services/app_log.dart';
+import 'package:even_companion/services/app_log.dart';
 
 // ---------------------------------------------------------------------------
 // Manoeuvre classification

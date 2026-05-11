@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/assistant_backend_config.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/assistant_backend_config.dart';
 import 'package:dio/dio.dart';
 
 /// Cleans up raw speech-to-text transcripts into tidy notes.

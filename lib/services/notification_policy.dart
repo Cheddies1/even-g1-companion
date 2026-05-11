@@ -1,5 +1,5 @@
-import 'package:demo_ai_even/models/companion_notification.dart';
-import 'package:demo_ai_even/services/notification_settings_store.dart';
+import 'package:even_companion/models/companion_notification.dart';
+import 'package:even_companion/services/notification_settings_store.dart';
 
 enum NotificationDisposition {
   blocked,
@@ -14,7 +14,7 @@ class NotificationPolicy {
   NotificationPolicy._();
 
   static const Set<String> _blockedPackages = {
-    'com.example.demo_ai_even',
+    'com.eddie.evencompanion',
   };
 
   static const Set<String> _protectedPackages = {

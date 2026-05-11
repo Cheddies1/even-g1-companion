@@ -1,11 +1,11 @@
-package com.example.demo_ai_even.model
+package com.eddie.evencompanion.model
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.os.Build
 import android.util.Log
-import com.example.demo_ai_even.bluetooth.BleManager
+import com.eddie.evencompanion.bluetooth.BleManager
 
 @SuppressLint("MissingPermission")
 data class BleDevice(

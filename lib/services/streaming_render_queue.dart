@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:demo_ai_even/services/app_log.dart';
+import 'package:even_companion/services/app_log.dart';
 
 /// Paced display queue for streaming assistant text to the glasses.
 ///

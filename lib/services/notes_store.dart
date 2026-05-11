@@ -1,4 +1,4 @@
-import 'package:demo_ai_even/models/note.dart';
+import 'package:even_companion/models/note.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';

@@ -1,11 +1,11 @@
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/controllers/evenai_model_controller.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/app_settings_store.dart';
-import 'package:demo_ai_even/services/chat_history_store.dart';
-import 'package:demo_ai_even/services/companion_controller.dart';
-import 'package:demo_ai_even/services/notes_store.dart';
-import 'package:demo_ai_even/views/home_page.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/controllers/evenai_model_controller.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/app_settings_store.dart';
+import 'package:even_companion/services/chat_history_store.dart';
+import 'package:even_companion/services/companion_controller.dart';
+import 'package:even_companion/services/notes_store.dart';
+import 'package:even_companion/views/home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 

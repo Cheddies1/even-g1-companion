@@ -86,24 +86,6 @@ Working, but still needs real-world observation:
 
 ## Backlog — Unprioritised
 
-### package-rename: Rename package from com.example to com.eddie.evencompanion
-- **Status**: Backlog
-- **Priority**: High
-- **Context**: The app still carries its forked-from-example package name (`com.example.demo_ai_even`). The project has long since matured past that origin and the name is actively annoying. Target application ID: `com.eddie.evencompanion` (exact name Eddie's call). Small in terms of logic but touches many files across Android and Flutter.
-- **Scope**:
-  - Android: `AndroidManifest.xml`, Kotlin source directory tree (`com/example/demo_ai_even/` → `com/eddie/evencompanion/`), all Kotlin `package` declarations, `build.gradle` / `build.gradle.kts` `applicationId` and `namespace`, any R8/ProGuard rules that reference the old package.
-  - Flutter/Dart: any platform-channel method channel names that embed the package string; `pubspec.yaml` if it carries a package reference.
-  - iOS: bundle identifier, if iOS is in scope.
-  - Residual strings: `Files Most Likely Relevant Next` paths in this worklist reference `com/example/demo_ai_even/` — update after rename.
-- **Acceptance**:
-  - [ ] Application ID is `com.eddie.evencompanion` (or the name Eddie confirms) in `build.gradle` and `AndroidManifest.xml`.
-  - [ ] All Kotlin files carry the new `package com.eddie.evencompanion[.subpackage]` declaration; no `com.example` strings remain in source or config.
-  - [ ] App builds clean (`flutter build apk` or equivalent) with no residual reference errors.
-  - [ ] App installs and runs on device after manual uninstall of the old package.
-  - [ ] All BLE functionality works post-reinstall (re-pairing may be required and is accepted).
-  - [ ] R8/ProGuard rules (if any reference the old name) updated and release build confirmed clean.
-- **Notes**: The OS treats a package rename as a new app — uninstall of the old package before install is required. Eddie is aware and accepts this. Any `SharedPreferences` or SQLite DB data keyed to the old package path will not carry over automatically; confirm whether migration is needed (notes store, settings). Cross-ref: file paths in the `Files Most Likely Relevant Next` section and in `BLE stability — Tier 1` Done entry (hardcoded `com/example/demo_ai_even/` paths) will need updating in docs too.
-
 ### dashboard-injection: Dashboard content injection
 - **Status**: Backlog
 - **Priority**: Low
@@ -131,7 +113,7 @@ Working, but still needs real-world observation:
   - System UI side: `metaData=The Wee Free Men, Chapter 7: First Sight and Second Thoughts, Terry Pratchett` — full metadata available in the `MediaSession`
 - **Proposed fix**: Enhance `RecentNotificationsListenerService.kt` to detect `MediaStyle` notifications and, when standard title/text fields are empty, fall back to extracting `MediaMetadata.METADATA_KEY_TITLE` and `MediaMetadata.METADATA_KEY_ARTIST` from the notification's associated `MediaSession`. The `MediaSession.Token` is available in notification extras under `android.mediaSession`.
 - **Acceptance**: Audible (and similarly-behaving apps) produce a non-empty title/text pair that the Now Playing feature can display on the glasses. Apps that already populate standard notification fields (Spotify, YouTube Music, Podcast Addict) are unaffected.
-- **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Other audiobook/podcast apps may behave similarly and would benefit automatically. Files likely touched: `android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt`, possibly `lib/models/companion_notification.dart` if new fields are added for media metadata.
+- **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Other audiobook/podcast apps may behave similarly and would benefit automatically. Files likely touched: `android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt`, possibly `lib/models/companion_notification.dart` if new fields are added for media metadata.
 
 ### ghost-listening-screen: ~~Investigate~~ Root cause identified — `0x18` is vendor-demo legacy
 - **Status**: Done (Glance paths fixed, 2026-05-08). Awaiting extended observation before fanning out.
@@ -196,7 +178,7 @@ Working, but still needs real-world observation:
 - **Priority**: Medium
 - **Context**: In the 2026-05-11 reconnect-storm capture, every successful reconnection survived only ~6 ms before dropping again. Same `clientIf`s repeatedly connect → disconnect with `status=0` (clean teardown) at ~280-390 cycles/sec. The `ble-reconnect-pacing` fix makes this survivable but does not address the root cause. Candidates: `discoverServices`/MTU/descriptor write tripping an error path; `autoConnect=true` racing with a still-tearing-down prior gatt; G1 firmware kicking the link under load; bond state churn.
 - **Acceptance**: Identify why the freshly-established BLE connection drops within ~6 ms, and either fix it or document it as a known device-side behaviour we tolerate.
-- **Notes**: Best investigated during the next field-disconnect event with `ble-reconnect-pacing` in place — fewer cycles/sec will make the logs far more readable. Also covers the secondary Kotlin cleanup: `reconnectInFlight.remove(lr)` currently clears in `finally` after the synchronous `connectGatt` returns (`android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt:289`); it should hold until the callback settles (CONNECTED success or terminal DISCONNECTED). Not load-bearing now that the Flutter cooldown gates the rate, but worth tidying in this pass.
+- **Notes**: Best investigated during the next field-disconnect event with `ble-reconnect-pacing` in place — fewer cycles/sec will make the logs far more readable. Also covers the secondary Kotlin cleanup: `reconnectInFlight.remove(lr)` currently clears in `finally` after the synchronous `connectGatt` returns (`android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt:289`); it should hold until the callback settles (CONNECTED success or terminal DISCONNECTED). Not load-bearing now that the Flutter cooldown gates the rate, but worth tidying in this pass.
 
 ### ble-hci-connection-params: Extend btsnoop parser to surface HCI LE Connection Update events
 - **Status**: Backlog
@@ -272,6 +254,20 @@ Working, but still needs real-world observation:
 
 ## Recently Done
 
+### package-rename: Package rename com.example.demo_ai_even → com.eddie.evencompanion (2026-05-11)
+Full cross-language rename across Android + Dart. 13 Kotlin files moved (`git mv`) and package/import declarations updated; JNI C++ symbol names in `liblc3.cpp` updated (4 functions); `build.gradle` `applicationId` + `namespace` updated; `pubspec.yaml` `name:` updated to `even_companion`; 45 Dart files updated from `package:demo_ai_even/` to `package:even_companion/`; docs updated. No `com.example` strings remain in source, config, or docs.
+
+**Acceptance checklist:**
+- [x] `applicationId` and `namespace` are `com.eddie.evencompanion` in `build.gradle`.
+- [x] All Kotlin files carry `package com.eddie.evencompanion[.subpackage]`; no `com.example` strings remain in source or config.
+- [x] JNI C++ symbol names updated (`Java_com_eddie_evencompanion_cpp_Cpp_*`).
+- [x] `pubspec.yaml` `name: even_companion`; all Dart imports use `package:even_companion/`.
+- [x] Doc file-path references updated in `current-architecture.md`, `current-worklist.md`, `protocol-reference.md`.
+- [ ] App installs and runs on device after manual uninstall of the old package.
+- [ ] All BLE functionality works post-reinstall (re-pairing may be required and is accepted).
+
+Files changed: `android/app/build.gradle`, `android/app/src/main/cpp/liblc3.cpp`, 13 Kotlin files (moved + updated), `pubspec.yaml`, 45 Dart files, 3 doc files.
+
 ### ble-single-leg-disconnect: Single-leg disconnect robustness (2026-05-10)
 Root cause: only the "both legs down" path triggered auto-reconnect; a single-leg drop was not handled. Fixed across two commits (`2ba1e31` initial fix, `ff20b98` Codex hardening).
 
@@ -281,7 +277,7 @@ Root cause: only the "both legs down" path triggered auto-reconnect; a single-le
 - 30-second watchdog timer added to recover from a stuck `autoConnect`.
 - `forceReconnect()` now resets stale per-leg health state before attempting reconnect.
 
-Files changed: `android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt`, `lib/ble_manager.dart`.
+Files changed: `android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt`, `lib/ble_manager.dart`.
 
 ### quicknotes-multi-list: QuickNotes multi-list categorisation (2026-05-09)
 Three-category auto-classification via GPT piggyback on tidy step + keyword regex fallback. TabBar UI with move-between-categories picker. Schema migration v1→v2.
@@ -323,7 +319,7 @@ Addressed day-over-day BLE link decay ("works fine until it doesn't") by fixing 
 - `createBond()` guarded by `bondState != BOND_BONDED` to prevent duplicate bond attempts.
 - `BroadcastReceiver` for `ACTION_BOND_STATE_CHANGED` registered; observes bonding outcome and surfaces `bond_failed` to Flutter.
 
-Files changed: `android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt`, `android/app/src/main/kotlin/com/example/demo_ai_even/MainActivity.kt`.
+Files changed: `android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt`, `android/app/src/main/kotlin/com/eddie/evencompanion/MainActivity.kt`.
 
 **Build clean. Awaiting on-device validation** — this entry will be updated once hardware testing is confirmed.
 
@@ -583,4 +579,4 @@ Good first prompt pattern:
 - [lib/services/navigate_service.dart](../lib/services/navigate_service.dart)
 - [lib/services/features_services.dart](../lib/services/features_services.dart)
 - [lib/controllers/bmp_update_manager.dart](../lib/controllers/bmp_update_manager.dart)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt)

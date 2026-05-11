@@ -1,5 +1,5 @@
-import 'package:demo_ai_even/models/companion_notification.dart';
-import 'package:demo_ai_even/models/notification_package_preference.dart';
+import 'package:even_companion/models/companion_notification.dart';
+import 'package:even_companion/models/notification_package_preference.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';

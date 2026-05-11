@@ -145,7 +145,7 @@ Owns:
 ### QuickNote
 
 New files (2026-05-08 / 2026-05-09):
-- [android/.../bluetooth/QuickNoteAudioBuffer.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/QuickNoteAudioBuffer.kt)
+- [android/.../bluetooth/QuickNoteAudioBuffer.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/QuickNoteAudioBuffer.kt)
 - [lib/services/quick_note_capture_service.dart](../lib/services/quick_note_capture_service.dart)
 - [lib/services/quick_note_tidy_service.dart](../lib/services/quick_note_tidy_service.dart)
 - [lib/services/quick_note_classifier.dart](../lib/services/quick_note_classifier.dart)
@@ -419,8 +419,8 @@ Input paths:
 - idle-only right-hold QuickNote POC via right-leg `R21`
 
 Notification path:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt)
 - [lib/ble_manager.dart](../lib/ble_manager.dart)
 
 Current behaviour:
@@ -499,7 +499,7 @@ Key protocol helper:
 - [lib/services/proto.dart](../lib/services/proto.dart)
 
 Native BLE manager:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt)
 
 Key preserved behaviours:
 - dual-leg scan/connect
@@ -593,7 +593,7 @@ New methods added to `BleManager` for this feature:
 ### Native BLE lifecycle (Android)
 
 The `BluetoothGatt` lifecycle in
-[android/.../bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
+[android/.../bluetooth/BleManager.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt)
 is now strictly managed to prevent GATT resource exhaustion and silent setup
 failures. Prior to the 2026-05-08 fix, several native GATT lifecycle bugs were
 the dominant cause of long-term BLE instability — exhausting Android's per-app
@@ -679,16 +679,16 @@ Tilt-up intent gating:
 ## Notification ingestion
 
 Native Android listener:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt)
 
 Native rolling store:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/notifications/NotificationFeedStore.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/notifications/NotificationFeedStore.kt)
 
 Flutter model:
 - [lib/models/companion_notification.dart](../lib/models/companion_notification.dart)
 
 Bridge methods/events:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt)
 
 This listener path is a core foundation for both Glance and Navigate.
 
@@ -722,7 +722,7 @@ Classification order in `classify()`: `blocked` → `callAbsorbed` → protected
 The app is designed to keep functioning as a companion app while backgrounded.
 
 Foreground service:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt)
 
 Manifest/service registration:
 - [android/app/src/main/AndroidManifest.xml](../android/app/src/main/AndroidManifest.xml)
@@ -735,13 +735,13 @@ Current role:
 This is intentionally minimal, but it is part of the current architecture rather than a future bolt-on.
 
 Foreground service note:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt) uses `specialUse`
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt) uses `specialUse`
 - `connectedDevice` was the wrong foreground service type for app startup behaviour on the target Android environment
 
 ## Capture audio path
 
 Native recorder:
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt](../android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt)
 
 Decode path:
 - [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp)

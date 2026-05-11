@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:demo_ai_even/services/assistant_backend_config.dart';
+import 'package:even_companion/services/assistant_backend_config.dart';
 import 'package:dio/dio.dart';
 
 class OpenAiTranscriptionService {

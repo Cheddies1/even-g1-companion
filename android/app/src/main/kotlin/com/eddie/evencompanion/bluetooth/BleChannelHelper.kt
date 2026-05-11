@@ -1,13 +1,13 @@
-package com.example.demo_ai_even.bluetooth
+package com.eddie.evencompanion.bluetooth
 
 import android.util.Log
-import com.example.demo_ai_even.MainActivity
-import com.example.demo_ai_even.cpp.Cpp
-import com.example.demo_ai_even.notifications.RecentNotificationsListenerService
-import com.example.demo_ai_even.service.CompanionForegroundService
-import com.example.demo_ai_even.service.GlassesCaptureRecorder
-import com.example.demo_ai_even.model.BlePairDevice
-import com.example.demo_ai_even.notifications.NotificationFeedStore
+import com.eddie.evencompanion.MainActivity
+import com.eddie.evencompanion.cpp.Cpp
+import com.eddie.evencompanion.notifications.RecentNotificationsListenerService
+import com.eddie.evencompanion.service.CompanionForegroundService
+import com.eddie.evencompanion.service.GlassesCaptureRecorder
+import com.eddie.evencompanion.model.BlePairDevice
+import com.eddie.evencompanion.notifications.NotificationFeedStore
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.EventChannel.EventSink
@@ -277,7 +277,7 @@ class BleMethodChannel(
      * Returns the app's primary external files directory path as a [String].
      *
      * This is `Context.getExternalFilesDir(null)` —
-     * typically `/sdcard/Android/data/com.example.demo_ai_even/files`.
+     * typically `/sdcard/Android/data/com.eddie.evencompanion/files`.
      * The directory is accessible via `adb pull` without root.
      * Returns `null` if external storage is unavailable.
      */

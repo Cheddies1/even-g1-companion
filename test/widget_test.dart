@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:demo_ai_even/main.dart';
+import 'package:even_companion/main.dart';
 
 void main() {
   testWidgets('app renders companion home screen', (WidgetTester tester) async {

@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/models/companion_notification.dart';
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/device_status_service.dart';
-import 'package:demo_ai_even/services/notification_policy.dart';
-import 'package:demo_ai_even/services/proto.dart';
-import 'package:demo_ai_even/services/text_service.dart';
+import 'package:even_companion/ble_manager.dart';
+import 'package:even_companion/models/companion_notification.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/device_status_service.dart';
+import 'package:even_companion/services/notification_policy.dart';
+import 'package:even_companion/services/proto.dart';
+import 'package:even_companion/services/text_service.dart';
 
 class GlanceService {
   GlanceService._();

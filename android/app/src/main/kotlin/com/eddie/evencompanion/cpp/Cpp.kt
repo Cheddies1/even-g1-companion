@@ -1,4 +1,4 @@
-package com.example.demo_ai_even.cpp
+package com.eddie.evencompanion.cpp
 
 object Cpp {
 

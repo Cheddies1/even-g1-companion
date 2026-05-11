@@ -1,11 +1,11 @@
-package com.example.demo_ai_even
+package com.eddie.evencompanion
 
 import android.os.Bundle
 import android.util.Log
-import com.example.demo_ai_even.bluetooth.BleChannelHelper
-import com.example.demo_ai_even.bluetooth.BleManager
-import com.example.demo_ai_even.bluetooth.BlePermissionUtil
-import com.example.demo_ai_even.cpp.Cpp
+import com.eddie.evencompanion.bluetooth.BleChannelHelper
+import com.eddie.evencompanion.bluetooth.BleManager
+import com.eddie.evencompanion.bluetooth.BlePermissionUtil
+import com.eddie.evencompanion.cpp.Cpp
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel

@@ -1,8 +1,8 @@
 import 'dart:async';
 
-import 'package:demo_ai_even/services/app_log.dart';
-import 'package:demo_ai_even/services/app_settings_store.dart';
-import 'package:demo_ai_even/services/proto.dart';
+import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/app_settings_store.dart';
+import 'package:even_companion/services/proto.dart';
 import 'package:flutter/foundation.dart';
 
 /// Worn / cradle state derived from `0xF5` sensor sub-codes.
