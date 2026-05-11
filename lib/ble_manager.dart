@@ -117,7 +117,8 @@ class BleManager {
     'L': const LegConnectionState(lr: 'L'),
     'R': const LegConnectionState(lr: 'R'),
   };
-  static const _maxReconnectAttempts = 3;
+  static const _maxReconnectAttempts = 5;
+  final Map<String, DateTime?> _lastReconnectAttemptAt = {'L': null, 'R': null};
   static const _heartbeatDegradeThreshold = 2;
   static const _heartbeatWarningAge = Duration(seconds: 20);
 
@@ -394,6 +395,8 @@ class BleManager {
       ),
       source: 'NativeDisconnect',
     );
+    _lastReconnectAttemptAt['L'] = null;
+    _lastReconnectAttemptAt['R'] = null;
 
     onStatusChanged?.call();
   }
@@ -918,6 +921,7 @@ class BleManager {
           source: 'ForceReconnectReset',
         );
       }
+      _lastReconnectAttemptAt[lr] = null;
     }
 
     String? channelNumber = _lastConnectedChannelNumber;
@@ -1241,7 +1245,10 @@ class BleManager {
                 : legState('L').status
             : LegHealthStatus.disconnected,
         reconnectInFlight: false,
-        reconnectAttempts: leftConnected ? 0 : legState('L').reconnectAttempts,
+        // Do not reset reconnectAttempts on bare connected=true: a 6 ms flap
+        // would zero the counter and defeat backoff. Only ack/heartbeat proofs
+        // a real link — those sites reset the counter.
+        reconnectAttempts: legState('L').reconnectAttempts,
         clearHeartbeatAt: !leftConnected,
         clearAckAt: !leftConnected,
       ),
@@ -1258,7 +1265,7 @@ class BleManager {
                 : legState('R').status
             : LegHealthStatus.disconnected,
         reconnectInFlight: false,
-        reconnectAttempts: rightConnected ? 0 : legState('R').reconnectAttempts,
+        reconnectAttempts: legState('R').reconnectAttempts,
         clearHeartbeatAt: !rightConnected,
         clearAckAt: !rightConnected,
       ),
@@ -1307,6 +1314,7 @@ class BleManager {
       ),
       source: 'Ack cmd=0x${cmd.toRadixString(16)}',
     );
+    _lastReconnectAttemptAt[lr] = null;
     if (recovered) {
       _scheduleTransportResync('ack-$lr');
     }
@@ -1330,6 +1338,7 @@ class BleManager {
       ),
       source: 'HeartbeatSuccess',
     );
+    _lastReconnectAttemptAt[lr] = null;
     if (recovered) {
       AppLog.info('${DateTime.now()} Transport: leg recovered -> $lr');
       _scheduleTransportResync('heartbeat-$lr');
@@ -1395,12 +1404,37 @@ class BleManager {
     }
   }
 
+  Duration _backoffFor(int attempt) {
+    const backoffs = [
+      Duration(seconds: 2),
+      Duration(seconds: 4),
+      Duration(seconds: 8),
+      Duration(seconds: 16),
+      Duration(seconds: 30),
+    ];
+    final idx = (attempt - 1).clamp(0, backoffs.length - 1);
+    return backoffs[idx];
+  }
+
   Future<void> _attemptLegReconnect(String lr) async {
     final state = legState(lr);
+    final lastAttempt = _lastReconnectAttemptAt[lr];
+    if (lastAttempt != null) {
+      final cooldown = _backoffFor(state.reconnectAttempts);
+      if (DateTime.now().difference(lastAttempt) < cooldown) {
+        AppLog.info(
+          '${DateTime.now()} Transport: reconnect cooldown active -> lr=$lr remaining=${cooldown - DateTime.now().difference(lastAttempt)}',
+          tag: 'BLE',
+        );
+        return;
+      }
+    }
+
     if (state.reconnectInFlight || state.deviceName.isEmpty) {
       return;
     }
     final attempt = state.reconnectAttempts + 1;
+    _lastReconnectAttemptAt[lr] = DateTime.now();
     _updateLegState(
       lr,
       state.copyWith(
@@ -1410,7 +1444,8 @@ class BleManager {
       source: 'ReconnectAttempt',
     );
     AppLog.info(
-        '${DateTime.now()} Transport: reconnect attempt -> lr=$lr attempt=$attempt');
+        '${DateTime.now()} Transport: reconnect attempt -> lr=$lr attempt=$attempt',
+        tag: 'BLE');
     final accepted = await BleManager.invokeMethod<bool>(
           'reconnectGlassesLeg',
           {'lr': lr},

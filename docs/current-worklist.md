@@ -35,7 +35,17 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **QuickNote polish** (Next #2).
+### ble-reconnect-pacing: BLE reconnect storm — per-leg cooldown and exponential backoff
+- **Status**: In Flight (uncommitted local changes)
+- **Context**: Field capture `logs/disconnect-race.txt` (2026-05-11) showed a reconnect storm following a single-leg disconnect: 5795 `connectGatt` calls in ~120 s, 4488 returning `GATT_NO_RESOURCES` (status=257), peak 387 connection-state events/sec. Logcat ring buffer filled with 200k+ BLE-stack lines/min, pushing app logs out entirely. Root cause: unpaced `STATE_DISCONNECTED → _attemptLegReconnect → connectGatt` loop in `lib/ble_manager.dart`, amplified by bare `connected=true` notifications resetting `reconnectAttempts = 0` every 6 ms flap.
+- **What's done (uncommitted)**:
+  - Per-leg cooldown gate inside `_attemptLegReconnect` via new `_lastReconnectAttemptAt` map.
+  - Exponential backoff schedule 2/4/8/16/30 s capped, indexed by attempt count. `_maxReconnectAttempts` bumped 3 → 5.
+  - Removed `reconnectAttempts = 0` reset from `_handleConnectionStateChanged` (both L and R branches) — only `_recordLegAck` and `_recordHeartbeatSuccess` reset the counter (proof of end-to-end link).
+  - `_lastReconnectAttemptAt[lr]` cleared in `_onGlassesDisconnected`, `forceReconnect`, `_recordLegAck`, `_recordHeartbeatSuccess` so recovery and clean-slate paths are not artificially gated.
+  - Codex peer-reviewed; P2 finding (missing cooldown clears in `_onGlassesDisconnected`/`forceReconnect`) was addressed.
+- **Acceptance**: Field-verified that a single-leg disconnect triggers ≤5 reconnect attempts with 2/4/8/16/30 s spacing, no `GATT_NO_RESOURCES` storm in logcat, and the app's own log lines remain visible (not overwritten by BLE-stack noise).
+- **Notes**: Kotlin in-flight guard refinement (move `reconnectInFlight.remove` to fire from gatt callback rather than after the synchronous `connectGatt` return at `android/.../BleManager.kt:289`) deliberately deferred — see `ble-fast-flap-investigation` in Backlog. Files: `lib/ble_manager.dart`.
 
 ---
 
@@ -180,6 +190,13 @@ Nothing actively in flight. Next priority: **Navigate cleanup** (Next #1) or **Q
   - [ ] Degraded-leg detection thresholds tightened: warning age 20 s → 6 s, consecutive-miss threshold 2 → 3 (only safe once Tier 2's 2 s cadence is confirmed stable).
   - [ ] `requestConnectionPriority(HIGH)` added during nav-card replay and `0x52` streaming sessions; returns to `BALANCED` when done.
 - **Notes**: Touches `lib/ble_manager.dart` (Flutter side) and `BleManager.kt` (native side for connection priority). Depends on Tier 2 being in place before adjusting detection thresholds.
+
+### ble-fast-flap-investigation: Investigate why freshly-established BLE connections drop within ~6 ms
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: In the 2026-05-11 reconnect-storm capture, every successful reconnection survived only ~6 ms before dropping again. Same `clientIf`s repeatedly connect → disconnect with `status=0` (clean teardown) at ~280-390 cycles/sec. The `ble-reconnect-pacing` fix makes this survivable but does not address the root cause. Candidates: `discoverServices`/MTU/descriptor write tripping an error path; `autoConnect=true` racing with a still-tearing-down prior gatt; G1 firmware kicking the link under load; bond state churn.
+- **Acceptance**: Identify why the freshly-established BLE connection drops within ~6 ms, and either fix it or document it as a known device-side behaviour we tolerate.
+- **Notes**: Best investigated during the next field-disconnect event with `ble-reconnect-pacing` in place — fewer cycles/sec will make the logs far more readable. Also covers the secondary Kotlin cleanup: `reconnectInFlight.remove(lr)` currently clears in `finally` after the synchronous `connectGatt` returns (`android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt:289`); it should hold until the callback settles (CONNECTED success or terminal DISCONNECTED). Not load-bearing now that the Flutter cooldown gates the rate, but worth tidying in this pass.
 
 ### ble-hci-connection-params: Extend btsnoop parser to surface HCI LE Connection Update events
 - **Status**: Backlog

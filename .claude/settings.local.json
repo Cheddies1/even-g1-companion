@@ -21,7 +21,17 @@
       "Bash(flutter test *)",
       "Bash(flutter pub *)",
       "Bash(dart run *)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(Out-String)",
+      "Bash(dart analyze *)",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\EddieJohnson\\\\.claude\\\\projects\\\\C--Users-EddieJohnson-projects-EvenDemoApp\\\\5e4527df-4c95-4849-840a-e7bba3cd16b9\\\\tool-results\\\\biqc3wqru.txt' -Tail 300\")",
+      "Bash(n=== NEW FILE: QuickNoteAudioBuffer.kt ===)",
+      "Bash(n=== SPEC DOC ===)",
+      "Bash(powershell -Command 'git diff HEAD -- android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt | Out-File -Encoding utf8 $env:TEMP\\\\qn_diff.txt; Add-Content -Path $env:TEMP\\\\qn_diff.txt -Value '\\\\''__CMDSUB_OUTPUT__n'\\\\''; Get-Content android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/QuickNoteAudioBuffer.kt | Add-Content -Path $env:TEMP\\\\qn_diff.txt; Add-Content -Path $env:TEMP\\\\qn_diff.txt -Value '\\\\''__CMDSUB_OUTPUT__n'\\\\''; Get-Content docs/FINDINGS-quicknote.md | Add-Content -Path $env:TEMP\\\\qn_diff.txt; \\(Get-Item $env:TEMP\\\\qn_diff.txt\\).Length')",
+      "Bash(powershell -Command '@'\\\\'' *)",
+      "Bash(powershell -Command 'Get-Content -Raw $env:TEMP\\\\qn_prompt.txt | codex exec -s read-only -')",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(sort -t: -k2 -n)"
     ]
   }
 }
