@@ -444,6 +444,25 @@ class ChatService {
 
   // -- Helpers -------------------------------------------------------------
 
+  /// Called when the BLE transport is lost (full or single-leg disconnect).
+  /// Clears runtime flags and cancels the render queue so that stale
+  /// _isListening/_isThinking state cannot block display recovery.
+  /// Must not perform any BLE IO — transport is gone.
+  void handleTransportLost() {
+    _isListening = false;
+    _isThinking = false;
+    _lastSubmitStartedAt = null;
+    markDisplayVisible(value: false, source: 'Chat.handleTransportLost');
+    // Bump the session version so any in-flight completion callback finds
+    // _isCurrentRequest() == false and exits its hot loop cleanly.
+    _sessionVersion++;
+    _cancelRenderQueue();
+    AppLog.info(
+      '${DateTime.now()} transport lost — flags cleared',
+      tag: 'Chat',
+    );
+  }
+
   bool _isCurrentRequest(int requestVersion) {
     return _modeActive && requestVersion == _sessionVersion;
   }

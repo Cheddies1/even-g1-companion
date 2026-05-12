@@ -531,7 +531,12 @@ Reconnect handling (per-leg):
 - degraded legs trigger bounded reconnect attempts through the native bridge
 - single-leg disconnects also trigger automatic reconnect: `_applyConnectionPayload()` has a
   `wasConnected && isConnected` branch that detects one leg going down whilst the other
-  remains up and calls `_attemptLegReconnect()` immediately for the dropped leg
+  remains up and calls `_attemptLegReconnect()` immediately for the dropped leg; it also
+  calls `handleTransportLost()` on each affected service (`GlanceAssistantService`,
+  `ChatService`, `CaptureService`) to reset in-progress session flags
+  (`_isListening`, `_isThinking`, `_isRecording`, `_isDisplayVisible`) synchronously and
+  without BLE IO — preventing stale flags from blocking self-clearing error messages after
+  the leg recovers
 - the `wasConnected` gate prevents false positives during initial connection setup, when one
   leg may be connected but the other is still mid-GATT-discovery
 - reconnect is per-leg, not always full-session teardown
@@ -559,8 +564,8 @@ Full-session disconnect detection and auto-reconnect are a distinct concern from
 
 **Dead-code fix note:** `_onGlassesDisconnected()` in `ble_manager.dart` was historically dead code. Android's GATT stack routes disconnect events through `_onGlassesConnectionStateChanged()` / `_applyConnectionPayload()`, not through `_onGlassesDisconnected()`. As a result, timer cleanup (heartbeat, reconnect monitor) never ran on real disconnects. This has been fixed: `_applyConnectionPayload()` now handles two distinct disconnect cases:
 
-- `wasConnected && !isConnected` — full disconnect: performs timer cleanup and triggers the full-session `_maybeStartAutoReconnect()` backoff sequence
-- `wasConnected && isConnected` — single-leg disconnect: the other leg is still up; calls `_attemptLegReconnect()` directly for the dropped leg without tearing down the full session
+- `wasConnected && !isConnected` — full disconnect: performs timer cleanup, calls `handleTransportLost()` on each service to reset in-progress session flags, and triggers the full-session `_maybeStartAutoReconnect()` backoff sequence
+- `wasConnected && isConnected` — single-leg disconnect: the other leg is still up; calls `handleTransportLost()` on each service, then `_attemptLegReconnect()` for the dropped leg without tearing down the full session
 
 The shared `wasConnected` gate prevents either branch from firing during initial connection setup.
 
@@ -618,6 +623,15 @@ time. The sequence is:
 `onServicesDiscovered`: it updates the `BlePairDevice` connection state, fires
 the initial heartbeat (`0xf4 0x01`), and calls `flutterGlassesConnected` when
 both legs are up.
+
+**Voice-guard timing note.** `flutterGlassesConnected` triggers Flutter's
+`_applyConnectionPayload`, which calls `CompanionController.noteTransportConnected`
+on any leg `connected=false → true` transition — including single-leg reconnects,
+not only when both legs report ready. This ensures the 2-second voice-gesture
+guard (`_ignoreVoiceGesturesUntil`) is armed before any `F5 17` (voice-start)
+events from the newly-connected leg are processed. Previously the guard was only
+armed when both legs were simultaneously up, leaving a window during single-leg
+reconnects where a firmware voice event could arrive before the guard re-engaged.
 
 **Lifecycle invariants.**
 - `STATE_DISCONNECTED` in `onConnectionStateChange` now calls `gatt.close()` on

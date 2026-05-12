@@ -3,9 +3,12 @@ import 'package:even_companion/models/app_mode.dart';
 import 'package:even_companion/services/app_settings_store.dart';
 import 'package:even_companion/services/ble.dart';
 import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/capture_service.dart';
+import 'package:even_companion/services/chat_service.dart';
 import 'package:even_companion/services/companion_controller.dart';
 import 'package:even_companion/services/device_status_service.dart';
 import 'package:even_companion/services/evenai.dart';
+import 'package:even_companion/services/glance_assistant_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/notes_store.dart';
 import 'package:even_companion/services/quick_note_capture_service.dart';
@@ -369,6 +372,9 @@ class BleManager {
     _reconnectMonitorTimer = null;
     _settingsReconcileFired = false;
     DeviceStatusService.get.reset(source: 'GlassesDisconnected');
+    GlanceAssistantService.get.handleTransportLost();
+    ChatService.get.handleTransportLost();
+    CaptureService.get.handleTransportLost();
     _updateLegState(
       'L',
       legState('L').copyWith(
@@ -1219,6 +1225,11 @@ class BleManager {
 
   void _applyConnectionPayload(Map<String, dynamic> payload) {
     final wasConnected = isConnected;
+    // Capture per-leg state before applying the new payload so we can detect
+    // up-transitions (arm voice guard) and down-transitions (reset service flags).
+    final prevLeftConnected = legState('L').connected;
+    final prevRightConnected = legState('R').connected;
+
     final channelNumber = (payload['channelNumber'] as String?)?.trim() ??
         _lastConnectedChannelNumber;
     if (channelNumber != null && channelNumber.isNotEmpty) {
@@ -1233,6 +1244,34 @@ class BleManager {
         payload['leftConnected'] as bool? ?? legState('L').connected;
     final rightConnected =
         payload['rightConnected'] as bool? ?? legState('R').connected;
+
+    // Detect per-leg transitions before the state is committed.
+    final leftCameUp = !prevLeftConnected && leftConnected;
+    final rightCameUp = !prevRightConnected && rightConnected;
+    final anyLegDropped = (prevLeftConnected && !leftConnected) ||
+        (prevRightConnected && !rightConnected);
+
+    // Arm the voice guard immediately on any leg-up transition so that F5
+    // voice events arriving from the newly-connected leg are suppressed for
+    // the standard 2-second settle window.
+    if (leftCameUp) {
+      CompanionController.get.noteTransportConnected(
+        source: 'leg-reconnect-L',
+      );
+    }
+    if (rightCameUp) {
+      CompanionController.get.noteTransportConnected(
+        source: 'leg-reconnect-R',
+      );
+    }
+
+    // Clear stale service flags on any leg drop so that _scheduleClear()
+    // timers are not blocked by leftover _isListening/_isThinking state.
+    if (anyLegDropped) {
+      GlanceAssistantService.get.handleTransportLost();
+      ChatService.get.handleTransportLost();
+      CaptureService.get.handleTransportLost();
+    }
 
     _updateLegState(
       'L',

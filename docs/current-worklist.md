@@ -47,6 +47,20 @@ Working, but still needs real-world observation:
 - **Acceptance**: Field-verified that a single-leg disconnect triggers ≤5 reconnect attempts with 2/4/8/16/30 s spacing, no `GATT_NO_RESOURCES` storm in logcat, and the app's own log lines remain visible (not overwritten by BLE-stack noise).
 - **Notes**: Kotlin in-flight guard refinement (move `reconnectInFlight.remove` to fire from gatt callback rather than after the synchronous `connectGatt` return at `android/.../BleManager.kt:289`) deliberately deferred — see `ble-fast-flap-investigation` in Backlog. Files: `lib/ble_manager.dart`.
 
+### ble-mic-on-reconnect-ghost: "Mic start failed" ghost notification on single-leg reconnect
+- **Status**: In Flight (uncommitted local changes; APK built at v1.0.1+2, field testing pending)
+- **Context**: With `ble-reconnect-pacing` (v1.0.0+1) stabilising the reconnect cycle, a latent symptom surfaced: on single-leg disconnect/reconnect the glasses frequently show a persistent "Mic start failed" notification. Codex peer review identified three interacting causes: (1) voice guard armed too late — `BleManager.onServicesDiscovered` enables BLE notifications before `markLegReady` signals Flutter the leg is up, so an F5 17/23 can land before `_ignoreVoiceGesturesUntil` re-arms; (2) stale `_isListening`/`_isThinking`/`_isRecording` flags left by a mid-session disconnect block `_scheduleClear`, preventing the error text from auto-clearing; (3) missing voice guard coverage on `_handleChatGesture` case 2 and `_handleCaptureGesture` case 2. Codex also caught `_isDisplayVisible` not reset in Glance/Chat — fixed in the same change. Per `docs/versioning.md` this is a PATCH bump (1.0.0+1 → 1.0.1+2).
+- **What's done (uncommitted)**:
+  - `lib/ble_manager.dart` `_applyConnectionPayload` captures previous leg state and calls `CompanionController.noteTransportConnected` on any `connected=false → true` transition, arming the 2-second voice guard before any F5 events from the newly-up leg can land.
+  - New `handleTransportLost()` on `GlanceAssistantService`, `ChatService`, and `CaptureService` — flag-only, no BLE IO. Called from `_onGlassesDisconnected` (full drop) and `_applyConnectionPayload` (single-leg drop). Resets listening/thinking/recording flags plus `_isDisplayVisible`.
+  - Voice guard check extended to `_handleChatGesture` case 2 and `_handleCaptureGesture` case 2.
+- **Acceptance**:
+  - [ ] During a normal single-leg disconnect/reconnect cycle, "Mic start failed" does NOT appear on the glasses.
+  - [ ] If the symptom does still appear, it auto-clears within ~6 seconds (no longer persistent).
+  - [ ] No regressions to the working reconnect-pacing behaviour from v1.0.0+1.
+  - [ ] Glance assistant voice flow (F5 17 in Glance) still works normally when no recent reconnect.
+- **Notes**: Three-cause stack — voice-guard timing race, stale listening flags, missing belt-and-braces. Each fix is independently load-bearing. Cross-ref `ble-reconnect-pacing` (v1.0.0+1, Recently Done) — that fix made the disconnect/reconnect cycle stable enough to surface this latent bug. Cross-ref `glance-assistant-reset-on-reconnect` (Backlog) — follow-up on whether `reset()` should be split for a fuller session teardown. Files: `lib/ble_manager.dart`, `lib/services/glance_assistant_service.dart`, `lib/services/chat_service.dart`, `lib/services/capture_service.dart`.
+
 ---
 
 ## Next — Prioritised
@@ -85,6 +99,13 @@ Working, but still needs real-world observation:
 ---
 
 ## Backlog — Unprioritised
+
+### glance-assistant-reset-on-reconnect: Decide whether GlanceAssistantService.reset() should be split for transport-lost path
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: `GlanceAssistantService.reset()` performs BLE IO (`Proto.clearDisplay()`) so it cannot safely be called from the transport-lost path when the BLE link is gone. The new `handleTransportLost()` (v1.0.1+2) is a flag-only alternative covering the current symptom. If a future design needs to fully close an assistant session on transport loss — e.g. tear down response history, not just flags — the IO and non-IO halves of `reset()` would need to be separated.
+- **Acceptance**: Either confirm that flag-only teardown is the correct long-term behaviour (and close this item), or split `reset()` so the disconnect path can call the non-IO portion without BLE writes.
+- **Notes**: Surfaced by Codex during v1.0.1+2 review. Not load-bearing — the current flag-only path is sufficient for the "Mic start failed" symptom. Cross-ref `ble-mic-on-reconnect-ghost` (In Flight, v1.0.1+2).
 
 ### dashboard-injection: Dashboard content injection
 - **Status**: Backlog
@@ -127,17 +148,6 @@ Working, but still needs real-world observation:
 - **Context**: When the user dismisses the *last* carousel notification while a call is active, `GlanceService.removeNotificationByKey` calls `Proto.exit()` directly rather than falling back to the call HUD. This leaves the glasses blank mid-call, contrary to the expected "call HUD is always the idle fallback when a call is active" behaviour.
 - **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
 - **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
-
-### glance-heads-up-timings: Adaptive tilt-up intent delay in Glance mode
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: The app has a deliberate "tilt up with intent" delay before triggering the look-up function in Glance mode (show and delete the most recent notification). This guard exists because casual head movements — cracking the neck, taking a drink — can otherwise trigger the carousel accidentally. The current delay is applied uniformly on every tilt-up, but the intent filter is only necessary from idle. Once the user is actively cycling through notifications, they are already committed and the delay just adds friction.
-- **Acceptance**:
-  - [ ] **From idle** (no notification currently on screen): tilt-up retains the existing intent delay before triggering.
-  - [ ] **Mid-carousel** (a notification is on screen and the user is cycling): tilt-up triggers immediately with zero delay.
-  - [ ] **Back to idle** (display clears, carousel exhausted): the full intent delay is restored before the next tilt-up fires.
-  - [ ] No accidental triggers from casual head movements while idle.
-- **Notes**: State transition is: idle (delay) → notification displayed (zero delay) → idle (delay). The "mid-carousel" state is entered the moment a notification is shown and exited when the display clears. The carousel-active flag likely lives in `GlanceService` alongside the existing tilt-up intent logic. No protocol changes — purely a timing/state change in the gesture handling path. Cross-ref `lib/services/glance_service.dart` and `lib/services/companion_controller.dart`.
 
 ### mode-title-cards: Glance and Navigate mode entry title cards, plus Connected status card
 - **Status**: Backlog
@@ -253,6 +263,17 @@ Working, but still needs real-world observation:
 ---
 
 ## Recently Done
+
+### glance-heads-up-timings: Adaptive tilt-up intent delay in Glance mode (2026-04-13)
+Idle→active state transition for tilt-up intent delay: full delay from idle, zero delay mid-carousel, delay restored when carousel clears. Shipped in commit `c18ce37`.
+
+**Acceptance checklist:**
+- [x] **From idle**: tilt-up retains the existing intent delay before triggering.
+- [x] **Mid-carousel**: tilt-up triggers immediately with zero delay.
+- [x] **Back to idle**: the full intent delay is restored before the next tilt-up fires.
+- [x] No accidental triggers from casual head movements while idle.
+
+*Discovered already shipped during 2026-05-11 backlog review.*
 
 ### package-rename: Package rename com.example.demo_ai_even → com.eddie.evencompanion (2026-05-11)
 Full cross-language rename across Android + Dart. 13 Kotlin files moved (`git mv`) and package/import declarations updated; JNI C++ symbol names in `liblc3.cpp` updated (4 functions); `build.gradle` `applicationId` + `namespace` updated; `pubspec.yaml` `name:` updated to `even_companion`; 45 Dart files updated from `package:demo_ai_even/` to `package:even_companion/`; docs updated. No `com.example` strings remain in source, config, or docs.

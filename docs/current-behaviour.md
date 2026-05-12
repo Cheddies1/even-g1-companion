@@ -741,6 +741,11 @@ The check is gated on the session having been fully connected at least once befo
 which prevents false triggers during initial connection setup when the two legs connect a few
 milliseconds apart.
 
+When a leg drop is detected, per-service session flags (`_isListening`, `_isThinking`,
+`_isRecording`) are reset synchronously before any reconnect attempt. This prevents stale
+in-progress state from a mid-session drop from blocking self-clearing status messages (such as
+"Mic start failed") on the recovered leg.
+
 If Android's `autoConnect=true` reconnect path silently pends with no callback (a known Android
 behaviour), a 30-second watchdog clears the in-flight flag so the health monitor can retry.
 

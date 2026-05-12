@@ -117,4 +117,18 @@ class CaptureService {
     await Proto.exit();
     AppLog.info('${DateTime.now()} recording cancelled', tag: 'Capture');
   }
+
+  /// Called when the BLE transport is lost (full or single-leg disconnect).
+  /// Clears the _isRecording flag so no stale state blocks future sessions.
+  /// Must not perform any BLE IO — transport is gone.
+  void handleTransportLost() {
+    _isRecording = false;
+    _isDisplayVisible = false;
+    _displayTimer?.cancel();
+    _displayTimer = null;
+    AppLog.info(
+      '${DateTime.now()} transport lost — flags cleared',
+      tag: 'Capture',
+    );
+  }
 }

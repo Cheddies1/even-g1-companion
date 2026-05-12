@@ -229,6 +229,25 @@ class GlanceAssistantService {
     _sessionExpiryTimer = null;
   }
 
+  /// Called when the BLE transport is lost (full or single-leg disconnect).
+  /// Clears runtime state so that stale _isListening/_isThinking flags cannot
+  /// block the _scheduleClear() auto-clear once the transport recovers.
+  /// Must not perform any BLE IO — transport is gone.
+  void handleTransportLost() {
+    _isListening = false;
+    _isThinking = false;
+    _isDisplayVisible = false;
+    _displayClearTimer?.cancel();
+    _displayClearTimer = null;
+    // Bump the request version so any in-flight transcription/completion
+    // callback finds _isCurrentRequest() == false and bails cleanly.
+    _requestVersion++;
+    AppLog.info(
+      '${DateTime.now()} transport lost — flags cleared',
+      tag: 'GlanceAssistant',
+    );
+  }
+
   Future<void> _showText(String text) async {
     _displayClearTimer?.cancel();
     _isDisplayVisible = true;

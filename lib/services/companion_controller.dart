@@ -360,6 +360,10 @@ class CompanionController extends ChangeNotifier {
         }
         break;
       case 2:
+        if (_shouldIgnoreVoiceGesture()) {
+          _statusMessage = 'Capture ready';
+          break;
+        }
         final isRecording = CaptureService.get.isRecording;
         await _runTiltUpIntent(
           mode: AppMode.capture,
@@ -436,6 +440,10 @@ class CompanionController extends ChangeNotifier {
         _statusMessage = 'Chat ready';
         break;
       case 2:
+        if (_shouldIgnoreVoiceGesture()) {
+          _statusMessage = 'Chat ready';
+          break;
+        }
         await _runTiltUpIntent(
           mode: AppMode.chat,
           action: 'chat-start-listening',

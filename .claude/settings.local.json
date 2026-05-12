@@ -38,7 +38,8 @@
       "Bash(ls android/app/proguard-rules.pro)",
       "Bash(xargs grep -l \"com\\\\.example\\\\.demo_ai_even\")",
       "Bash(grep -r \"demo_ai_even\" lib/ android/app/src docs/ pubspec.yaml)",
-      "Bash(grep -r \"Java_com_example\" android/app/src/main/cpp/)"
+      "Bash(grep -r \"Java_com_example\" android/app/src/main/cpp/)",
+      "Bash(powershell *)"
     ]
   }
 }
