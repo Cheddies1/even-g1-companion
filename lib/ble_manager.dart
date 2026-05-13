@@ -9,6 +9,7 @@ import 'package:even_companion/services/companion_controller.dart';
 import 'package:even_companion/services/device_status_service.dart';
 import 'package:even_companion/services/evenai.dart';
 import 'package:even_companion/services/glance_assistant_service.dart';
+import 'package:even_companion/services/glance_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/notes_store.dart';
 import 'package:even_companion/services/quick_note_capture_service.dart';
@@ -375,6 +376,7 @@ class BleManager {
     GlanceAssistantService.get.handleTransportLost();
     ChatService.get.handleTransportLost();
     CaptureService.get.handleTransportLost();
+    GlanceService.get.handleTransportLost();
     _updateLegState(
       'L',
       legState('L').copyWith(
@@ -1271,6 +1273,7 @@ class BleManager {
       GlanceAssistantService.get.handleTransportLost();
       ChatService.get.handleTransportLost();
       CaptureService.get.handleTransportLost();
+      GlanceService.get.handleTransportLost();
     }
 
     _updateLegState(

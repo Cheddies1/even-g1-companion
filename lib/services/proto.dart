@@ -7,6 +7,7 @@ import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/evenai_proto.dart';
 import 'package:even_companion/services/nav_icon_generator.dart';
 import 'package:even_companion/services/nav_replay_data.dart';
+import 'package:even_companion/services/text_service.dart';
 import 'package:even_companion/utils/utils.dart';
 
 class _NavReplayLegStats {
@@ -564,6 +565,23 @@ class Proto {
     await BleManager.sendData(
       Uint8List.fromList([0x18]),
     );
+  }
+
+  /// Show a brief title card on the glasses, then force-clear.
+  ///
+  /// Sends [text] via the standard `0x4E` text path, holds for [duration],
+  /// then issues the `0x50 + 0x18` clear combo. Used for Glance/Navigate
+  /// mode-entry flashes and the post-reconnect screen-state reset.
+  ///
+  /// Callers are responsible for gating: this does not check session state.
+  static Future<void> showTitleCard(
+    String text, {
+    Duration duration = const Duration(milliseconds: 500),
+  }) async {
+    await TextService.get.startSendText(text);
+    await Future<void>.delayed(duration);
+    await TextService.get.stopTextSendingByOS();
+    await clearDisplay();
   }
 
   // tell the glasses to exit function to dashboard

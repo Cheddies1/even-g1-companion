@@ -235,6 +235,30 @@ class GlanceService {
     AppLog.info('${DateTime.now()} closed', tag: 'Glance');
   }
 
+  /// Reset display-state flags when the BLE transport is lost.
+  ///
+  /// Without this, `_isVisible` / `_isIdleSurfaceActive` survive a drop and
+  /// block the next notification from auto-popping (the `if (_isVisible)`
+  /// queue-silently branch in `ingestNotification`). The post-reconnect
+  /// force-clear leaves the lenses blank; this method makes the service agree.
+  ///
+  /// Must not perform any BLE IO — transport is gone. Notification queue and
+  /// call/media context are preserved so the next interaction can re-render
+  /// what we already know about.
+  void handleTransportLost() {
+    _clearTimer?.cancel();
+    _clearTimer = null;
+    _callTimer?.cancel();
+    _callTimer = null;
+    _isVisible = false;
+    _isIdleSurfaceActive = false;
+    _pendingDismissKey = null;
+    AppLog.info(
+      '${DateTime.now()} transport lost — display flags cleared',
+      tag: 'Glance',
+    );
+  }
+
   Future<bool> showIdleSurfaceIfAvailable() async {
     if (_currentCall == null) return false;
     _isIdleSurfaceActive = true;

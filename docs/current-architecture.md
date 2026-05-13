@@ -64,6 +64,9 @@ The controller owns:
 - routing into mode-specific services
 - notification event subscription
 - background-mode synchronisation with the Android foreground service
+- mode-entry title cards via `_restoreModeEntryState` → `Proto.showTitleCard(text, {duration})`
+  (Glance: always; Navigate: gated on `!hasInstruction`)
+- post-reconnect force-clear and conditional content resume via `handleTransportRecovered`
 
 Supporting model:
 - [lib/models/app_mode.dart](../lib/models/app_mode.dart)
@@ -93,6 +96,8 @@ Owns:
 - Glance-only assistant shortcut state and ephemeral follow-up context
 - media state (`_currentMedia`): updated live via `updateMedia()` when a `mediaAbsorbed` notification arrives, cleared via `clearMedia()` when that notification is removed; rendered as the `▶ Artist - Track` suffix on Glance line 1
 - call state (`_currentCall`): updated live via `updateCall()` when a `callAbsorbed` notification arrives, cleared via `clearCall()` when that notification is removed; drives the call HUD idle surface (see below)
+
+**Transport lost** — `GlanceService.handleTransportLost()` resets `_isVisible`, `_isIdleSurfaceActive`, and any running timers. Without this reset, `_isVisible` survives a drop and the next notification queues silently (auto-pop is gated on `!_isVisible`) rather than auto-popping into the glasses. Wired into both drop paths in `BleManager`: full disconnect and any-leg-dropped, alongside the existing service `handleTransportLost` calls.
 
 **Idle surface** — when `close()` fires (tilt-down timeout or carousel advance exhaustion) and `_currentCall` is non-null, `GlanceService` does **not** call `Proto.exit()` and go blank. Instead it sets `_isIdleSurfaceActive = true`, enqueues a render via the call HUD text builder, and starts a 1 Hz `Timer.periodic` (`_callTimer`) that re-renders the duration every second. This branch is embedded directly in `close()`. A separate public method `showIdleSurfaceIfAvailable()` provides the same transition and returns `false` when no call is active (intended for external callers who need to explicitly activate the idle surface). Tilt-up clears `_isIdleSurfaceActive` and cancels `_callTimer`, restoring normal carousel behaviour. Call end (`clearCall()`) cancels the timer, clears `_isIdleSurfaceActive`, and calls `close()` to tear down via `Proto.exit()`.
 
@@ -477,9 +482,12 @@ Current session-history behaviour:
 Current mode-entry idle displays:
 - `capture`: `*`
 - `chat`: `Chat ready` / `Tilt up to talk`
-- `navigate`: idle prompt is suppressed — no text sent to the glasses on mode
-  entry. The first Maps notification triggers the full nav card bootstrap.
-- `glance`: no separate idle title card; content appears only when a Glance item is actually shown
+- `navigate`: "Navigate" title card (~500 ms, via `Proto.showTitleCard`) on mode entry, **gated
+  on no nav instruction currently held**; if an instruction is in hand the title card is suppressed
+  to avoid a clear sequence landing mid-bootstrap and cancelling the nav session start. The idle
+  prompt ("Open Google Maps to start navigation") is never sent on mode entry; the first Maps
+  notification triggers the full nav card bootstrap.
+- `glance`: "Glance" title card (~500 ms, via `Proto.showTitleCard`) on mode entry, always shown
 
 Glance assistant:
 - while in Glance mode and idle, left-hold enters a lightweight assistant flow without changing mode
@@ -532,8 +540,8 @@ Reconnect handling (per-leg):
 - single-leg disconnects also trigger automatic reconnect: `_applyConnectionPayload()` has a
   `wasConnected && isConnected` branch that detects one leg going down whilst the other
   remains up and calls `_attemptLegReconnect()` immediately for the dropped leg; it also
-  calls `handleTransportLost()` on each affected service (`GlanceAssistantService`,
-  `ChatService`, `CaptureService`) to reset in-progress session flags
+  calls `handleTransportLost()` on each affected service (`GlanceService`,
+  `GlanceAssistantService`, `ChatService`, `CaptureService`) to reset in-progress session flags
   (`_isListening`, `_isThinking`, `_isRecording`, `_isDisplayVisible`) synchronously and
   without BLE IO — preventing stale flags from blocking self-clearing error messages after
   the leg recovers
@@ -545,11 +553,12 @@ Reconnect handling (per-leg):
   silently pend with no GATT callback. A `Future.delayed(30s)` clears `reconnectInFlight` when
   it expires without a successful connection, unblocking the health monitor to retry
 
-Resync handling:
-- when a degraded leg recovers, Flutter requests a lightweight content resync
-- active Navigate content is rerendered through the current Navigate render path
-- active text content is replayed through the shared text renderer
-- this is intended to help left/right displays converge again after one-leg transport degradation
+Reconnect display recovery:
+- on transport recovery after a real disconnect (`_hasEverConnectedThisSession` is `true`), `CompanionController.handleTransportRecovered` runs
+- "Reconnected" is flashed for ~1 s via `Proto.showTitleCard`, then `0x50 + 0x18` force-clears the display
+- content is then conditionally resumed in priority order: Capture REC indicator → Navigate refresh (only if Navigate was visible with an instruction held) → Call HUD → blank
+- the `_hasEverConnectedThisSession` flag is set on the first successful leg connect and cleared only on process exit; it ensures the flash and force-clear do not fire on the initial cold-connect at app startup
+- the previous `TextService.resendLastText` / `FeaturesServices.resendLastBmpData` resync path has been removed; stale content replay on reconnect was the wrong policy
 
 Navigate-specific transport protection:
 - `BleManager` can temporarily suspend `0x25` heartbeats
@@ -564,7 +573,7 @@ Full-session disconnect detection and auto-reconnect are a distinct concern from
 
 **Dead-code fix note:** `_onGlassesDisconnected()` in `ble_manager.dart` was historically dead code. Android's GATT stack routes disconnect events through `_onGlassesConnectionStateChanged()` / `_applyConnectionPayload()`, not through `_onGlassesDisconnected()`. As a result, timer cleanup (heartbeat, reconnect monitor) never ran on real disconnects. This has been fixed: `_applyConnectionPayload()` now handles two distinct disconnect cases:
 
-- `wasConnected && !isConnected` — full disconnect: performs timer cleanup, calls `handleTransportLost()` on each service to reset in-progress session flags, and triggers the full-session `_maybeStartAutoReconnect()` backoff sequence
+- `wasConnected && !isConnected` — full disconnect: performs timer cleanup, calls `handleTransportLost()` on each service (`GlanceService`, `GlanceAssistantService`, `ChatService`, `CaptureService`) to reset in-progress session flags, and triggers the full-session `_maybeStartAutoReconnect()` backoff sequence
 - `wasConnected && isConnected` — single-leg disconnect: the other leg is still up; calls `handleTransportLost()` on each service, then `_attemptLegReconnect()` for the dropped leg without tearing down the full session
 
 The shared `wasConnected` gate prevents either branch from firing during initial connection setup.

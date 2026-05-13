@@ -6,12 +6,12 @@ import 'package:even_companion/models/companion_notification.dart';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/capture_service.dart';
 import 'package:even_companion/services/chat_service.dart';
-import 'package:even_companion/services/features_services.dart';
 import 'package:even_companion/services/glance_assistant_service.dart';
 import 'package:even_companion/services/glance_service.dart';
 import 'package:even_companion/services/navigate_service.dart';
 import 'package:even_companion/services/notification_policy.dart';
 import 'package:even_companion/services/notification_settings_store.dart';
+import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -211,23 +211,72 @@ class CompanionController extends ChangeNotifier {
     );
   }
 
+  // Tracks whether we've ever seen a link-proven connection this app run.
+  // The first recovery event after cold launch is the initial connect; we
+  // suppress the "Reconnected" flash for that case so the first thing the
+  // glasses say each day isn't "Reconnected" before the user has done
+  // anything. Subsequent recoveries are real reconnects.
+  bool _hasEverConnectedThisSession = false;
+
   Future<void> handleTransportRecovered({
     required String source,
   }) async {
     AppLog.info(
-      '${DateTime.now()} Transport: recovery resync begin -> source=$source mode=${_activeMode.label} owner=$_activeDisplayOwner',
+      '${DateTime.now()} Transport: recovery begin -> source=$source mode=${_activeMode.label} owner=$_activeDisplayOwner everConnected=$_hasEverConnectedThisSession',
     );
 
-    if (NavigateService.get.isVisible) {
+    if (!_hasEverConnectedThisSession) {
+      _hasEverConnectedThisSession = true;
+      AppLog.info(
+        '${DateTime.now()} Transport: first connect this session — skipping Reconnected flash',
+      );
+      return;
+    }
+
+    // Don't interrupt critical in-flight flows. NavigateService bootstrap is
+    // a long interleaved replay; a QuickNote capture is mid-audio-stream.
+    if (Proto.isQuickNoteCaptureActive) {
+      AppLog.info(
+        '${DateTime.now()} Transport: Reconnected flash skipped — QuickNote capture active',
+      );
+      return;
+    }
+
+    await Proto.showTitleCard(
+      'Reconnected',
+      duration: const Duration(seconds: 1),
+    );
+
+    // Conditional state-resume after the force-clear. Disconnects in practice
+    // happen during glance/idle states (PCM feed keeps BLE alive during
+    // recording, so mid-recording drops are rare). The primary path is
+    // therefore: flash + clear + leave blank.
+    if (CaptureService.get.isRecording) {
+      await TextService.get.startSendText('REC');
+      AppLog.info(
+        '${DateTime.now()} Transport: REC indicator restored after reconnect',
+      );
+      return;
+    }
+
+    if (NavigateService.get.isVisible && NavigateService.get.hasInstruction) {
       await NavigateService.get.refreshVisibleView();
+      AppLog.info(
+        '${DateTime.now()} Transport: nav view refreshed after reconnect',
+      );
       return;
     }
 
-    if (await TextService.get.resendLastText()) {
+    if (await GlanceService.get.showIdleSurfaceIfAvailable()) {
+      AppLog.info(
+        '${DateTime.now()} Transport: call HUD restored after reconnect',
+      );
       return;
     }
 
-    await FeaturesServices().resendLastBmpData();
+    AppLog.info(
+      '${DateTime.now()} Transport: reconnect complete — display left blank',
+    );
   }
 
   /// Cycle through the four app modes when the firmware emits `F5 20`.
@@ -594,6 +643,7 @@ class CompanionController extends ChangeNotifier {
 
     switch (mode) {
       case AppMode.glance:
+        await Proto.showTitleCard('Glance');
         return;
       case AppMode.capture:
         if (!CaptureService.get.isRecording) {
@@ -604,6 +654,12 @@ class CompanionController extends ChangeNotifier {
         if (NavigateService.get.hasInstruction) {
           await NavigateService.get.showLatest();
         } else {
+          // Hard constraint: a Navigate title card mid-bootstrap can cancel
+          // the session start. Awaiting the flash ensures the screen is back
+          // to a known clean state before any concurrent notification handler
+          // can trigger a bootstrap — otherwise the trailing clear would
+          // land mid-bootstrap and kill the session.
+          await Proto.showTitleCard('Navigate');
           await NavigateService.get.showIdlePrompt();
         }
         break;

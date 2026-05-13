@@ -35,31 +35,7 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-### ble-reconnect-pacing: BLE reconnect storm — per-leg cooldown and exponential backoff
-- **Status**: In Flight (uncommitted local changes)
-- **Context**: Field capture `logs/disconnect-race.txt` (2026-05-11) showed a reconnect storm following a single-leg disconnect: 5795 `connectGatt` calls in ~120 s, 4488 returning `GATT_NO_RESOURCES` (status=257), peak 387 connection-state events/sec. Logcat ring buffer filled with 200k+ BLE-stack lines/min, pushing app logs out entirely. Root cause: unpaced `STATE_DISCONNECTED → _attemptLegReconnect → connectGatt` loop in `lib/ble_manager.dart`, amplified by bare `connected=true` notifications resetting `reconnectAttempts = 0` every 6 ms flap.
-- **What's done (uncommitted)**:
-  - Per-leg cooldown gate inside `_attemptLegReconnect` via new `_lastReconnectAttemptAt` map.
-  - Exponential backoff schedule 2/4/8/16/30 s capped, indexed by attempt count. `_maxReconnectAttempts` bumped 3 → 5.
-  - Removed `reconnectAttempts = 0` reset from `_handleConnectionStateChanged` (both L and R branches) — only `_recordLegAck` and `_recordHeartbeatSuccess` reset the counter (proof of end-to-end link).
-  - `_lastReconnectAttemptAt[lr]` cleared in `_onGlassesDisconnected`, `forceReconnect`, `_recordLegAck`, `_recordHeartbeatSuccess` so recovery and clean-slate paths are not artificially gated.
-  - Codex peer-reviewed; P2 finding (missing cooldown clears in `_onGlassesDisconnected`/`forceReconnect`) was addressed.
-- **Acceptance**: Field-verified that a single-leg disconnect triggers ≤5 reconnect attempts with 2/4/8/16/30 s spacing, no `GATT_NO_RESOURCES` storm in logcat, and the app's own log lines remain visible (not overwritten by BLE-stack noise).
-- **Notes**: Kotlin in-flight guard refinement (move `reconnectInFlight.remove` to fire from gatt callback rather than after the synchronous `connectGatt` return at `android/.../BleManager.kt:289`) deliberately deferred — see `ble-fast-flap-investigation` in Backlog. Files: `lib/ble_manager.dart`.
-
-### ble-mic-on-reconnect-ghost: "Mic start failed" ghost notification on single-leg reconnect
-- **Status**: In Flight (uncommitted local changes; APK built at v1.0.1+2, field testing pending)
-- **Context**: With `ble-reconnect-pacing` (v1.0.0+1) stabilising the reconnect cycle, a latent symptom surfaced: on single-leg disconnect/reconnect the glasses frequently show a persistent "Mic start failed" notification. Codex peer review identified three interacting causes: (1) voice guard armed too late — `BleManager.onServicesDiscovered` enables BLE notifications before `markLegReady` signals Flutter the leg is up, so an F5 17/23 can land before `_ignoreVoiceGesturesUntil` re-arms; (2) stale `_isListening`/`_isThinking`/`_isRecording` flags left by a mid-session disconnect block `_scheduleClear`, preventing the error text from auto-clearing; (3) missing voice guard coverage on `_handleChatGesture` case 2 and `_handleCaptureGesture` case 2. Codex also caught `_isDisplayVisible` not reset in Glance/Chat — fixed in the same change. Per `docs/versioning.md` this is a PATCH bump (1.0.0+1 → 1.0.1+2).
-- **What's done (uncommitted)**:
-  - `lib/ble_manager.dart` `_applyConnectionPayload` captures previous leg state and calls `CompanionController.noteTransportConnected` on any `connected=false → true` transition, arming the 2-second voice guard before any F5 events from the newly-up leg can land.
-  - New `handleTransportLost()` on `GlanceAssistantService`, `ChatService`, and `CaptureService` — flag-only, no BLE IO. Called from `_onGlassesDisconnected` (full drop) and `_applyConnectionPayload` (single-leg drop). Resets listening/thinking/recording flags plus `_isDisplayVisible`.
-  - Voice guard check extended to `_handleChatGesture` case 2 and `_handleCaptureGesture` case 2.
-- **Acceptance**:
-  - [ ] During a normal single-leg disconnect/reconnect cycle, "Mic start failed" does NOT appear on the glasses.
-  - [ ] If the symptom does still appear, it auto-clears within ~6 seconds (no longer persistent).
-  - [ ] No regressions to the working reconnect-pacing behaviour from v1.0.0+1.
-  - [ ] Glance assistant voice flow (F5 17 in Glance) still works normally when no recent reconnect.
-- **Notes**: Three-cause stack — voice-guard timing race, stale listening flags, missing belt-and-braces. Each fix is independently load-bearing. Cross-ref `ble-reconnect-pacing` (v1.0.0+1, Recently Done) — that fix made the disconnect/reconnect cycle stable enough to surface this latent bug. Cross-ref `glance-assistant-reset-on-reconnect` (Backlog) — follow-up on whether `reset()` should be split for a fuller session teardown. Files: `lib/ble_manager.dart`, `lib/services/glance_assistant_service.dart`, `lib/services/chat_service.dart`, `lib/services/capture_service.dart`.
+*(No items currently in flight.)*
 
 ---
 
@@ -100,12 +76,8 @@ Working, but still needs real-world observation:
 
 ## Backlog — Unprioritised
 
-### glance-assistant-reset-on-reconnect: Decide whether GlanceAssistantService.reset() should be split for transport-lost path
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: `GlanceAssistantService.reset()` performs BLE IO (`Proto.clearDisplay()`) so it cannot safely be called from the transport-lost path when the BLE link is gone. The new `handleTransportLost()` (v1.0.1+2) is a flag-only alternative covering the current symptom. If a future design needs to fully close an assistant session on transport loss — e.g. tear down response history, not just flags — the IO and non-IO halves of `reset()` would need to be separated.
-- **Acceptance**: Either confirm that flag-only teardown is the correct long-term behaviour (and close this item), or split `reset()` so the disconnect path can call the non-IO portion without BLE writes.
-- **Notes**: Surfaced by Codex during v1.0.1+2 review. Not load-bearing — the current flag-only path is sufficient for the "Mic start failed" symptom. Cross-ref `ble-mic-on-reconnect-ghost` (In Flight, v1.0.1+2).
+### glance-assistant-reset-on-reconnect: ~~Decide whether GlanceAssistantService.reset() should be split for transport-lost path~~
+- **Status**: Done — closed 2026-05-13. Flag-only `handleTransportLost()` confirmed sufficient by v1.0.1+2 field verification; the "Mic start failed" ghost has not recurred. No need to split `reset()`. Cross-ref `ble-mic-on-reconnect-ghost` (Recently Done — 2026-05-13).
 
 ### dashboard-injection: Dashboard content injection
 - **Status**: Backlog
@@ -142,6 +114,23 @@ Working, but still needs real-world observation:
 - **Fix applied**: New `Proto.clearDisplay()` helper in `lib/services/proto.dart` sends `0x50` clear. Four Glance call sites swapped: `glance_service.dart:168` (empty-carousel), `glance_service.dart:230` (close/tilt-down), `glance_assistant_service.dart:221` (assistant close), `glance_assistant_service.dart:246` (assistant auto-dismiss timer). One site deliberately left as `Proto.exit()`: `glance_assistant_service.dart:133` (post-mic-stop flow, potential audio-routing dependency).
 - **Observation**: Tilt-up/down ghost screen appears resolved. 14 remaining `Proto.exit()` call sites in chat/capture/navigate/dashboard/features unchanged — follow-up if Glance experiment proves successful.
 
+### incoming-call-hud: Incoming call notification on glasses
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: The glasses currently surface ongoing calls (via the notification listener picking up the in-progress call notification and the `ongoing-call-idle` HUD path), but they give no indication when a call is actually incoming/ringing. When the phone rings — especially from a locked or off-screen state — nothing appears on the glasses. The whole point is knowing who is calling before deciding whether to pull out the phone.
+- **What's needed**:
+  - Detect incoming call state (phone ringing) — likely via `TelephonyManager`/`PhoneStateListener` on Android, or the notification listener catching the incoming-call notification.
+  - Immediately push caller identity (name from contacts if available, otherwise the number) to the glasses HUD.
+  - Handle state transitions: on answer, transition to the existing ongoing-call HUD; on decline or missed call, clear the display.
+  - Must work regardless of phone screen state (locked, screen off, app in background).
+- **Acceptance**:
+  - [ ] When a call comes in, caller name or number appears on the glasses within ~1 s.
+  - [ ] Display persists while the phone is ringing.
+  - [ ] On answer: transitions cleanly to the existing ongoing-call HUD (cross-ref `ongoing-call-idle`, Recently Done 2026-05-06).
+  - [ ] On decline or missed call: clears the display.
+  - [ ] Works regardless of phone screen state (locked, off, app in background).
+- **Notes**: Extends the pre-answer state not covered by `ongoing-call-idle`. Cross-ref `call-idle-dismiss-fallback` (below) — the two items together would give complete call-lifecycle coverage on the glasses. Files likely touched: `lib/services/glance_service.dart`, `lib/services/companion_controller.dart`, and the Android notification listener (`RecentNotificationsListenerService.kt`). The `TelephonyManager`/`PhoneStateListener` route may be more reliable than a notification-based approach for the ringing state on locked screens — worth investigating both.
+
 ### call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed
 - **Status**: Backlog
 - **Priority**: Unprioritised
@@ -149,15 +138,8 @@ Working, but still needs real-world observation:
 - **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
 - **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
 
-### mode-title-cards: Glance and Navigate mode entry title cards, plus Connected status card
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: Double-tap mode switching gives no on-glasses feedback about which mode was just entered. Chat mode is already self-labelling ("chat active, tilt up to talk") and Capture mode has the `*` idle marker — neither needs a title card. Glance and Navigate are the gaps. A "Connected" card is also captured here as a natural companion: it confirms a successful BLE connection rather than signalling mode entry, but uses the same brief-flash mechanic.
-- **Acceptance**:
-  - [ ] **Glance**: On mode entry, a title card ("Glance") is shown for ~0.5 s and then automatically cleared. No persistence beyond the flash.
-  - [ ] **Navigate**: A title card ("Navigate") fires on mode entry **only when there is no active navigation session in progress**. If a nav session is already live, the title card must be suppressed entirely — a previous issue confirmed that showing an idle title while a session is bootstrapping can cancel the session start.
-  - [ ] **Connected**: On successful BLE connection or reconnection, a brief title card ("Connected") is shown on the glasses and then automatically cleared. This is a status confirmation, not a mode-entry card — but it shares the same flash mechanic and fits naturally here. Should fire on both initial connect and reconnect events; must not interfere with an already-active mode (e.g. do not interrupt a live Navigate session).
-- **Notes**: Navigate condition is the tricky part — the title card logic must gate on whether `NavigateService` has an active session before sending anything. Glance title card is straightforward; Navigate title card requires careful lifecycle awareness. The Connected card similarly needs a lifecycle-safe send: only fire if the current mode is in a quiescent state. All three sub-items can be implemented independently.
+### mode-title-cards: ~~Glance and Navigate mode entry title cards, plus Connected/Reconnected clear~~
+- **Status**: Done — closed 2026-05-13. All three sub-items field-verified on v1.0.2+3.
 
 
 #### BLE stability — deferred tiers
@@ -264,6 +246,30 @@ Working, but still needs real-world observation:
 
 ## Recently Done
 
+### mode-title-cards: Glance and Navigate mode entry title cards, plus Connected/Reconnected clear (2026-05-13, v1.0.2+3)
+All three sub-items field-verified on device by Eddie.
+
+- **Glance title card**: flashes "Glance" for ~500 ms on mode entry, then clears. Confirmed not intrusive.
+- **Navigate title card**: flashes "Navigate" for ~500 ms on mode entry, **only when no active nav instruction is held** (`!NavigateService.hasInstruction`). The hard constraint (Navigate card mid-bootstrap cancels session) was respected by awaiting the flash inside `_restoreModeEntryState`, so the trailing `0x50+0x18` clear cannot land mid-bootstrap from a concurrent Maps notification handler.
+- **Connected/Reconnected force-clear**: replaces the previous "resync visible content" semantics in `CompanionController.handleTransportRecovered`. On any real reconnect (skipped on the very first connect of the session, gated by new `_hasEverConnectedThisSession` flag), the path flashes "Reconnected" for ~1 s, force-clears via the `0x50 + 0x18` combo, then conditionally resumes: REC if recording active, nav refresh if nav visible+hasInstruction, call HUD if active call, otherwise blank. Old `resendLastText`/`resendLastBmpData` calls dropped by design — stale glance content is wrong because the glasses' display state after a disconnect is unknown. Field test confirmed: Glance notification visible + Bluetooth off/on → "Reconnected" flashed and screen actually cleared (the motivating stuck-screen bug).
+
+**What shipped:**
+- New `Proto.showTitleCard(text, {duration})` helper — sends text via `0x4E`, holds, then `0x50+0x18` clear.
+- New `GlanceService.handleTransportLost()` — resets `_isVisible`/`_isIdleSurfaceActive`/timers; wired into both drop paths in `BleManager` (`_onGlassesDisconnected` and the `anyLegDropped` block in `_applyConnectionPayload`). Without this, post-reconnect notifications would not auto-pop because `_isVisible` survived the drop.
+- `CompanionController.handleTransportRecovered` rewritten with first-connect-this-session suppression and QuickNote-capture guard.
+
+Files changed: `lib/services/proto.dart`, `lib/services/companion_controller.dart`, `lib/services/glance_service.dart`, `lib/ble_manager.dart`, `pubspec.yaml`.
+
+### ble-mic-on-reconnect-ghost: "Mic start failed" ghost notification on single-leg reconnect (2026-05-13)
+Field-verified absent on v1.0.1+2. Not seen since the fix was installed. Three interacting causes addressed: (1) voice guard armed too late on `onServicesDiscovered` — fixed by arming before any F5 events from the newly-up leg can land; (2) stale `_isListening`/`_isThinking`/`_isRecording` flags blocking `_scheduleClear` — cleared by new flag-only `handleTransportLost()` called from both full-drop and single-leg-drop paths; (3) missing voice guard coverage on `_handleChatGesture` case 2 and `_handleCaptureGesture` case 2. Committed in `4b0fc3f` ("Connectivity fix, Mic Start Failed bug"). Flag-only teardown via `handleTransportLost()` confirmed as the correct long-term approach — no IO/non-IO split of `reset()` needed (see `glance-assistant-reset-on-reconnect`, also closed 2026-05-13).
+
+Files changed: `lib/ble_manager.dart`, `lib/services/glance_assistant_service.dart`, `lib/services/chat_service.dart`, `lib/services/capture_service.dart`.
+
+### ble-reconnect-pacing: BLE reconnect storm — per-leg cooldown and exponential backoff (2026-05-13)
+Field-verified on v1.0.1+2. Consistent reconnects observed after single-leg drops; no `GATT_NO_RESOURCES` storm (previously 4488 per ~120 s) and app log lines remain readable in logcat. Root cause was an unpaced `STATE_DISCONNECTED → _attemptLegReconnect → connectGatt` loop amplified by bare `connected=true` resets every 6 ms. Fix: per-leg cooldown gate via `_lastReconnectAttemptAt` map, exponential backoff 2/4/8/16/30 s, and counter reset moved to `_recordLegAck`/`_recordHeartbeatSuccess` only (proof of end-to-end link). Committed in `4b0fc3f` ("Connectivity fix, Mic Start Failed bug"). Kotlin in-flight guard refinement deliberately deferred — see `ble-fast-flap-investigation` in Backlog.
+
+Files changed: `lib/ble_manager.dart`.
+
 ### glance-heads-up-timings: Adaptive tilt-up intent delay in Glance mode (2026-04-13)
 Idle→active state transition for tilt-up intent delay: full delay from idle, zero delay mid-carousel, delay restored when carousel clears. Shipped in commit `c18ce37`.
 
@@ -284,8 +290,8 @@ Full cross-language rename across Android + Dart. 13 Kotlin files moved (`git mv
 - [x] JNI C++ symbol names updated (`Java_com_eddie_evencompanion_cpp_Cpp_*`).
 - [x] `pubspec.yaml` `name: even_companion`; all Dart imports use `package:even_companion/`.
 - [x] Doc file-path references updated in `current-architecture.md`, `current-worklist.md`, `protocol-reference.md`.
-- [ ] App installs and runs on device after manual uninstall of the old package.
-- [ ] All BLE functionality works post-reinstall (re-pairing may be required and is accepted).
+- [x] App installs and runs on device after manual uninstall of the old package.
+- [x] All BLE functionality works post-reinstall (re-pairing may be required and is accepted).
 
 Files changed: `android/app/build.gradle`, `android/app/src/main/cpp/liblc3.cpp`, 13 Kotlin files (moved + updated), `pubspec.yaml`, 45 Dart files, 3 doc files.
 

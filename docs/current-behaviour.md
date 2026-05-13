@@ -395,11 +395,12 @@ Navigate is intentionally lean and notification-driven.
   called from Navigate
 - the rate limit between updates has been reduced from 2200 ms (BMP) to
   500 ms (the structured text packet is tiny and atomic)
-- the idle prompt ("Open Google Maps to start navigation") is **suppressed**
-  — no text is sent to the glasses on mode entry. This avoids a race where
-  `Proto.exit()` cleanup completed mid-replay, blanking the display on first
-  load. The glasses stay on whatever was displayed before until the first
-  Maps notification triggers the nav card.
+- on mode entry, a "Navigate" title card is shown for ~500 ms **only when
+  no nav instruction is currently held**. When an instruction is already in
+  hand, the title card is suppressed entirely — a clear sequence fired mid-bootstrap
+  would cancel the nav session start. The glasses stay on whatever was displayed
+  before until the first Maps notification triggers the nav card. The idle prompt
+  ("Open Google Maps to start navigation") is not sent on mode entry regardless.
 
 ### Current caveats
 
@@ -646,6 +647,53 @@ Leaving a mode through quick switching follows the same cleanup rules as normal 
   should be cleaned up alongside the `handleDoubleTapModeSwitch` method in
   [`lib/services/companion_controller.dart`](../lib/services/companion_controller.dart)
 
+## Mode-entry title cards and reconnect behaviour
+
+### Mode-entry title cards
+
+On entering Glance or Navigate mode (via double-tap, notification action, or app UI), the glasses
+briefly flash the mode name before auto-clearing.
+
+| Mode | Title text | Duration | Condition |
+|---|---|---|---|
+| Glance | `Glance` | ~500 ms | Always |
+| Navigate | `Navigate` | ~500 ms | Only when no nav instruction is currently held |
+
+The title card is rendered via `Proto.showTitleCard` (the `0x4E` text path), then auto-cleared
+with `0x50 + 0x18` after the duration elapses. There is no persistence — the glasses return to
+blank after the clear.
+
+**Navigate hard constraint:** when a nav instruction is already in hand, the Navigate title card
+is suppressed entirely. The clear sequence that ends a title card would cancel the nav session
+bootstrap if it landed mid-replay. See "Current status" in the Navigate section above, and
+`current-architecture.md` § "Transport health and recovery" for the `CompanionController` design.
+
+Capture and Chat do not receive title cards in this version.
+
+### Reconnected force-clear
+
+On transport recovery after a real disconnect, the app:
+
+1. Flashes "Reconnected" on the glasses for ~1 s (via `Proto.showTitleCard`).
+2. Force-clears the display with `0x50 + 0x18`.
+3. Conditionally resumes content in this priority order:
+   - **REC indicator** — if a Capture recording is active.
+   - **Nav refresh** — if Navigate was the visible mode and a nav instruction is held.
+   - **Call HUD** — if a phone call is active.
+   - **Blank** — otherwise; no content is sent.
+
+The first connect of each app session is excluded — the "Reconnected" flash only fires on
+reconnects after a real disconnect, not on the initial pairing at startup.
+
+**Rationale:** after a partial or full disconnect the glasses can be left with stuck or stale
+content on one or both lenses. The reconnect event is the natural moment to force-clear. The
+previous behaviour — resending the last visible text via `TextService.resendLastText` and
+`FeaturesServices.resendLastBmpData` — has been removed; replaying stale Glance content on
+reconnect was the wrong policy.
+
+See `current-architecture.md` § "Transport health and recovery — Reconnect display recovery"
+for the implementation detail.
+
 ## Logging
 
 Current logging posture:
@@ -693,12 +741,15 @@ Current runtime behaviour:
   stays up, the app detects this and attempts to restore the dropped leg without any manual
   action or full-session teardown. Previously, only a full both-legs-down disconnect triggered
   automatic recovery for a single-leg drop.
-- when transport recovers, the app resends the current active content to help both lenses converge again
+- when transport recovers after a real disconnect (not the first connect of a session), the app
+  flashes "Reconnected" for ~1 s, force-clears the display via `0x50 + 0x18`, then conditionally
+  resumes content — see "Mode-entry title cards and reconnect behaviour" below
 
 Practical effect:
 - one eye can remain usable while the other is recovering
 - single-leg drops auto-recover without requiring a manual `Force Reconnect`
-- Navigate display divergence should self-correct more often after recovery
+- on full-session reconnect, a force-clear ensures stale content from either lens is wiped before
+  content is conditionally restored
 - a restart/reconnect should no longer be the only way to recover from every partial transport problem
 
 ## Auto-reconnection
