@@ -78,13 +78,12 @@ far. Each item is detailed in the docs above.
 - **Long-press (left).** `F5 17` press-down → `F5 18` release. This is the
   voice / Even AI entry path.
 - **Long-press (right) — QuickNote.** Does **not** fire `F5 17` / `F5 18`.
-  Instead emits `0x21` on release, and *immediately afterwards* the firmware
-  streams a chunked binary blob back on `0x1e c8 ...` whose volume scales
-  with recording duration. Bitrate and shape are consistent with a
-  low-bitrate voice codec — almost certainly the same LC3 stream the live
-  mic uses on `0xf1`, just on a different family. Documented as a future
-  audio-decode opportunity for "host-side QuickNote with hosted
-  transcription".
+  Instead emits `0x21` on release (notes-list metadata). The firmware records
+  into a circular 4-slot buffer on the glasses; the host requests audio via
+  `1e 06 00 <seq> 02 <noteIndex>` and receives an LC3 stream on `0x1e c8`
+  chunks (10-byte header + 190-byte payload). The companion app decodes
+  LC3 → WAV → Whisper STT → GPT tidy/categorise → Notes UI (Shopping / To Do
+  / Notes). Shipped end-to-end 2026-05-09.
 - **Triple-tap.** `F5 04` enables silent mode, `F5 05` disables it.
 - **Double-tap is the boundary between firmware-handled and host-handled
   actions.** When closing an active feature → `F5 00`. When opening a feature
@@ -174,10 +173,6 @@ Mode changes can come from any of:
   "Companion app mode switch", which makes the firmware emit `F5 20` on
   double-tap and the companion app cycles through `Glance` → `Navigate` →
   `Chat` → `Capture` → `Glance`. Cycle is debounced at 1500 ms.
-- *(inactive)* a narrow idle-only right-hold POC via `R21` that pre-dates
-  the `F5 20` path. The packet length gate (`len == 42`) does not match
-  current firmware, which emits `R21` at length 15 — superseded by the
-  `F5 20` host-handled double-tap path.
 
 ### Glasses display rule
 
