@@ -58,8 +58,12 @@ For the full model with examples and evidence, see
   - when connected -> enters the app's current voice path
 - right hold:
   - works even when disconnected
-  - likely activates a firmware-native QuickNote feature
-  - is not currently implemented in the demo app
+  - activates the firmware-native QuickNote recording feature
+  - on release, the firmware emits `0x21` (notes-list metadata); the host
+    must request audio via `1e 06 00 <seq> 02 <noteIndex>` — firmware does
+    not stream unsolicited
+  - fully documented in [protocol-reference.md](protocol-reference.md) §
+    "QuickNote protocol family"
 - double left tap:
   - when a feature is active, it produces `F5 00`
   - behaviour matches close active feature / return home
@@ -138,63 +142,60 @@ For the full model with examples and evidence, see
   - current model: single taps are absorbed by the firmware in every observed
     state. The companion app should not be designed around them.
 
-### Suspected
+### Confirmed (promoted from Suspected post-implementation)
 
 #### Right-hold QuickNote path
 
-- Meaning: firmware-native QuickNote flow
-- Confidence: Confirmed for firmware-native behaviour; Suspected for packet interpretation
+- Meaning: firmware-native QuickNote recording and retrieval flow
+- Confidence: Confirmed
 - Evidence:
-  - right hold works even while disconnected and reports a note/listening style
-    behaviour on-device
-  - in this demo app, right hold does not trigger the implemented Even AI start
-    path
-  - repeated connected runs show the strongest app-visible signal on release as
-    command `0x21` on the right leg
-  - therefore QuickNote appears to use a different packet family from the
-    app-handled Even AI `F5` start/stop flow
+  - right hold works even while disconnected and triggers on-device recording
+  - confirmed separate from the Even AI `F5` start/stop family — uses `0x21`
+    and `0x1e` opcode families exclusively
+  - QuickNote v1 shipped 2026-05-09: full pipeline from right-hold through to
+    Notes UI is implemented and confirmed end-to-end
+  - full protocol documentation in
+    [protocol-reference.md](protocol-reference.md) §
+    "QuickNote protocol family"
 
 #### `R21`
 
-- Meaning: likely QuickNote metadata/history or note-session summary packet
-- Confidence: Suspected
-- Evidence:
-  - appears consistently after right-hold release in repeated runs
-  - earlier captures observed packet length `42`
+- Meaning: QuickNote notes-list metadata packet; emitted on right-hold release
+- Confidence: Confirmed
+- Evidence (historic captures, retained):
+  - appears consistently after right-hold release in all repeated runs
+  - earlier captures (pre-2026-04-28) observed packet length `42` — now
+    confirmed as the 42-byte notes-list dump variant
   - the 2026-04-28 taps capture observed length `15` for every right-hold
-    release (`21 0f 00 <id> 01 01 01 <8 bytes>`). The byte at offset 3 looks
-    like a quicknote id (non-sequential across captures), bytes 7–14 like
-    a timestamp/UID. Either the firmware behaviour changed or the previous
-    42-byte form was a different family member triggered in a state we
-    haven't yet reproduced.
-  - both spoken-note and silence runs still produce `R21`
+    release (`21 0f 00 <id> 01 01 01 <8 bytes>`). The byte at offset 3 is
+    the note index (non-sequential across captures, consistent with a
+    per-slot ID); bytes 7–14 are a timestamp/UID block also seen in the
+    `0x06` note-management transactions. Both the 15-byte (single-note) and
+    42-byte (notes-list dump) variants are now fully decoded — see
+    [protocol-reference.md](protocol-reference.md) §
+    "QuickNote protocol family" for byte maps.
+  - both spoken-note and silence runs produce `R21`
   - the 2026-04-28 settings capture (Phase 3 quicknotes, see
     [FINDINGS-settings.md](FINDINGS-settings.md))
-    additionally found that **immediately after every `R21` release the
-    firmware emits a chunked binary stream on opcode `0x1e c8 ...`** —
-    frame count scales with recording duration (~50 frames for 3 s
-    silence vs ~100 for 10 s), framing `1e c8 00 <seq1> 02 61 00 <seq2>
-    00 01 <~130 bytes>`. Bitrate (~11 kbit/s) and chunk-distribution are
-    consistent with a low-bitrate voice codec — most likely the same LC3
-    stream the live mic uses on `0xf1`, just on a different family. This
-    is the BLE path that would let the companion app recreate the
-    firmware's QuickNote feature with hosted transcription. Decode work
-    is out of scope today; the cross-reference for future work is the
-    existing LC3 path in
-    [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp).
-    Full protocol shape lives in
-    [protocol-reference.md](protocol-reference.md) under "Quicknote
-    post-release stream".
-  - the 8-byte trailing block in the `R21` payload looks identical to the
-    UID block used by the `0x06` note-management transactions (delete /
-    reorder), suggesting `R21` is announcing the UID of the just-saved
-    note — see "Note management" in
+    identified a chunked binary stream on `0x1e c8 ...` emitted after
+    `R21`. Frame count scales with recording duration (~50 frames for 3 s
+    silence vs ~100 for 10 s). This was the key discovery that led to the
+    audio retrieval path investigation. **Important correction from earlier
+    analysis:** the firmware does NOT stream audio unsolicited — the `0x1e
+    c8` stream is triggered by a host TX request (`1e 06 00 <seq> 02
+    <noteIndex>`). The framing previously noted (`1e c8 00 <seq1> 02 61 00
+    <seq2> 00 01 <~130 bytes>`) underestimated payload size; confirmed
+    chunk structure is a 10-byte header + 190-byte LC3 payload.
+  - the 8-byte trailing block in the `R21` payload is confirmed as the UID
+    of the just-saved note, consistent with the `0x06` note-management
+    transactions — see "Note management" in
     [protocol-reference.md](protocol-reference.md).
 - Notes:
-  - `R21` likely does not contain raw recognised speech transcript text
-  - more likely candidates are metadata, identifiers, timestamps, or note record
-    summaries
-  - a small counter/index-looking field appears to increment across captures
+  - `R21` does not contain raw speech transcript text — confirmed; it carries
+    metadata (note index, slot count, UID, timestamps)
+  - the small counter/index-looking field that increments across captures is
+    the note slot index; the circular 4-slot buffer model is `Suspected` (see
+    [protocol-reference.md](protocol-reference.md))
 
 #### `F5 04`
 
@@ -526,11 +527,13 @@ Important caveat:
 - runtime behaviour and isolated logs are more trustworthy than the current label
   names
 
-There is now a narrow QuickNote-related POC in the app codebase:
-- idle-only mode switching based on right-leg `R21`
-- current gate: `len == 42`
-- current debounce: `1500ms`
-- it does not depend on `F5`
+The QuickNote pipeline shipped end-to-end in v1 (2026-05-09): right-hold
+triggers firmware recording, `0x21` on release notifies the host, the host
+requests audio via `0x1e`, LC3 audio is decoded to WAV, Whisper provides STT,
+and the result is tidied and categorised into the Notes UI. See
+[current-behaviour.md](current-behaviour.md) § "QuickNote" and
+[current-architecture.md](current-architecture.md) § "QuickNote" for the full
+app implementation.
 
 ## Custom Dashboard Notes
 
@@ -556,25 +559,31 @@ There is now a narrow QuickNote-related POC in the app codebase:
 
 ## QuickNote Notes
 
-- right-hold should now be treated as a firmware-native QuickNote flow
-- the most meaningful app-visible signal is not an `F5` start event
-- the strongest repeatable signal occurs on release as command `0x21` on the
-  right leg
-- `F5 18` may accompany right-hold release as a stop/end-state signal
-- but `F5` alone is not sufficient to model QuickNote
-- `R21` is currently the primary packet family to watch
+- right-hold is a firmware-native QuickNote flow, confirmed separate from the
+  Even AI `F5` family
+- on release the firmware emits `0x21` (notes-list metadata); the host must
+  explicitly request audio via `1e 06 00 <seq> 02 <noteIndex>` — the firmware
+  does not stream unsolicited
+- `0x21` and `0x1e c8` are the primary protocol families; `F5` events are not
+  part of the QuickNote path
+- the full protocol is documented in
+  [protocol-reference.md](protocol-reference.md) § "QuickNote protocol family"
+- the app-side implementation is documented in
+  [current-architecture.md](current-architecture.md) § "QuickNote"
 
 ## What We Know About The App
 
-- The app already supports:
+- The app supports:
   - BLE scan/connect
   - text rendering
   - bitmap rendering
   - notification rendering
-  - one voice-feature path named "Even AI"
-- The app does not currently implement:
-  - a distinct QuickNote flow
-  - speech recognition text flowing back into Flutter from native decoded audio
+  - Even AI voice-feature path
+  - QuickNote: right-hold recording, audio retrieval, STT, tidy/categorise,
+    Notes UI (3 tabs: Shopping, To Do, Notes) — shipped 2026-05-09
+- See [current-behaviour.md](current-behaviour.md) for the full behavioural
+  summary and [current-architecture.md](current-architecture.md) for the
+  implementation detail.
 
 ## Recommended Next Logging Runs
 
@@ -592,7 +601,9 @@ High-value remaining runs:
 2. clean tilt-down
 3. single left tap while a feature is active
 4. single right tap while a feature is active
-5. right-hold QuickNote with minimal accidental taps
+5. ~~right-hold QuickNote with minimal accidental taps~~ — **Completed** (2026-05-08/09):
+   investigation informed the shipped QuickNote pipeline; see
+   [FINDINGS-quicknote.md](FINDINGS-quicknote.md)
 
 ## Next Experiments
 
@@ -616,7 +627,7 @@ Method:
 3. perform controlled tilt up/down actions
 4. capture and compare `F5` logs
 
-### Experiment 2 - Right Hold While Connected
+### Experiment 2 - Right Hold While Connected — COMPLETED (2026-04-28 / 2026-05-08)
 
 Goal:
 
@@ -636,7 +647,13 @@ Method:
 3. repeat 3 times
 4. compare logs for repeatable deltas
 
-### Experiment 3 - Right Hold Vs Left Hold Comparison
+**Outcome:** Right-hold release emits `0x21` on the right leg (notes-list
+metadata). The event IS forwarded to the app. The `0x1e c8` audio stream is
+available but only in response to a host TX request — firmware does not push
+unsolicited. Full QuickNote pipeline shipped 2026-05-09. See
+[FINDINGS-quicknote.md](FINDINGS-quicknote.md) for full investigation record.
+
+### Experiment 3 - Right Hold Vs Left Hold Comparison — COMPLETED (2026-05-08)
 
 Goal:
 
@@ -658,3 +675,8 @@ Method:
    - mic-open behaviour
    - audio streaming presence
    - feature-visible behaviour on the glasses
+
+**Outcome:** Confirmed divergence. Left-hold triggers the Even AI `F5` start
+flow with live `0xf1` LC3 mic streaming. Right-hold is a separate path: emits
+`0x21` on release, no `F5` involvement, audio retrieved on demand via `0x1e`
+host request. The two features use distinct opcode families and do not interact.
