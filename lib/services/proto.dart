@@ -285,13 +285,16 @@ class Proto {
   static int _timeSeq = 0;
 
   static Future<void> setTimeAndWeather() async {
-    final epochMs = DateTime.now().millisecondsSinceEpoch;
-    final epochSec = epochMs ~/ 1000;
+    final now = DateTime.now();
+    final utcMs = now.millisecondsSinceEpoch;
+    final localOffsetMs = now.timeZoneOffset.inMilliseconds;
+    final localMs = utcMs + localOffsetMs;
+    final localSec = localMs ~/ 1000;
 
-    final epoch32 = (ByteData(4)..setUint32(0, epochSec, Endian.little))
+    final epoch32 = (ByteData(4)..setUint32(0, localSec, Endian.little))
         .buffer
         .asUint8List();
-    final epoch64 = (ByteData(8)..setInt64(0, epochMs, Endian.little))
+    final epoch64 = (ByteData(8)..setInt64(0, localMs, Endian.little))
         .buffer
         .asUint8List();
 
@@ -317,7 +320,7 @@ class Proto {
     ]));
 
     AppLog.info(
-      '${DateTime.now()} time sync TX: epoch=$epochSec',
+      '${DateTime.now()} time sync TX: localEpoch=$localSec offset=${now.timeZoneOffset}',
       tag: 'TimeSync',
     );
   }
