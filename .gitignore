@@ -31,7 +31,12 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
-/logs/
+# Bluetooth HCI capture data is local-only; only the named analysis scripts
+# are tracked (see heartbeat_*.py below).
+/logs/*
+!/logs/bluetooth/
+/logs/bluetooth/*
+!/logs/bluetooth/heartbeat_*.py
 /node_modules/
 
 # Symbolication related

@@ -10,6 +10,19 @@ Use this with:
 
 ---
 
+## Product Shape
+
+Four-pillar product model (agreed 2026-05-18):
+
+- **Glance** — ambient awareness. Includes QuickNote. QuickNote is a Glance-mode feature, not its own pillar.
+- **QuickAsk / Router** — instant intent execution via the left-hold gesture.
+- **Capture** — ambient audio memory (long-form recording).
+- **Terminal Mode** — ambient engineering supervision (deferred; see Backlog).
+
+Distinction: QuickNote is "remember something fast" (single note, right-hold). Capture is "record a whole meeting" (long-form, tilt-up). They are separate features with separate gestures and separate storage.
+
+---
+
 ## Current Product State
 
 Working well:
@@ -31,7 +44,7 @@ Working well:
 Working, but still needs real-world observation:
 - Navigate mode startup robustness on first entry / degraded-leg recovery
 - Navigate mode post-bootstrap update behaviour on longer real walks
-- Capture mode stop/save reliability on device
+- Capture mode stop/save reliability on device — being actively addressed by Capture v2 items in Next (safer stop gesture, HUD probe)
 - Protected notification handling for special ongoing items on Samsung/Android variants
 
 ---
@@ -54,7 +67,144 @@ Working, but still needs real-world observation:
 
 ## Next — Prioritised
 
-### 5. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
+### capture-v2-hud-probe: Capture v2 — HUD render probe (gating spike)
+- **Status**: Next
+- **Priority**: High
+- **Context**: Gating spike for all other Capture v2 work. Confirms whether pushing periodic `0x4E` text-only HUD frames during an active LC3 audio recording disturbs the inbound audio stream or triggers a firmware mode reset. Outcome decides whether HUD updates are continuous (every 5 s) or limited to tilt-up peek as fallback.
+- **Timebox**: 1 hour.
+- **Method**: Start a recording, push 12 dummy HUD updates spaced 5 s apart over a 60 s capture window. Verify all audio frames arrive and the WAV concatenates cleanly with no gaps or corruption.
+- **Acceptance**:
+  - [ ] 12 HUD pushes sent during a 60 s LC3 recording session.
+  - [ ] Resulting WAV is gapless and intelligible — no corruption from HUD writes.
+  - [ ] No firmware mode reset observed during the test window.
+  - [ ] Decision recorded: HUD updates are continuous (every 5 s) OR limited to tilt-up peek only.
+- **Notes**: If the spike fails (HUD writes corrupt audio), all Capture v2 HUD work becomes a tilt-peek-only approach. Either outcome unblocks Item 2.
+
+### capture-v2-recording-hud: Capture v2 — Recording HUD
+- **Status**: Next
+- **Priority**: High
+- **Blocked on**: `capture-v2-hud-probe` (spike must pass to enable continuous updates).
+- **Context**: Replace the static REC indicator with a live HUD that shows recording state, elapsed time, and save confirmation.
+- **HUD states** (text-only via `0x4E`, ASCII only — G1 firmware font constraint):
+
+  Idle:
+  ```
+  Capture ready
+  Tilt up to record
+  ```
+
+  Recording (updates every 5 s; pulse character cycles `*` → `#` → `.` → repeat):
+  ```
+  * REC  03:30
+  ```
+
+  Save confirmation (auto-clears after 5 s):
+  ```
+  Saved
+  12m 34s - Capture-2026-05-18-14-32.wav
+  ```
+
+- **Acceptance**:
+  - [ ] Idle state renders on mode entry.
+  - [ ] Recording state shows elapsed time updating every 5 s.
+  - [ ] Pulse character cycles correctly.
+  - [ ] Save confirmation renders for 5 s then clears.
+  - [ ] Timer is generated locally in Dart — no dependency on firmware clock.
+  - [ ] HUD re-render does not restart or interrupt the capture session.
+  - [ ] WAV pipeline unchanged.
+- **Notes**: Timer driven by periodic timer in `CaptureService`. No live transcription, no waveform, no VU meter. ASCII-only is a hard constraint — confirmed via G1 firmware font memory.
+
+### capture-v2-safer-stop: Capture v2 — Safer stop gesture
+- **Status**: Next
+- **Priority**: High
+- **Context**: Prevents accidental recording stops from natural head movement (e.g. tilt-up while drinking coffee mid-recording being read as a stop command). Currently, tilt-up while recording stops it — this is the bug to fix.
+- **Can ship alongside**: `capture-v2-recording-hud`.
+- **Gesture model**:
+  - Tilt-up (`F5 02`) starts recording — unchanged.
+  - Tilt-up (`F5 02`) while recording is active = no-op.
+  - Double-tap (`F5 00`) while recording = stop + save + show save confirmation.
+- **Rationale**: Aligns with the global gesture model — double-tap closes the active feature, and recording counts as an active feature.
+- **Acceptance**:
+  - [ ] Tilt-up while recording active does nothing (no accidental stop).
+  - [ ] Double-tap while recording stops, saves, and triggers save confirmation HUD.
+  - [ ] `F5 02` (tilt-up) during active recording is consumed as a no-op by Capture mode — does not propagate.
+  - [ ] `F5 00` (double-tap) while Capture is active is owned by Capture mode — mode switch path does not steal it.
+  - [ ] Existing tilt-up start behaviour unchanged (when not recording).
+- **Notes**: Not in scope — tilt-hold, repeated tilt gestures, confirmation prompts. Technical touch points: `CaptureService` gesture handler, gesture routing in `CompanionController`.
+
+### capture-v2-recordings-list: Capture v2 — Recordings list UI
+- **Status**: Next
+- **Priority**: Medium-high
+- **Context**: New in-app screen for browsing and managing recordings. Independent of the HUD/stop items — can be built in parallel. Eddie currently re-listens to recordings to identify them before exporting to his transcription pipeline; on-glasses naming during recording is out of scope here, but rename-on-disk addresses the same pain.
+- **Screen position**: Between Notes and Chat history tabs.
+- **Acceptance**:
+  - [ ] Screen lists all `.wav` files in the capture directory, most recent first.
+  - [ ] No database — metadata derived from filename pattern + WAV header (duration).
+  - [ ] Clearing the directory clears the list (filesystem reflection, no orphan db rows).
+  - [ ] Per row: date/time, duration, filename, rename action, share/export action.
+  - [ ] Default filename pattern: `Capture-YYYY-MM-DD-HH-mm.wav`.
+  - [ ] Rename action: disk rename replacing the prefix only. Timestamp suffix is preserved. Example: `Capture-2026-05-18-14-32.wav` → `Martin-2026-05-18-14-32.wav`.
+  - [ ] No naming prompts during recording flow — rename is post-hoc in the list UI.
+- **Notes**: Future anchor for offline Whisper, summaries, rename-last-recording assistant action, export workflows — none of those are in scope here. Cross-ref: `capture-v2-hud-probe` and `capture-v2-safer-stop` work in the service layer; this item is UI only.
+
+### router-v1-glance-handlers: Router v1 — `glance` trigger + Calendar, Notes, Media handlers
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: Turns the left-hold Quick Ask into a deterministic command layer, with LLM as fallback. Introduces a `glance` trigger word that routes to structured handlers before falling through to the existing OpenAI path. Acoustically distinctive; two syllables; no near-homophones. Decided 2026-05-18.
+- **Routing model**:
+  - Transcript normalised (lowercase, strip punctuation).
+  - First token == `glance` → router claims the transcript.
+  - Else → existing LLM path unchanged.
+  - Router-claimed but no handler matched → fall through to LLM (e.g. `glance recipe for chicken` still works).
+- **Architecture**: `QuickAsk transcript → AssistantRouter → CommandHandler → DisplayRenderer`
+- **Handler keyword matching** (within router-claimed transcripts):
+  - `calendar` / `meeting` / `meetings` / `today's` / `next` → `CalendarHandler`
+  - `note` / `notes` / `todo` / `shopping` → `NotesHandler`
+  - `playing` / `music` / `track` / `song` → `MediaHandler`
+- **CalendarHandler**:
+  - Fetch next N events from Android calendar provider.
+  - Render (auto-clears after 5 s):
+    ```
+    15:00 Product Sync
+    16:30 Jan 1:1
+    ```
+  - Requires Android calendar runtime permission — handle first-time permission UX.
+- **NotesHandler**:
+  - Pull top N active items from existing local SQLite `NotesStore`, grouped by category.
+  - Render (auto-clears after 5 s):
+    ```
+    TODO
+    - BP notes
+    - Renew cert
+    - Email Victor
+    ```
+- **MediaHandler** (notification-mirror only):
+  - Reuse existing media notification state — do not capture live audio.
+  - Render current track in full (this can use full text width; glance mode crops by default).
+  - Shazam-style live audio fingerprinting is explicitly OUT of scope here — see `router-v1-shazam` in Backlog.
+- **Acceptance**:
+  - [ ] `glance calendar` (and synonyms) shows next N events from Android calendar.
+  - [ ] `glance notes` (and synonyms) shows top N items from `NotesStore`.
+  - [ ] `glance music` (and synonyms) shows current media notification state.
+  - [ ] `glance <anything unmatched>` falls through to LLM.
+  - [ ] Non-`glance` transcripts continue to reach LLM path unchanged.
+  - [ ] Calendar permission flow works on first-time use.
+  - [ ] All HUD output is ASCII-only, text-only via `0x4E`.
+- **Notes**: `MediaHandler` reuses existing notification state — the `now-playing-mediasession` Backlog item (Audible MediaSession metadata fix) is complementary: fixing that would improve what `MediaHandler` can render for Audible and similar apps. Cross-ref that item when implementing. Independent of Capture v2 stream.
+
+### router-v1-chat-logging: Router v1 — Chat history logging (single feed, origin tag)
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: Log both question and response from Quick Ask invocations — both router-claimed and LLM-fallback — into Chat history. Keeps the history complete and searchable. Pair with `router-v1-glance-handlers`.
+- **UI model**: Single feed with origin tag — small `Chat` / `Ask` label per entry. Same copy mechanism, format, etc. as existing Chat entries. Decided against sub-tabs to keep unification simple.
+- **Acceptance**:
+  - [ ] All Quick Ask invocations (router-claimed and LLM-fallback) produce an entry in Chat history.
+  - [ ] Entry shows the question and the response.
+  - [ ] Origin tag (`Chat` / `Ask`) is visible per entry.
+  - [ ] Existing Chat entries unaffected.
+- **Notes**: Rationale for single-feed approach: avoids splitting history into sub-tabs while preserving the distinction between conversational Chat turns and intent-driven Ask turns. Pair with `router-v1-glance-handlers`.
+
+### quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
 - **Status**: Next
 - **Priority**: Low
 - **Context**: The keyword classifier fires on "to do" broadly, so phrases like "make a note to X" get tagged as todo before GPT runs. GPT classification is generally correct; the keyword fallback (which sets the initial category) catches too widely.
@@ -67,6 +217,39 @@ Working, but still needs real-world observation:
 ---
 
 ## Backlog — Unprioritised
+
+### router-v1-shazam: Router v1 — Shazam-style "what song is this"
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Live audio fingerprinting to identify songs playing in the environment. Acoustically separate from the notification-mirror `MediaHandler` in `router-v1-glance-handlers` — this requires capturing audio from the mic, calling a fingerprinting API (ShazamKit / ACRCloud / AudD), and handling a longer wait + possible failure mode. Different scope, cost, and UX from the rest of Router v1. Deliberately decoupled.
+- **Acceptance**: `glance what song is this` (or similar) captures ambient audio, calls fingerprinting API, and renders track name + artist on the glasses.
+- **Notes**: API budget and latency considerations need evaluating before implementation. Do not bundle with `router-v1-glance-handlers`.
+
+### terminal-mode-crypto-spike: Terminal Mode — Happy crypto spike (gating spike, deferred)
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Gating spike for Terminal Mode v1. Deferred — Happy integration is larger than initially scoped. Eddie has decided not to undertake Terminal Mode immediately. Keep on the backlog so it is not lost.
+- **Timebox**: 1 day.
+- **Spike tasks**:
+  - Implement libsodium NaCl `secretbox` + AES-256-GCM decryption in Dart using `cryptography` or `flutter_sodium`.
+  - Verify against known test vectors from Happy's reference implementation at `packages/happy-cli/src/api/encryption.ts`.
+  - Confirm Socket.IO Dart client connects to `wss://api.happy.engineering/v1/updates` with bearer-token auth.
+- **Acceptance**: Dart crypto path verified against reference test vectors. Socket.IO connection to Happy's endpoint established.
+- **Notes**: If spike succeeds → proceed to `terminal-mode-v1`. If not → re-evaluate Terminal Mode viability. Protocol reference: https://happy.engineering/docs/ and the `slopus/happy` GitHub repo `docs/` folder (`protocol.md`, `session-protocol.md`, `encryption.md`, `api.md`). The marketing site does not document the protocol — GitHub is canonical.
+
+### terminal-mode-v1: Terminal Mode v1 (deferred — depends on terminal-mode-crypto-spike)
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Replace the underused Chat mode with an ambient engineering supervision surface. Slot 4 becomes a settings toggle between "Chat" and "Code" — Chat is preserved, not removed. Deferred behind Capture v2 and Router v1. Estimated scope: 1–2 weeks for the protocol layer alone, before any rendering work.
+- **Integration**: Happy direct subscription — companion app pairs as a first-class Happy client (own keypair, QR-pair with mobile app), subscribes to Socket.IO `/v1/updates` (session-scoped or user-scoped).
+- **Event mapping to glasses display**:
+  - `text` (non-thinking) → streamed update via existing `0x52` paced queue.
+  - `tool-call-start` → short progress line (e.g. "Running tests…", "Edited 3 files").
+  - `turn-end` with `status=completed` and no follow-up → "Claude waiting".
+  - `ephemeral activity { thinking: true }` → thinking indicator.
+- **Reply path** (v1.1, explicitly deferred): tilt-up while "waiting" → STT → emit `message` event back via the same socket.
+- **Acceptance**: Not defined until crypto spike is complete and Terminal Mode is promoted out of Backlog.
+- **Notes**: Constraints — short bursts only; do NOT stream raw token output continuously; surface transitions, not raw stream. Reuse existing `0x52` streaming renderer + paced queue infrastructure. Depends on `terminal-mode-crypto-spike` passing. Protocol refs above also apply here.
 
 ### dashboard-injection: Dashboard content injection
 - **Status**: Backlog
@@ -92,7 +275,7 @@ Working, but still needs real-world observation:
   - System UI side: `metaData=The Wee Free Men, Chapter 7: First Sight and Second Thoughts, Terry Pratchett` — full metadata available in the `MediaSession`
 - **Proposed fix**: Enhance `RecentNotificationsListenerService.kt` to detect `MediaStyle` notifications and, when standard title/text fields are empty, fall back to extracting `MediaMetadata.METADATA_KEY_TITLE` and `MediaMetadata.METADATA_KEY_ARTIST` from the notification's associated `MediaSession`. The `MediaSession.Token` is available in notification extras under `android.mediaSession`.
 - **Acceptance**: Audible (and similarly-behaving apps) produce a non-empty title/text pair that the Now Playing feature can display on the glasses. Apps that already populate standard notification fields (Spotify, YouTube Music, Podcast Addict) are unaffected.
-- **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Other audiobook/podcast apps may behave similarly and would benefit automatically. Files likely touched: `android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt`, possibly `lib/models/companion_notification.dart` if new fields are added for media metadata.
+- **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Cross-ref `router-v1-glance-handlers` — fixing this would improve what the Router v1 `MediaHandler` can render for Audible and similar apps.
 
 #### BLE stability — deferred tiers
 
@@ -120,7 +303,7 @@ Working, but still needs real-world observation:
 - **Priority**: Medium
 - **Context**: `0x0a` navigation path works but remains partially dependent on replay-derived scaffolding and captured assets. Navigate is operational but not yet fully "owned" at the protocol level.
 - **Acceptance**: Remaining captured/replayed dependencies removed. Static PANORAMIC_MAP replaced with a generated or optional implementation. Startup robustness, reconnect behaviour, exit semantics, and route update handling improved. Icon generation, card generation, and lifecycle fully owned.
-- **Notes**: The PANORAMIC_MAP sub-issue may remain Parked even while other parts of this item progress. Cross-ref the Parked `PANORAMIC_MAP decision` item, and the existing Next item `Navigate cleanup (composite)` — that covers immediate tactical fixes (turnDistance, EXIT/ARRIVED); this item covers broader protocol ownership and de-replay work.
+- **Notes**: The PANORAMIC_MAP sub-issue may remain Parked even while other parts of this item progress. Cross-ref the Parked `PANORAMIC_MAP decision` item, and the existing Now item `Navigate cleanup (composite)` — that covers immediate tactical fixes (turnDistance, EXIT/ARRIVED); this item covers broader protocol ownership and de-replay work.
 
 ### protocol-audit: Protocol confidence audit
 - **Status**: Backlog
@@ -176,16 +359,28 @@ Files changed: `AndroidManifest.xml`, `TelephonyEventService.kt` (new), `lib/ser
 
 Files changed: `lib/services/glance_service.dart`.
 
-### ble-stability-tier2: Heartbeat cadence alignment with official app (2026-05-18, commit 280bb32)
-Tier 2 of the three-tier BLE stability plan. Closed all four cadence divergences from the official Even Realities app identified in HCI capture analysis.
+### ble-stability-tier2: Heartbeat cadence shifted to first-connect rate, faster than official app steady state (2026-05-18, commit 280bb32)
+Tier 2 of the three-tier BLE stability plan. Closed four cadence-related divergences identified in HCI capture analysis. **Note (2026-05-18): rationale clarified after re-examining the full HCI log set across multiple capture sessions — see "Heartbeat regime split" below.**
 
-- **Cadence**: reduced from 8 s to 2 s per leg (matching official app p50 = 1.98 s).
+- **Cadence**: reduced from 8 s to 2 s per leg.
 - **Parallelism**: heartbeats now sent to both legs in parallel, not sequentially.
 - **Per-leg start**: heartbeat starts on individual leg connect rather than being gated on "both connected" — half-connections now receive keepalives.
-- **Nav-replay pause removed**: heartbeat continues during nav-replay, mirroring official app behaviour.
-- **Opcode decision**: retained `0x25` pending on-device verification that `0x1f` ACKs (`04 01` responses) are returned. HCI captures show the official app uses `0x1f` with rotating sub-types (`0x12`, `0x01`, `0x0c`) and an incrementing counter; `0x25` continues to function in our app and switching is low-risk but deferred until the ACK path is confirmed. Rationale documented in commit.
+- **Nav-replay pause removed**: heartbeat continues during nav-replay.
 
-Files changed: `lib/services/proto.dart`, `lib/ble_manager.dart`.
+**Heartbeat regime split — what the HCI logs actually show:**
+
+Cross-log analysis (`logs/bluetooth/heartbeat_cadence.py`, `heartbeat_timeline.py`) across four official-app HCI captures revealed two distinct heartbeat regimes in the official app, not one:
+
+- **First-connect / pairing window (~first ~60 s after fresh pair):** opcode `0x1f` at 2 s cadence, with rotating sub-types (`0x12`, `0x01`, `0x0c`) and an incrementing counter. Only observed in the `btsnoop_hci_baseline.log` capture (which spans 11:04:39–11:05:32 — exactly the just-paired window). Zero `0x25` writes in this capture. p50 = 1992 ms, p95 = 2023 ms.
+- **Steady state (minutes-to-hours into an established session):** opcode `0x25` at 8 s cadence. Observed in `btsnoop_hci_settings.log` (24 min, 364 heartbeats) and `btsnoop_hci_taps.log` (34 min, 508 heartbeats). Both contain zero `0x1f` writes. p50 = 8000 ms across both.
+
+**The original commit message rationale ("matching official app p50 = 1.98 s") read only the baseline capture in isolation and conflated the pairing-window cadence with the steady-state cadence.** The official app's steady-state heartbeat is `0x25` at 8 s — which is exactly what the EvenDemoApp had before the tweak.
+
+**Why this change still stands:** the permanent 2 s cadence is **faster than the official app's steady state, by design.** Eddie observed noticeably better single-leg reconnect stability at 2 s. Plausible mechanism: single-leg recovery looks like a fresh-pair event from the firmware's perspective, and benefits from the same fast-ping cadence the official app uses during pairing. The degrade threshold was widened from 2 missed pings to 8 to keep the overall miss-window at ~16 s, so detection latency on full-leg-loss is unchanged. Battery cost has been a non-issue in practice (88% at 15:22 after all-day wear, reported 2026-05-18).
+
+**Opcode decision (unchanged):** retained `0x25` rather than switching to `0x1f`. The `0x1f` ACK format (`04 01` responses?) is unverified on-device; `0x25` continues to function. Switching is low-risk but deferred. Note that running `0x25` at 2 s is a combination that the official app does not use — official app uses `0x1f`@2s OR `0x25`@8s, never `0x25`@2s.
+
+Files changed: `lib/services/proto.dart`, `lib/ble_manager.dart`. Analysis tooling: `logs/bluetooth/heartbeat_cadence.py`, `logs/bluetooth/heartbeat_timeline.py`.
 
 ### mode-title-cards: Glance and Navigate mode entry title cards, plus Connected/Reconnected clear (2026-05-13, v1.0.2+3)
 All three sub-items field-verified on device by Eddie.
@@ -524,9 +719,10 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - QuickNote classifier tuning — Next #5 (not ready yet; needs more variety tested first)
-  - notification policy
-  - Capture validation
+  - Capture v2 gating spike (`capture-v2-hud-probe`) — top of Next; 1-hour timebox to verify HUD writes don't corrupt LC3 audio
+  - Capture v2 HUD + safer stop (`capture-v2-recording-hud`, `capture-v2-safer-stop`) — blocked on spike result
+  - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — independent stream; medium priority
+  - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
   - `AGENTS.md`
   - `README.md`

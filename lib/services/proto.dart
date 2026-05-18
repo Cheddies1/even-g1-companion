@@ -185,7 +185,7 @@ class Proto {
   static int _beatHeartSeq = 0;
   static Uint8List _nextHeartBeatPacket() {
     const length = 6;
-    final seq = _beatHeartSeq % 0xff;
+    final seq = _beatHeartSeq & 0xff;
     final data = Uint8List.fromList([
       0x25,
       length & 0xff,
