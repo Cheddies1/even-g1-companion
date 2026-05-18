@@ -485,45 +485,40 @@ class Proto {
       return;
     }
 
-    BleManager.get().suspendHeartbeats(reason: 'nav-replay');
-    try {
-      switch (_navReplayMode) {
-        case navReplayModeBroadcast:
-          final broadcastStartedAt = DateTime.now();
-          for (final lr in availableLegs) {
-            legStats[lr]!.startedAt = broadcastStartedAt;
-          }
-          await _sendNavReplayBroadcast(replayPackets);
-          final broadcastEndedAt = DateTime.now();
-          for (final lr in availableLegs) {
-            final stats = legStats[lr]!;
-            stats.packetCount = replayPackets.length;
-            stats.endedAt = broadcastEndedAt;
-          }
-          break;
-        case navReplayModeSequentialLeftFirst:
-        case navReplayModeSequentialRightFirst:
-          for (final lr in _navReplaySequentialLegOrder(availableLegs)) {
-            await _sendNavReplayToLeg(lr, replayPackets, legStats[lr]!);
-          }
-          break;
-        case navReplayModeInterleaved:
-          await _sendNavReplayInterleaved(
-            replayPackets,
-            availableLegs,
-            legStats,
-            pairStats,
-          );
-          break;
-        default:
-          AppLog.error(
-            '${DateTime.now().toIso8601String()} nav bootstrap aborted: unsupported mode=$_navReplayMode',
-            tag: 'Navigate',
-          );
-          return;
-      }
-    } finally {
-      BleManager.get().resumeHeartbeats(reason: 'nav-replay');
+    switch (_navReplayMode) {
+      case navReplayModeBroadcast:
+        final broadcastStartedAt = DateTime.now();
+        for (final lr in availableLegs) {
+          legStats[lr]!.startedAt = broadcastStartedAt;
+        }
+        await _sendNavReplayBroadcast(replayPackets);
+        final broadcastEndedAt = DateTime.now();
+        for (final lr in availableLegs) {
+          final stats = legStats[lr]!;
+          stats.packetCount = replayPackets.length;
+          stats.endedAt = broadcastEndedAt;
+        }
+        break;
+      case navReplayModeSequentialLeftFirst:
+      case navReplayModeSequentialRightFirst:
+        for (final lr in _navReplaySequentialLegOrder(availableLegs)) {
+          await _sendNavReplayToLeg(lr, replayPackets, legStats[lr]!);
+        }
+        break;
+      case navReplayModeInterleaved:
+        await _sendNavReplayInterleaved(
+          replayPackets,
+          availableLegs,
+          legStats,
+          pairStats,
+        );
+        break;
+      default:
+        AppLog.error(
+          '${DateTime.now().toIso8601String()} nav bootstrap aborted: unsupported mode=$_navReplayMode',
+          tag: 'Navigate',
+        );
+        return;
     }
 
     final totalDurationMs =

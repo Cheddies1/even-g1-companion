@@ -124,7 +124,7 @@ class BleManager {
   };
   static const _maxReconnectAttempts = 5;
   final Map<String, DateTime?> _lastReconnectAttemptAt = {'L': null, 'R': null};
-  static const _heartbeatDegradeThreshold = 2;
+  static const _heartbeatDegradeThreshold = 8;
   static const _heartbeatWarningAge = Duration(seconds: 20);
 
   Timer? _autoReconnectTimer;
@@ -334,26 +334,22 @@ class BleManager {
     _reconnectMonitorTimer?.cancel();
     _reconnectMonitorTimer = null;
 
-    beatHeartTimer = Timer.periodic(const Duration(seconds: 8), (timer) async {
-      if (_heartbeatPauseDepth > 0) {
-        AppLog.info(
-          '${DateTime.now()} Transport: heartbeat tick skipped while paused depth=$_heartbeatPauseDepth',
-          tag: 'Transport',
-        );
-        return;
-      }
+    beatHeartTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      final futures = <Future<void>>[];
       for (final lr in ['L', 'R']) {
         final state = legState(lr);
-        if (!state.connected) {
-          continue;
-        }
-        final success = await Proto.sendHeartBeatToLeg(lr);
-        if (success) {
-          _recordHeartbeatSuccess(lr);
-        } else {
-          _recordHeartbeatFailure(lr, reason: 'timeout');
-        }
+        if (!state.connected) continue;
+        futures.add(
+          Proto.sendHeartBeatToLeg(lr).then((success) {
+            if (success) {
+              _recordHeartbeatSuccess(lr);
+            } else {
+              _recordHeartbeatFailure(lr, reason: 'timeout');
+            }
+          }),
+        );
       }
+      await Future.wait(futures);
     });
 
     _reconnectMonitorTimer = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -431,6 +427,9 @@ class BleManager {
       CompanionController.get.noteTransportConnected(
         source: 'glassesConnectionStateChanged',
       );
+    }
+    if (isConnected && beatHeartTimer == null) {
+      startSendBeatHeart();
     }
     onStatusChanged?.call();
   }
@@ -1428,9 +1427,6 @@ class BleManager {
   }
 
   void _monitorLegHealth() {
-    if (_heartbeatPauseDepth > 0) {
-      return;
-    }
     final now = DateTime.now();
     for (final lr in ['L', 'R']) {
       final state = legState(lr);
