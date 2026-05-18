@@ -25,13 +25,18 @@ class CompanionController extends ChangeNotifier {
   static CompanionController get get => _instance ??= CompanionController._();
 
   static const _eventNotifications = 'eventNotifications';
+  static const _eventTelephony = 'eventTelephony';
   final EventChannel _notificationChannel =
       const EventChannel(_eventNotifications);
+  final EventChannel _telephonyChannel =
+      const EventChannel(_eventTelephony);
   bool _lastReportedHasActiveDisplay = false;
   int? _lastDoubleTapModeSwitchMs;
 
   bool _initialized = false;
   StreamSubscription<dynamic>? _notificationSubscription;
+  StreamSubscription<dynamic>? _telephonySubscription;
+  bool _telephonyActive = false;
   AppMode _activeMode = AppMode.glance;
   String _statusMessage = 'Ready';
   bool _notificationAccessEnabled = false;
@@ -93,6 +98,15 @@ class CompanionController extends ChangeNotifier {
         tag: 'Companion',
       );
     });
+    _telephonySubscription = _telephonyChannel
+        .receiveBroadcastStream(_eventTelephony)
+        .listen(_handleTelephonyEvent, onError: (Object error) {
+      AppLog.error(
+        '${DateTime.now()} telephony stream error -> $error',
+        tag: 'Companion',
+      );
+    });
+    _telephonyActive = await _requestTelephonyPermissions();
     await _startBackgroundFoundation();
     await BleManager.get().attemptAutoConnect();
     _logDisplayStateIfChanged('Controller.init.complete');
@@ -720,11 +734,18 @@ class CompanionController extends ChangeNotifier {
     }
 
     if (classification == NotificationDisposition.callAbsorbed) {
-      GlanceService.get.updateCall(notification);
+      if (_telephonyActive) {
+        GlanceService.get.updateCallIdentity(
+          name: notification.title,
+          number: notification.text,
+        );
+      } else {
+        GlanceService.get.updateCall(notification);
+      }
       _logNotificationPolicy(
         notification,
         classification: classification,
-        routing: 'call-absorbed',
+        routing: _telephonyActive ? 'call-identity-update' : 'call-absorbed',
       );
       notifyListeners();
       return;
@@ -877,7 +898,9 @@ class CompanionController extends ChangeNotifier {
     final packageName = (rawEvent['packageName'] as String?) ?? '';
     await GlanceService.get.removeNotificationByKey(key);
     GlanceService.get.clearMedia(key);
-    GlanceService.get.clearCall(key);
+    if (!_telephonyActive) {
+      GlanceService.get.clearCall(key);
+    }
     final cleared = await NavigateService.get.clearIfMatches(
       key: key,
       packageName: packageName,
@@ -885,6 +908,42 @@ class CompanionController extends ChangeNotifier {
     if (cleared) {
       _statusMessage = 'Navigation ended';
       notifyListeners();
+    }
+  }
+
+  void _handleTelephonyEvent(dynamic rawEvent) {
+    if (rawEvent is! Map) return;
+    final state = rawEvent['state'] as String? ?? 'unknown';
+    final isOutgoing = rawEvent['isOutgoing'] as bool? ?? false;
+    final number = rawEvent['number'] as String?;
+    AppLog.info(
+      '${DateTime.now()} telephony: state=$state outgoing=$isOutgoing',
+      tag: 'Companion',
+    );
+    GlanceService.get.handleTelephonyState(
+      state,
+      isOutgoing: isOutgoing,
+      number: number,
+    );
+    notifyListeners();
+  }
+
+  Future<bool> _requestTelephonyPermissions() async {
+    try {
+      final granted = await BleManager.invokeMethod<bool>(
+        'requestTelephonyPermissions',
+      );
+      AppLog.info(
+        '${DateTime.now()} telephony permissions: $granted',
+        tag: 'Companion',
+      );
+      return granted ?? false;
+    } catch (e) {
+      AppLog.error(
+        '${DateTime.now()} telephony permission request failed: $e',
+        tag: 'Companion',
+      );
+      return false;
     }
   }
 }

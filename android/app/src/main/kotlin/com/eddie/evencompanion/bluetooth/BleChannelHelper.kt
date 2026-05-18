@@ -1,6 +1,10 @@
 package com.eddie.evencompanion.bluetooth
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.util.Log
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.eddie.evencompanion.MainActivity
 import com.eddie.evencompanion.cpp.Cpp
 import com.eddie.evencompanion.notifications.RecentNotificationsListenerService
@@ -8,6 +12,7 @@ import com.eddie.evencompanion.service.CompanionForegroundService
 import com.eddie.evencompanion.service.GlassesCaptureRecorder
 import com.eddie.evencompanion.model.BlePairDevice
 import com.eddie.evencompanion.notifications.NotificationFeedStore
+import com.eddie.evencompanion.telephony.TelephonyEventService
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.EventChannel.EventSink
@@ -24,6 +29,7 @@ object BleChannelHelper {
     private const val EVENT_BLE_RECEIVE = "eventBleReceive"
     private const val EVENT_BLE_SPEECH_RECOGNIZE = "eventSpeechRecognize"
     private const val EVENT_NOTIFICATIONS = "eventNotifications"
+    private const val EVENT_TELEPHONY = "eventTelephony"
 
     /// Save EventSink
     private val eventSinks: MutableMap<String, EventSink> = mutableMapOf()
@@ -51,6 +57,7 @@ object BleChannelHelper {
         EventChannel(binaryMessenger, EVENT_BLE_RECEIVE).setStreamHandler(context)
         EventChannel(binaryMessenger, EVENT_BLE_SPEECH_RECOGNIZE).setStreamHandler(context)
         EventChannel(binaryMessenger, EVENT_NOTIFICATIONS).setStreamHandler(context)
+        EventChannel(binaryMessenger, EVENT_TELEPHONY).setStreamHandler(context)
     }
 
     /**
@@ -81,6 +88,8 @@ object BleChannelHelper {
     fun bleSpeechRecognize(data: Any) = eventSinks[EVENT_BLE_SPEECH_RECOGNIZE]?.success(data)
 
     fun notificationEvent(data: Any) = eventSinks[EVENT_NOTIFICATIONS]?.success(data)
+
+    fun telephonyEvent(data: Any) = eventSinks[EVENT_TELEPHONY]?.success(data)
 
 }
 
@@ -116,6 +125,7 @@ class BleMethodChannel(
             "cancelGlassesCapture" -> cancelGlassesCapture(call, result)
             "decodeLc3Frames" -> decodeLc3Frames(call, result)
             "getExternalFilesDir" -> getExternalFilesDir(call, result)
+            "requestTelephonyPermissions" -> requestTelephonyPermissions(call, result)
             else -> result.notImplemented()
         }
     }
@@ -320,5 +330,37 @@ class BleMethodChannel(
             "quickNoteAudioReady",
             mapOf("noteUid" to noteUid, "audio" to audio),
         )
+
+    //* =================== Telephony Permission =================== *//
+
+    private var pendingTelephonyResult: MethodChannel.Result? = null
+
+    fun requestTelephonyPermissions(call: MethodCall, result: MethodChannel.Result) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            TelephonyEventService.start(context)
+            result.success(true)
+            return
+        }
+        pendingTelephonyResult = result
+        ActivityCompat.requestPermissions(
+            context,
+            arrayOf(Manifest.permission.READ_PHONE_STATE),
+            REQUEST_CODE_TELEPHONY,
+        )
+    }
+
+    fun onTelephonyPermissionResult(granted: Boolean) {
+        if (granted) {
+            TelephonyEventService.start(context)
+        }
+        pendingTelephonyResult?.success(granted)
+        pendingTelephonyResult = null
+    }
+
+    companion object {
+        const val REQUEST_CODE_TELEPHONY = 3
+    }
 
 }

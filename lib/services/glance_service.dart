@@ -8,6 +8,8 @@ import 'package:even_companion/services/notification_policy.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 
+enum CallPhase { ringing, active }
+
 class GlanceService {
   GlanceService._();
 
@@ -23,14 +25,20 @@ class GlanceService {
   Timer? _mediaTimeoutTimer;
   Timer? _callTimer;
   int _currentIndex = 0;
-  // True when the glasses are showing any surface (carousel or call HUD).
   bool _isVisible = false;
-  // True specifically when the call HUD is the active idle surface.
   bool _isIdleSurfaceActive = false;
   String? _pendingDismissKey;
   Future<void> _renderChain = Future<void>.value();
   CompanionNotification? _currentMedia;
   CompanionNotification? _currentCall;
+
+  CallPhase? _callPhase;
+  String? _callDisplayName;
+  String? _callNumber;
+  DateTime? _callAnsweredAt;
+  bool _callIsOutgoing = false;
+
+  bool get _hasActiveCall => _callPhase != null || _currentCall != null;
 
   bool get isVisible => _isVisible;
   int get notificationCount => _notifications.length;
@@ -122,6 +130,59 @@ class GlanceService {
     );
   }
 
+  void handleTelephonyState(String state, {bool isOutgoing = false, String? number}) {
+    switch (state) {
+      case 'ringing':
+        _callPhase = CallPhase.ringing;
+        _callIsOutgoing = false;
+        _callDisplayName = null;
+        _callNumber = number;
+        _callAnsweredAt = null;
+        _isIdleSurfaceActive = true;
+        _enqueueRender(autoHide: false, markInteracted: false);
+        AppLog.info('${DateTime.now()} telephony: ringing', tag: 'Glance');
+      case 'offhook':
+        if (_callPhase == null && isOutgoing) {
+          _callIsOutgoing = true;
+          _callDisplayName = null;
+          _callNumber = number;
+        }
+        _callPhase = CallPhase.active;
+        _callAnsweredAt ??= DateTime.now();
+        _isIdleSurfaceActive = true;
+        _startCallTimerIfNeeded();
+        _enqueueRender(autoHide: false, markInteracted: false);
+        AppLog.info(
+          '${DateTime.now()} telephony: offhook outgoing=$isOutgoing',
+          tag: 'Glance',
+        );
+      case 'idle':
+        _callPhase = null;
+        _callDisplayName = null;
+        _callNumber = null;
+        _callAnsweredAt = null;
+        _callIsOutgoing = false;
+        _callTimer?.cancel();
+        _callTimer = null;
+        if (_isIdleSurfaceActive) {
+          _isIdleSurfaceActive = false;
+          close();
+        }
+        AppLog.info('${DateTime.now()} telephony: idle — cleared', tag: 'Glance');
+    }
+  }
+
+  void updateCallIdentity({required String name, String? number}) {
+    _callDisplayName = name.isNotEmpty ? name : null;
+    if (number != null && number.isNotEmpty) {
+      _callNumber = number;
+    }
+    if (_isIdleSurfaceActive) {
+      _enqueueRender(autoHide: false, markInteracted: false);
+    }
+    AppLog.info('${DateTime.now()} call identity: $name', tag: 'Glance');
+  }
+
   Future<void> ingestNotification(
     CompanionNotification notification, {
     bool autoPop = true,
@@ -163,7 +224,7 @@ class GlanceService {
     if (shouldRefresh) {
       if (_currentNotification() == null) {
         _pendingDismissKey = null;
-        if (_currentCall != null) {
+        if (_hasActiveCall) {
           _isIdleSurfaceActive = true;
           await _enqueueRender(autoHide: false, markInteracted: false);
           _startCallTimerIfNeeded();
@@ -221,7 +282,7 @@ class GlanceService {
 
   Future<void> close() async {
     AppLog.info(
-      '${DateTime.now()} close() ENTERED — isVisible=$_isVisible call=${_currentCall != null}',
+      '${DateTime.now()} close() ENTERED — isVisible=$_isVisible call=$_hasActiveCall',
       tag: 'GlanceClear',
     );
     _clearTimer?.cancel();
@@ -229,8 +290,7 @@ class GlanceService {
     _mediaTimeoutTimer?.cancel();
     _mediaTimeoutTimer = null;
     await _dismissPendingNotificationOnPhone();
-    // If a call is active, transition to the call HUD instead of going blank.
-    if (_currentCall != null) {
+    if (_hasActiveCall) {
       _isIdleSurfaceActive = true;
       await _enqueueRender(autoHide: false, markInteracted: false);
       _startCallTimerIfNeeded();
@@ -270,7 +330,7 @@ class GlanceService {
   }
 
   Future<bool> showIdleSurfaceIfAvailable() async {
-    if (_currentCall == null) return false;
+    if (!_hasActiveCall) return false;
     _isIdleSurfaceActive = true;
     await _enqueueRender(autoHide: false, markInteracted: false);
     _startCallTimerIfNeeded();
@@ -280,7 +340,7 @@ class GlanceService {
   void _startCallTimerIfNeeded() {
     _callTimer?.cancel();
     _callTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_isIdleSurfaceActive && _currentCall != null) {
+      if (_isIdleSurfaceActive && _hasActiveCall) {
         _enqueueRender(autoHide: false, markInteracted: false);
       } else {
         _callTimer?.cancel();
@@ -330,6 +390,9 @@ class GlanceService {
   }
 
   String _buildDisplayText(DateTime now) {
+    if (_isIdleSurfaceActive && _callPhase != null) {
+      return _buildTelephonyCallText(now);
+    }
     if (_isIdleSurfaceActive && _currentCall != null) {
       return _buildCallHudText(now);
     }
@@ -358,6 +421,22 @@ class GlanceService {
         ? 'Call time: --:--'
         : 'Call time: ${_formatCallDuration(now.difference(connected))}';
     return 'Ongoing call: $name\n$durationLine';
+  }
+
+  String _buildTelephonyCallText(DateTime now) {
+    final identity = _callDisplayName ?? _callNumber ?? 'Unknown Caller';
+    switch (_callPhase!) {
+      case CallPhase.ringing:
+        return _callIsOutgoing
+            ? 'Calling\n$identity'
+            : 'Incoming Call\n$identity';
+      case CallPhase.active:
+        final answered = _callAnsweredAt;
+        final durationLine = (answered == null || answered.isAfter(now))
+            ? 'Call time: --:--'
+            : 'Call time: ${_formatCallDuration(now.difference(answered))}';
+        return 'Ongoing call: $identity\n$durationLine';
+    }
   }
 
   String _formatCallDuration(Duration d) {

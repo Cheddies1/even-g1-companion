@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.util.Log
 import com.eddie.evencompanion.bluetooth.BleChannelHelper
 import com.eddie.evencompanion.bluetooth.BleManager
+import com.eddie.evencompanion.bluetooth.BleMethodChannel
 import com.eddie.evencompanion.bluetooth.BlePermissionUtil
 import com.eddie.evencompanion.cpp.Cpp
 import io.flutter.embedding.android.FlutterActivity
@@ -27,6 +28,14 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         BleChannelHelper.initChannel(this, flutterEngine)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == BleMethodChannel.REQUEST_CODE_TELEPHONY) {
+            val granted = grantResults.isNotEmpty() && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }
+            BleChannelHelper.bleMC.onTelephonyPermissionResult(granted)
+        }
     }
 
     /// Interface - EventChannel.StreamHandler
