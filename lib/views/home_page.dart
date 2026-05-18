@@ -13,6 +13,7 @@ import 'package:even_companion/services/notes_store.dart';
 import 'package:even_companion/views/chat_transcript_page.dart';
 import 'package:even_companion/views/features_page.dart';
 import 'package:even_companion/views/notes_page.dart';
+import 'package:even_companion/views/recordings_page.dart';
 import 'package:even_companion/views/settings_page.dart';
 import 'package:flutter/material.dart';
 
@@ -638,6 +639,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildRecordingsCard() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const RecordingsPage()),
+        );
+      },
+      child: _buildSectionCard(
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recordings',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Captured audio from glasses mic',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: const Color(0xFF9AB7C8),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right,
+              color: Color(0xFF7C8C99),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLegacySection() {
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
@@ -717,6 +758,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ],
           const SizedBox(height: 16),
           _buildNotesCard(),
+          const SizedBox(height: 16),
+          _buildRecordingsCard(),
           const SizedBox(height: 16),
           _buildChatLogSection(),
           const SizedBox(height: 16),

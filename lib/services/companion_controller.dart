@@ -305,6 +305,19 @@ class CompanionController extends ChangeNotifier {
   /// The 5–6 second latency between the physical tap and `F5 20` is firmware
   /// behaviour and is not something this method can mitigate.
   Future<void> handleDoubleTapModeSwitch() async {
+    // Defensive guard for Capture v2: if a recording is active, never allow a
+    // mode-switch to steal the double-tap. The comment above notes that F5 20
+    // is expected to fire only when the display is idle, so this branch is
+    // unreachable in normal operation — but losing a recording to a firmware
+    // quirk would be very expensive, and this is a cheap insurance line.
+    if (_activeMode == AppMode.capture && CaptureService.get.isRecording) {
+      AppLog.info(
+        '${DateTime.now()} DoubleTapModeSwitch: suppressed during active capture recording',
+        tag: 'Companion',
+      );
+      return;
+    }
+
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final lastSwitchMs = _lastDoubleTapModeSwitchMs;
     final debounceMs = lastSwitchMs == null ? null : nowMs - lastSwitchMs;
@@ -427,22 +440,26 @@ class CompanionController extends ChangeNotifier {
           _statusMessage = 'Capture ready';
           break;
         }
-        final isRecording = CaptureService.get.isRecording;
+        if (CaptureService.get.isRecording) {
+          // Safer Stop (Capture v2): tilt-up while a recording is active is a
+          // no-op. Natural head movement (e.g. drinking) was being read as a
+          // stop gesture. Stop now requires the deliberate double-tap (F5 00),
+          // handled by case 0 above which calls CaptureService.stopAndSave().
+          AppLog.debug(
+            '${DateTime.now()} GestureF502: mode=Capture branch=ignore-while-recording side=any',
+          );
+          _statusMessage = 'Recording — double-tap to stop';
+          break;
+        }
         await _runTiltUpIntent(
           mode: AppMode.capture,
-          action: isRecording ? 'capture-stop' : 'capture-start',
+          action: 'capture-start',
           shouldGate: true,
           onConfirm: () async {
-            if (CaptureService.get.isRecording) {
-              final fileName = await CaptureService.get.stopAndSave();
-              _statusMessage =
-                  fileName == null ? 'Capture stopped' : 'Saved $fileName';
-            } else {
-              final started = await CaptureService.get.startRecording();
-              _statusMessage = started
-                  ? 'Recording from glasses mic'
-                  : 'Capture start failed';
-            }
+            final started = await CaptureService.get.startRecording();
+            _statusMessage = started
+                ? 'Recording from glasses mic'
+                : 'Capture start failed';
           },
         );
         break;

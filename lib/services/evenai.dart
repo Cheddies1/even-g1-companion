@@ -5,8 +5,8 @@ import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/controllers/evenai_model_controller.dart';
 import 'package:even_companion/services/api_services_deepseek.dart';
 import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/g1_text_layout.dart';
 import 'package:even_companion/services/proto.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
@@ -504,38 +504,19 @@ extension EvenAIDataMethod on EvenAI {
     return newScreen;
   }
 
+  /// Splits [text] into lines that fit on the G1 display, using the
+  /// firmware-native font metrics from [G1TextLayout]. The optional [maxW]
+  /// overrides the display width — falls back to 488 (the G1 panel width).
+  ///
+  /// This used to lay out via Flutter's TextPainter with the host font, which
+  /// approximated but did not match the G1 firmware font. The replacement uses
+  /// per-glyph widths from MentraOS's reverse-engineered glyph table so
+  /// wrapping decisions match what actually renders on the glasses.
   static List<String> measureStringList(String text, [double? maxW]) {
-    final double maxWidth = maxW ?? 488; 
-    const double fontSize = 21; // could be customized
-
-    List<String> paragraphs = text
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    List<String> ret = [];
-
-    TextStyle ts = TextStyle(fontSize: fontSize);
-
-    for (String paragraph in paragraphs) {
-      final textSpan = TextSpan(text: paragraph, style: ts);
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-        maxLines: null,
-      );
-
-      textPainter.layout(maxWidth: maxWidth);
-
-      final lineCount = textPainter.computeLineMetrics().length;
-
-      var start = 0;
-      for (var i = 0; i < lineCount; i++) {
-        final line = textPainter.getLineBoundary(TextPosition(offset: start));
-        ret.add(paragraph.substring(line.start, line.end).trim());
-        start = line.end;
-      }
-    }
-    return ret;
+    final maxWidth = (maxW ?? G1TextLayout.displayWidth.toDouble()).toInt();
+    final lines = G1TextLayout.splitIntoLines(text, maxWidth);
+    // Preserve the historical contract: drop empty lines (the old TextPainter
+    // path filtered out empty paragraphs before measurement).
+    return lines.where((line) => line.isNotEmpty).toList();
   }
 }

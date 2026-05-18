@@ -132,6 +132,23 @@ Working, but still needs real-world observation:
   - [ ] Existing tilt-up start behaviour unchanged (when not recording).
 - **Notes**: Not in scope — tilt-hold, repeated tilt gestures, confirmation prompts. Technical touch points: `CaptureService` gesture handler, gesture routing in `CompanionController`.
 
+### pixel-aware-0x4e-wrapping: Pixel-aware `0x4E` line wrapping with per-glyph font table
+- **Status**: Next
+- **Priority**: High
+- **PR group**: PR-A (Router v1 reference adoption)
+- **Context**: Both MentraOS (`G1Text.kt`) and fahrplan (`bluetooth_manager.dart:513-600`) abandoned character-count wrapping in favour of width-aware wrapping with space-break preference. MentraOS goes further with a hardcoded per-glyph font table (~120 glyphs, `G1Text.kt:279-419`). Character-count wrapping is the deprecated pattern across both reference implementations. This change applies broadly: Glance carousel, QuickNote previews, Router handler output, Capture HUD — anywhere `0x4E` content has variable length.
+  **Implementation choice**: port MentraOS's per-glyph pixel-width table (more accurate, slightly more work) OR fahrplan's arithmetic estimator (less accurate but cheaper). MentraOS table is recommended unless effort budget is tight.
+  **Algorithm**: binary search on substring width to find the maximum characters that fit in `DISPLAY_WIDTH = 488`. Look for a space boundary to break at; fall back to character split if no space within range. Replace existing char-count wrappers throughout the codebase.
+  **Constants**: `DISPLAY_WIDTH = 488`, `LINES_PER_SCREEN = 5`, `MAX_CHUNK_SIZE = 176` for BLE chunking. `screenStatus = 0x71 = 0x01 new-content | 0x70 text-show`.
+- **Acceptance**:
+  - [ ] Per-glyph width table loaded (Latin-1+ accented glyphs included — per MentraOS `G1Text.kt:279-419`).
+  - [ ] `calculateTextWidth(text)` function returning pixel width.
+  - [ ] `splitIntoLines(text, maxDisplayWidth)` function using binary-search wrapping with space-break preference.
+  - [ ] Existing char-count wrapping call sites identified and replaced.
+  - [ ] No regression in Glance carousel, QuickNote preview, or Chat streaming rendering.
+  - [ ] Manual verification: long lines wrap at visually correct boundaries; words do not split mid-letter unless no space exists.
+- **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / 0x4E text rendering" section and "fahrplan / Render pipeline" section. Note that the G1 firmware font includes a known set of Latin-1+ accented characters beyond ASCII — see `g1-firmware-font-ascii-only` memory for the current (to-be-refined) claim; `g1-font-table-memory-refinement` (Next, PR-B) updates that memory once this item is started.
+
 ### capture-v2-recordings-list: Capture v2 — Recordings list UI
 - **Status**: Next
 - **Priority**: Medium-high
@@ -147,16 +164,43 @@ Working, but still needs real-world observation:
   - [ ] No naming prompts during recording flow — rename is post-hoc in the list UI.
 - **Notes**: Future anchor for offline Whisper, summaries, rename-last-recording assistant action, export workflows — none of those are in scope here. Cross-ref: `capture-v2-hud-probe` and `capture-v2-safer-stop` work in the service layer; this item is UI only.
 
+### dashboard-widgets-v1: Dashboard widgets v1 — calendar events and system status
+- **Status**: Next
+- **Priority**: Medium-high
+- **PR group**: PR-B (Dashboard widgets v1)
+- **Context**: fahrplan's entire app is built on `0x1E` dashboard notes — up to 4 firmware-native dashboard slots, each with title + body. They serialise every "widget" (calendar, waypoints, checklists, Träwelling, Home Assistant, custom WebViews) down to these slots and push them on a 1-minute sync tick. Their `models/g1/note.dart:18-107` documents the byte format with `Note.buildAddCommand()` and `buildDeleteCommand()`. We have had this opcode in the backlog with zero implementation — fahrplan proves the use case and the approach. Promoted from Backlog 2026-05-18 after fahrplan comparison confirmed viability.
+  **Protocol**: `1e <len> 00 <seq> 03 01 00 01 00 <slot> 01 <title_len> <title> <body_len> 00 <body>`. Full field breakdown at `docs/protocol-reference.md` L444-462.
+- **Scope for v1**:
+  - Build `DashboardNote` model mirroring fahrplan's `Note` shape.
+  - Build `DashboardComposer` that gathers up to 4 typed widgets and serialises to notes.
+  - 60-second sync timer that pushes the current widget set. (fahrplan sync timer pattern: `bluetooth_manager.dart:806-822`.)
+  - First concrete widget: **today's calendar events** (next N items, time + title, ASCII-only) — reuses calendar access from `router-v1-glance-handlers` `CalendarHandler`.
+  - Second concrete widget: **system status** (battery + connection + signal strength) — small, useful, no new data sources needed.
+- **Acceptance**:
+  - [ ] `DashboardNote` add/delete builder against `0x1E` byte format.
+  - [ ] `DashboardComposer` produces up to 4 widget payloads.
+  - [ ] 60-second sync timer pushes refresh.
+  - [ ] Today's-calendar widget rendering (ASCII-only).
+  - [ ] System-status widget rendering.
+  - [ ] Widgets visible on G1 dashboard at next tilt-up.
+  - [ ] Note slots correctly deleted when widgets are dismissed or empty.
+- **Notes**: Supersedes the former `dashboard-injection` Backlog entry. Cross-ref `quicknote-dashboard-push` (Backlog) — that item pushes a completed QuickNote to a named slot; they share the `0x1E` byte format but are separate features. Decide at implementation time whether to fold `quicknote-dashboard-push` into this item or keep it as a follow-on. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x1E dashboard widgets" section. fahrplan source references: `models/g1/note.dart`, `models/fahrplan/fahrplan_dashboard.dart:147-183`, `bluetooth_manager.dart:806-822`.
+
 ### router-v1-glance-handlers: Router v1 — `glance` trigger + Calendar, Notes, Media handlers
 - **Status**: Next
 - **Priority**: Medium
+- **PR group**: PR-A (Router v1 reference adoption)
 - **Context**: Turns the left-hold Quick Ask into a deterministic command layer, with LLM as fallback. Introduces a `glance` trigger word that routes to structured handlers before falling through to the existing OpenAI path. Acoustically distinctive; two syllables; no near-homophones. Decided 2026-05-18.
+  fahrplan ships exactly this architecture working today — use it as the primary reference implementation. Their pattern: `VoiceModule(name, commands)` registry containing `VoiceCommand(description, triggerPhrases, execute(inputText))` entries, plus an `endCommand()` 5-second auto-clear hook. Key fahrplan files: `lib/voice/module.dart` (31 lines, interfaces), `lib/voice/voicecontrol.dart` (311 lines, registry + match algorithm), and `lib/voice/modules/{checklist,music,stop,waypoint,webview}.dart` (example modules).
+  **Polarity note:** fahrplan uses LLM as a tiebreaker between deterministic command candidates; their primary route is fuzzy match. We invert: keep our existing OpenAI Chat as the no-match fallback (generative answer), with fuzzy match as primary router. The `VoiceModule` interface is symmetric across both polarities.
 - **Routing model**:
   - Transcript normalised (lowercase, strip punctuation).
   - First token == `glance` → router claims the transcript.
   - Else → existing LLM path unchanged.
   - Router-claimed but no handler matched → fall through to LLM (e.g. `glance recipe for chicken` still works).
 - **Architecture**: `QuickAsk transcript → AssistantRouter → CommandHandler → DisplayRenderer`
+- **Fuzzy match algorithm** (fahrplan `voicecontrol.dart:163-209`): for each trigger phrase, run `ratio`, `partialRatio`, `tokenSortRatio`, `tokenSetRatio` from `fuzzywuzzy` (or Dart equivalent), take max, accept score ≥ 60 with longest-phrase tiebreak. `_findBestCommandAsync` variant (lines 211–240) uses LLM as a tiebreaker between deterministic candidates — adopt only if needed.
+- **STT noise filter** (openclaw-glasses `src/handlers/transcription.ts:45-61`): drop incoming transcripts where duration < 500 ms OR mean STT confidence < 0.85, applied **before** the `glance` trigger keyword check, so noisy passes never reach handler matching at all. If confidence is not available from the STT provider, apply the duration filter only (degrade gracefully). OpenAI Whisper does expose confidence. This is approximately 20 lines of Dart in the STT result path. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "openclaw-glasses / Things worth borrowing" point 1.
 - **Handler keyword matching** (within router-claimed transcripts):
   - `calendar` / `meeting` / `meetings` / `today's` / `next` → `CalendarHandler`
   - `note` / `notes` / `todo` / `shopping` → `NotesHandler`
@@ -182,15 +226,23 @@ Working, but still needs real-world observation:
   - Reuse existing media notification state — do not capture live audio.
   - Render current track in full (this can use full text width; glance mode crops by default).
   - Shazam-style live audio fingerprinting is explicitly OUT of scope here — see `router-v1-shazam` in Backlog.
+  - Before shipping `MediaHandler`: implement `MyAudioHandler` boot trick (fahrplan `main.dart:58-73`) — spin up an empty `MyAudioHandler` via `AudioService.init()` and call `play()` on it at startup to register the app as a media-controller participant. This makes system-level media APIs accessible. Their `modules/music.dart` wraps `FlutterMediaController` for play/pause/skip/back/"what's playing" and is the reference implementation.
 - **Acceptance**:
+  - [ ] Port `VoiceModule` and `VoiceCommand` interfaces (Dart, idiomatic to codebase).
+  - [ ] Add `fuzzywuzzy` package dependency or Dart equivalent.
+  - [ ] Match algorithm: ≥ 60 acceptance, longest-phrase tiebreak.
+  - [ ] Wire Calendar/Notes/Media handlers as `VoiceCommand` instances within a `VoiceModule` registry.
+  - [ ] STT noise filter applied before trigger keyword check (duration < 500 ms OR confidence < 0.85 → drop).
   - [ ] `glance calendar` (and synonyms) shows next N events from Android calendar.
   - [ ] `glance notes` (and synonyms) shows top N items from `NotesStore`.
   - [ ] `glance music` (and synonyms) shows current media notification state.
   - [ ] `glance <anything unmatched>` falls through to LLM.
   - [ ] Non-`glance` transcripts continue to reach LLM path unchanged.
   - [ ] Calendar permission flow works on first-time use.
+  - [ ] `MyAudioHandler` boot registered before `MediaHandler` ships.
+  - [ ] Keep existing OpenAI Chat path as no-match fallthrough.
   - [ ] All HUD output is ASCII-only, text-only via `0x4E`.
-- **Notes**: `MediaHandler` reuses existing notification state — the `now-playing-mediasession` Backlog item (Audible MediaSession metadata fix) is complementary: fixing that would improve what `MediaHandler` can render for Audible and similar apps. Cross-ref that item when implementing. Independent of Capture v2 stream.
+- **Notes**: `MediaHandler` reuses existing notification state — the `now-playing-mediasession` Backlog item (Audible MediaSession metadata fix) is complementary: fixing that would improve what `MediaHandler` can render for Audible and similar apps. Cross-ref that item when implementing. Independent of Capture v2 stream. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Assistant / LLM integration" section.
 
 ### router-v1-chat-logging: Router v1 — Chat history logging (single feed, origin tag)
 - **Status**: Next
@@ -203,6 +255,99 @@ Working, but still needs real-world observation:
   - [ ] Origin tag (`Chat` / `Ask`) is visible per entry.
   - [ ] Existing Chat entries unaffected.
 - **Notes**: Rationale for single-feed approach: avoids splitting history into sub-tabs while preserving the distinction between conversational Chat turns and intent-driven Ask turns. Pair with `router-v1-glance-handlers`.
+
+### time-weather-0x06-extend: Extend `0x06 0x01` payload with weather icon and temperature
+- **Status**: Next
+- **Priority**: Low
+- **PR group**: PR-B (Dashboard widgets v1)
+- **Pairs with**: `dashboard-widgets-v1` (lands once weather data is flowing).
+- **Context**: fahrplan's `models/g1/time_weather.dart:158-185` pushes time + weather icon + temperature in a single `0x06 0x01` packet. We currently push time only. The firmware uses these fields to render weather on its native dashboard slot. fahrplan also pushes both a 32-bit and 64-bit timestamp with timezone offset applied (lines 191-211). Weather icon codes are defined in a `WeatherIcons` enum at `time_weather.dart:4-20` (NIGHT, CLOUDS, DRIZZLE, etc.) — these are firmware-native icon codes.
+- **Acceptance**:
+  - [ ] Extend our `0x06 0x01` packet builder to accept optional `weatherIcon`, `tempC`, `unit` (C/F), `is12h` fields.
+  - [ ] Default to zero/null values when weather data is not available (backwards-compatible with current behaviour).
+  - [ ] Wire to a weather data source (initially hardcoded/manual, or wait for `gadgetbridge-weather-receiver`).
+  - [ ] Verify weather panel renders correctly on the G1's native dashboard.
+- **Notes**: Cross-ref `gadgetbridge-weather-receiver` (also Next, PR-B) which is the intended live data source. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x06 0x01 time-and-weather" subsection.
+
+### g1-font-table-memory-refinement: Refine `g1-firmware-font-ascii-only` memory
+- **Status**: Next
+- **Priority**: Low
+- **PR group**: PR-B (Dashboard widgets v1)
+- **Effort**: Memory + docs update only; no code.
+- **Context**: The current memory (`feedback_g1_firmware_font.md`) says "Unicode symbols don't render — use plain ASCII". MentraOS's font table at `G1Text.kt:279-419` proves the G1 firmware DOES render a defined set of Latin-1+ accented characters: French (À, Ç, É, à, è, é, ê, ë, î, ï, ô, ù, û, ç, ÿ), German (Ä, Ö, Ü, ä, ö, ü, ß, ẞ), Spanish (Ñ, ñ, Í, í, Ó, ó, Ú, ú, Á, á). Arbitrary Unicode symbols (▶ ⬆ ⟶) still do not render — that part of the rule stands.
+- **Acceptance**:
+  - [ ] Update `.claude/agent-memory/backlog-groomer/feedback_g1_firmware_font.md` with the refined claim: "G1 firmware font is ASCII plus a known set of Latin-1+ accented characters. Arbitrary Unicode symbols do not render. The full glyph set is documented in MentraOS `G1Text.kt:279-419`."
+  - [ ] Update the `MEMORY.md` index line to match the refined claim.
+- **Notes**: No code changes required. This is a prerequisite to avoid future sessions applying the overly restrictive ASCII-only rule to accented-language content. Cross-ref `pixel-aware-0x4e-wrapping` (Next, PR-A) which will port the MentraOS glyph table — the refined memory should be in place before that item ships.
+
+### protocol-0x4e-header-docs: Document `0x4E` header bit composition in `protocol-reference.md`
+- **Status**: Next
+- **Priority**: Low
+- **PR group**: PR-B (Dashboard widgets v1)
+- **Effort**: Documentation only; no code.
+- **Context**: Both MentraOS (`G1Text.kt:185-195`) and fahrplan (`bluetooth_manager.dart:432-505`) document the 9-byte `0x4E` header explicitly. The `screenStatus` byte is the bitwise OR of `0x01` (new content) and `0x70` (text show) = `0x71`. This is not currently documented in our protocol reference.
+- **Acceptance**:
+  - [ ] Add or update `docs/protocol-reference.md` section covering `0x4E` with: 9-byte header layout `[0x4E, textSeqNum, totalChunks, i, screenStatus, new_char_pos0, new_char_pos1, page, totalPages]`; `screenStatus` bit composition `0x01 new-content | 0x70 text-show = 0x71`; `MAX_CHUNK_SIZE = 176` body chunk constraint; note that multi-page support exists (`page`, `totalPages` fields) but is not commonly used.
+- **Notes**: Documentation-only; no code changes. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / 0x4E text rendering" section.
+
+### gadgetbridge-weather-receiver: Gadgetbridge weather broadcast receiver
+- **Status**: Next
+- **Priority**: Low–Medium
+- **PR group**: PR-B (Dashboard widgets v1)
+- **Depends on**: `dashboard-widgets-v1` (need a dashboard surface) and `time-weather-0x06-extend` (need the extended time/weather payload).
+- **Context**: fahrplan's `lib/services/weather_broadcast_service.dart` (101 lines) registers an Android `BroadcastReceiver` for `nodomain.freeyourgadget.gadgetbridge.ACTION_GENERIC_WEATHER` — the de-facto open-source weather intent, broadcast by Gadgetbridge, Weather Notification, Breezy Weather, and other publisher apps. No API key, no quota, no internet dependency for our app. The payload shape is documented in fahrplan's `models/android/weather_data.dart`.
+- **Implementation**:
+  - Add Android-side `BroadcastReceiver` (Kotlin) registered for the intent action.
+  - Parse the JSON payload (shape: fahrplan `models/android/weather_data.dart`).
+  - Push parsed data through to Flutter via `EventChannel`.
+  - Feed into `time-weather-0x06-extend` (Item 5) and the dashboard weather widget.
+- **Acceptance**:
+  - [ ] `BroadcastReceiver` registered and picks up Gadgetbridge intent.
+  - [ ] Payload parsed and surfaced to Flutter.
+  - [ ] Data feeds `0x06 0x01` time-and-weather push.
+  - [ ] User-facing setting documents which weather publisher apps are supported.
+- **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Notable patterns / Gadgetbridge weather broadcast intake".
+
+### heartbeat-retry-suppression: Heartbeat retry suppression in `BleManager.request`
+- **Status**: Next
+- **Priority**: Low
+- **PR group**: PR-C (BLE hardening from comparison)
+- **Effort**: Trivial.
+- **Context**: MentraOS iOS notes (`G1.swift:1040`) — "for heartbeats, don't retry and assume success since the glasses don't respond". Heartbeats are best-effort transport probes; queueing retries pollutes the send queue and amplifies failure under network stress.
+- **Acceptance**:
+  - [ ] In `lib/ble_manager.dart`, add a conditional in the request retry path: if the outgoing packet's opcode is `0x25`, do not enqueue retries on write failure.
+  - [ ] Heartbeat write failures treated as silent (no retry queued).
+  - [ ] Normal (non-heartbeat) request retry behaviour unchanged.
+  - [ ] Verified by logcat inspection during a simulated leg-drop scenario.
+- **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / Heartbeat — robustness patterns" point 1.
+
+### heartbeat-counter-echo-verify: Heartbeat counter echo verification in ACK check
+- **Status**: Next
+- **Priority**: Low
+- **PR group**: PR-C (BLE hardening from comparison)
+- **Effort**: Low.
+- **Context**: MentraOS iOS (`G1.swift:1192`) verifies the firmware echoes the counter byte back: `handleAck(from: peripheral, success: data[1] == heartbeatCounter - 1)`. Our current ACK check (`proto.dart:209-211`) validates `data[0] == 0x25 && data[4] == 0x04` but does NOT verify the counter echo. This is a real gap — wrong-glass replies or stale packets would currently pass our check.
+- **Acceptance**:
+  - [ ] Extend the ACK check in `lib/services/proto.dart:209-211` (and equivalent paths) to also verify that the counter byte in the response matches the most recently sent counter value (consult project memory `heartbeat-regime` for the exact byte positions in the response).
+  - [ ] Wrong-counter responses logged and treated as missed heartbeats.
+  - [ ] No regression in normal heartbeat ACK rate (still ~100% in steady-state).
+- **Notes**: Cross-ref project memory `heartbeat-regime` for the existing 6-byte heartbeat payload structure. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / Heartbeat" section.
+
+### mic-right-side-only-spike: Microphone right-side-only firmware quirk spike
+- **Status**: Next
+- **Priority**: Low
+- **PR group**: PR-C (BLE hardening from comparison)
+- **Effort**: Quick spike (≤1 hour).
+- **Context**: fahrplan's `bluetooth_manager.dart:838-844` sends `setMicrophone()` to the right glass only, with the comment "for an unknown issue the microphone will not close when sent to the left side". We may have the same latent quirk without knowing it, as we have not explicitly tested left-only mic close behaviour.
+- **Spike scope**:
+  - Inspect our current mic open/close paths (Capture, QuickNote, Chat) for left-vs-right routing.
+  - If we currently send to both legs or the left leg: experimentally try right-only and observe mic state after close.
+  - Confirm or refute that our app shares the firmware quirk.
+  - Document the finding in `docs/current-behaviour.md` or `docs/protocol-reference.md`.
+- **Acceptance**:
+  - [ ] Spike result documented (one finding entry).
+  - [ ] If quirk confirmed: small follow-up task created to route `setMicrophone()` to right side only.
+- **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / BLE transport / firmware quirk" subsection.
 
 ### quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
 - **Status**: Next
@@ -251,12 +396,23 @@ Working, but still needs real-world observation:
 - **Acceptance**: Not defined until crypto spike is complete and Terminal Mode is promoted out of Backlog.
 - **Notes**: Constraints — short bursts only; do NOT stream raw token output continuously; surface transitions, not raw stream. Reuse existing `0x52` streaming renderer + paced queue infrastructure. Depends on `terminal-mode-crypto-spike` passing. Protocol refs above also apply here.
 
-### dashboard-injection: Dashboard content injection
+### terminal-mode-v0-local-ipc-spike: Investigate Claude Code's local-IPC surface for laptop-tethered Terminal Mode v0
 - **Status**: Backlog
 - **Priority**: Low
-- **Context**: `0x1e` TX can push titled content into the firmware's dashboard grid layout — useful for summaries, reminders, or status info.
-- **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
-- **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot? Demoted from Next — lacks a concrete use case. Revisit when a clear scenario emerges.
+- **Effort**: Half-day spike. Standalone item (no PR group).
+- **Context**: openclaw-glasses showed that AI-session-to-glasses bridges become dramatically simpler when the data plane is local (avoiding the E2E-encryption requirement that drives Happy's heavyweight implementation). If Claude Code exposes a local IPC endpoint (UNIX socket, named pipe, `--port` flag, file tail, SDK local server), we could prototype a Terminal Mode v0 that ships ahead of the full Happy integration — read-only display first, reply path later.
+- **Spike scope**:
+  - Investigate `claude --help`, Claude Code SDK docs, and any documented local endpoint.
+  - Check whether the Claude Code agent runtime can be observed from outside the process (event API, log tail, session-state file, etc.).
+  - Verify whether the laptop-tethered shape is viable: laptop → local socket → small adapter → LAN → Flutter app → existing BLE render path.
+  - Reach a clear verdict: viable / not viable / partial.
+- **Decision gate**: if spike succeeds, propose a `terminal-mode-v0` Next item with the discovered shape. If not, the local-tether idea collapses and `terminal-mode-crypto-spike` + `terminal-mode-v1` remain the only path.
+- **Acceptance**:
+  - [ ] Investigation report documented (memory file or `docs/investigations/`).
+  - [ ] Verdict reached on whether Claude Code exposes a local IPC surface.
+  - [ ] If verdict is "yes": shape of a v0 bridge sketched (architecture, scope, dependencies).
+  - [ ] If verdict is "no": this item closed; `terminal-mode-crypto-spike` is the only path forward.
+- **Notes**: What v0 would NOT replace: Happy's away-from-desk use case, mobile-network Terminal Mode, encrypted relay, multi-device. These remain the eventual reason for full Happy integration and are covered by `terminal-mode-v1`. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "openclaw-glasses / The genuinely transferable idea" section.
 
 ### quicknote-dashboard-push: QuickNote v2 — push transcribed note to glasses dashboard via 0x1e TX
 - **Status**: Backlog
@@ -264,7 +420,7 @@ Working, but still needs real-world observation:
 - **Context**: QuickNote v1 ends at "transcribed note saved to phone app". The natural v2 follow-on is pushing that note text back to the glasses firmware dashboard using the `0x1e` TX opcode. Surfaced during v1 planning (2026-05-08) and captured immediately to avoid losing the protocol shape while it is fresh. Deliberately deferred — v1 scope is kept tight.
 - **Protocol**: `1e <len> 00 <seq> 03 01 00 01 00 <slot> 01 <title_len> <title> <body_len> 00 <body>`. Full field breakdown at `docs/protocol-reference.md` L444-462.
 - **Acceptance**: A completed QuickNote transcription is pushed to a named dashboard slot and readable on the glasses within a few seconds of the right-hold gesture completing.
-- **Notes**: Depends on QuickNote v1 (shipped 2026-05-09 — see Recently Done) being stable in the field. Cross-ref `dashboard-injection` (general `0x1e` injection backlog item) — this is the concrete use case that item was waiting for.
+- **Notes**: Depends on QuickNote v1 (shipped 2026-05-09 — see Recently Done) being stable in the field. Cross-ref `dashboard-widgets-v1` (Next) — that item builds the general dashboard widget layer on `0x1E`; this item is the concrete QuickNote-specific use case that feeds into it. Decide at implementation time whether to fold this into `dashboard-widgets-v1` or keep it as a follow-on.
 
 ### now-playing-mediasession: Now Playing: extract MediaSession metadata for apps with empty notification fields
 - **Status**: Backlog
@@ -431,116 +587,7 @@ Full cross-language rename across Android + Dart. 13 Kotlin files moved (`git mv
 
 Files changed: `android/app/build.gradle`, `android/app/src/main/cpp/liblc3.cpp`, 13 Kotlin files (moved + updated), `pubspec.yaml`, 45 Dart files, 3 doc files.
 
-### ble-single-leg-disconnect: Single-leg disconnect robustness (2026-05-10)
-Root cause: only the "both legs down" path triggered auto-reconnect; a single-leg drop was not handled. Fixed across two commits (`2ba1e31` initial fix, `ff20b98` Codex hardening).
-
-**What shipped:**
-- Single-leg drop now triggers auto-reconnect (previously a no-op).
-- Three Codex-review blockers fixed: false-positive reconnect trigger during initial connect, off-by-one in reconnect counter, `reconnectInFlight` flag left set after a failed attempt.
-- 30-second watchdog timer added to recover from a stuck `autoConnect`.
-- `forceReconnect()` now resets stale per-leg health state before attempting reconnect.
-
-Files changed: `android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt`, `lib/ble_manager.dart`.
-
-### quicknotes-multi-list: QuickNotes multi-list categorisation (2026-05-09)
-Three-category auto-classification via GPT piggyback on tidy step + keyword regex fallback. TabBar UI with move-between-categories picker. Schema migration v1→v2.
-
-### QuickNote via hosted transcription — v1 pipeline complete (2026-05-08/09)
-Full right-hold → transcribed local note pipeline shipped across two sessions. All 10 tasks done; Codex peer review passed with 2 blockers fixed (ack on error paths, undo/tidy race documented) and 1 NIT resolved (tidy log tag). Persistence (0x21 baseline on restart) and auto-sync (unknown notes fetched from glasses on first press after launch) added post-review.
-
-**Protocol discoveries:**
-- Firmware does NOT stream audio unsolicited — host must send `1e 06 00 <seq> 02 <noteIndex>` to right leg after `0x21` to request the stream.
-- `0x21` fires as 42 bytes on this firmware (circular buffer notes-list dump, 4 records); diff-based detection required to identify the just-recorded note.
-- LC3 frame size is 200 bytes; BLE chunk payloads are 190 bytes — must concatenate then re-slice, not treat chunk boundaries as frame boundaries.
-- Defensive flush on non-`0x1e` packets was too aggressive; removed. Rely on sub-code change + 500 ms watchdog instead.
-- Screen-clear after pipeline: `0x50` alone does not blank the display; `0x50 + 0x18` sequence required. (Also fixes the glance-auto-clear-regression that was open at end of 2026-05-08.)
-- Seq counter starting at `0x40` works; firmware does not enforce a range.
-
-**What shipped:**
-- `QuickNoteAudioBuffer.kt` — native BLE chunk accumulator
-- `quick_note_capture_service.dart` — LC3 decode → WAV probe, GO/NO-GO gate PASSED
-- `QuickNoteTidyService` — GPT-4.1-mini with 3-pair few-shot prompt, falls back to raw on failure
-- Pipeline glue — decode → WAV → OpenAI Whisper STT → `NotesStore.insert(raw)` → async tidy → `NotesStore.updateTranscriptClean`; firmware ack (`04 01`) fires unconditionally (blocker fix); ack now sent after audio received on all paths including errors
-- `note.dart` + `notes_store.dart` — sqflite schema with sort_order, status, raw/clean transcript fields; rebalance logic for precision; persisted 0x21 baseline fixes first-note-after-restart bug
-- `NotesPage` UI — `ReorderableListView`, swipe-to-delete, status toggle, expand/collapse raw vs clean, empty state; auto-syncs unknown glasses notes on first press after launch
-- `HomePage` notes card — active note count
-
-**Polish remaining**: diagnostic log revert — tracked as Next #4.
-
-Full protocol detail in `docs/FINDINGS-quicknote.md`.
-
-### Glance auto-clear regression — fixed (2026-05-09)
-Root cause: `0x50` clearDisplay alone does not blank the display in all firmware states; the correct sequence is `0x50` followed by `0x18`. The regression surfaced at end of the 2026-05-08 session after the `0x18` → `0x50` migration. Fix confirmed working on device (combo restores auto-clear in Glance mode). Cross-ref `ghost-listening-screen` Done item for the original migration context.
-
-### BLE stability — Tier 1: Android native GATT lifecycle fixes (2026-05-08)
-Addressed day-over-day BLE link decay ("works fine until it doesn't") by fixing Android-native GATT lifecycle bugs. Six targeted changes to `BleManager.kt` and `MainActivity.kt`:
-
-- `gatt.close()` now called on disconnect — was leaking `BluetoothGatt` instances, the root cause of the progressive decay symptom.
-- `reconnectLeg` switched to `connectGatt(autoConnect=true)` so the OS handles background reconnection when the device returns to range.
-- GATT setup operations serialised through callbacks: `onServicesDiscovered` (CCCD write) → `onDescriptorWrite` (MTU request) → `onMtuChanged` (conditional bond + mark ready). Previously pipelined and racing.
-- New callbacks added: `onMtuChanged`, `onDescriptorWrite`, `onCharacteristicWrite` (errors-only).
-- `createBond()` guarded by `bondState != BOND_BONDED` to prevent duplicate bond attempts.
-- `BroadcastReceiver` for `ACTION_BOND_STATE_CHANGED` registered; observes bonding outcome and surfaces `bond_failed` to Flutter.
-
-Files changed: `android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt`, `android/app/src/main/kotlin/com/eddie/evencompanion/MainActivity.kt`.
-
-**Build clean. Awaiting on-device validation** — this entry will be updated once hardware testing is confirmed.
-
-Tier 2 (heartbeat cadence) and Tier 3 (reconnect tuning, connection priority) are deferred — tracked in Backlog below.
-
-### App icon — custom adaptive icon (2026-05-07)
-Custom adaptive launcher icon replacing the default Flutter blue-F. Foreground: white open-ring eyeglasses outline (bridge + temples) at 1024×1024 on a transparent PNG (`assets/icon/foreground.png`), generated via `tool/generate_app_icon.dart` (Dart/Skia Canvas + AA, run with `flutter test` — reproducible). Background: `#1F5E54`. `flutter_launcher_icons ^0.14.4` wired in `pubspec.yaml`. Mipmap PNGs and adaptive-icon XML written into `android/app/src/main/res/`. APK built clean.
-
-### Home / Settings UI polish — theme, layout, and structural fixes (2026-05-07)
-Six cosmetic and structural issues resolved across Home, Settings, and Chat screens:
-
-- **Theme accent**: replaced mint (`~#7DCFA0`) with `#1F5E54` (deep teal-green, "mallard neck"). Updated `lib/main.dart` ColorScheme — `primary`, `secondary`, `secondaryContainer` and their `on*` counterparts. `FilledButton.tonal` (Force Reconnect) derives from `secondaryContainer` so that override was required. Hard-coded greens swept from `home_page.dart` (mode button), `settings_page.dart` (Switch active thumbs — now theme-driven), and `chat_transcript_page.dart` (user bubbles).
-- **Home connecting state — Stop Scan**: link removed; the 15-second `scanTimer` still provides the timeout, so no functionality lost.
-- **Home connecting state — status chips**: `LayoutBuilder` forces a 2×2 grid when chip count == 4 (connecting state). Other counts (e.g. connected-state 3+2) continue through `Wrap` unaffected.
-- **Home connecting state — pair list row**: `OutlinedButton` (false affordance) replaced with `InkWell` + `Row` — device name as secondary text on the left, "Pair N" action label in primary colour on the right.
-- **Home (both states) — duplicate title**: card header dropped; settings cog moved to `AppBar.actions`; card lead content is now the connection status line.
-- **Settings notifications page — column headers**: per-row "Now Playing"/"Mute" labels replaced with a single `_buildSwitchColumnHeaders()` widget at section top; `SizedBox(width: 56)` columns align with each row's switches. "Now Playing" abbreviated to "Playing" (would have wrapped to two lines — change confirmed acceptable).
-
-### Glance: ongoing call idle surface (2026-05-06)
-When a phone call is active and the Glance carousel display times out, the glasses now show a call HUD rather than going blank. Two lines are shown: `Ongoing call: <name>` and `Call time: M:SS` (switching to `H:MM:SS` once the call exceeds an hour). Duration is computed locally in Dart from the call connect timestamp (`notification.when`, confirmed to be set by Samsung's in-call UI to the answer time — NOT the notification post time) via a 1 Hz `Timer.periodic`. Tilt-up opens the normal notification carousel as before; tilt-down or carousel timeout returns to the call HUD. When the call ends the notification is removed, `clearCall` stops the timer, and the idle surface tears down via `Proto.exit()`. The previously-stub `showIdleSurfaceIfAvailable()` in `GlanceService` is now the live entry point for this path. New `NotificationDisposition.callAbsorbed` added to `notification_policy.dart`; call notifications bypass the existing ongoing-suppressed rule and are excluded from the Glance carousel. Detection: `com.samsung.android.incallui`, `isOngoing == true`, `isCall` getter on `CompanionNotification`. 5 files changed: `notification_policy.dart`, `companion_controller.dart`, `glance_service.dart`, `companion_notification.dart`, Kotlin listener + feed store. Known gap: if the user dismisses the last carousel notification mid-call, `removeNotificationByKey` still calls `Proto.exit()` rather than falling back to the HUD — tracked in Backlog (`call-idle-dismiss-fallback`).
-
-**Pending on-device verification:** caller name displays correctly, duration ticks at 1 Hz, tilt-up returns to carousel, tilt-down/timeout returns to HUD, call-end clears the HUD.
-
-### BLE connection stability and auto-reconnection (2026-05-06)
-Three capabilities implemented across 5 files (`app_settings_store.dart`, `device_status_service.dart`, `ble_manager.dart`, `companion_controller.dart`, `home_page.dart`). (1) Post-disconnect auto-reconnect with exponential backoff: immediate → 30 s → 60 s → 120 s → give up. (2) Cradle-aware smart disconnect: skips reconnect when last persisted wear state was "in cradle" (`F5 08` / `F5 0B`). (3) Auto-connect on app launch using persisted `ble.last_channel_number`. Also fixed a critical bug: `_onGlassesDisconnected()` was dead code — disconnect timer cleanup never ran; fixed via `wasConnected && !isConnected` transition detection in `_applyConnectionPayload()`. New persisted settings: `ble.last_channel_number`, `ble.last_wear_state`. UI shows "Reconnecting..." during backoff attempts.
-
-### Glance: tilt-down display stuck bug fixed (2026-05-06)
-The tilt-down handler (case 3, `F5 03`) in `companion_controller.dart` had an early `break` when cancelling a pending tilt-up intent, which skipped calling `GlanceService.startLookDownTimeout()`. If the display was already visible from a previous confirmed intent or notification auto-pop, the clear timer never started and the display stayed on the glasses indefinitely. Fix: `startLookDownTimeout()` is now called unconditionally on every tilt-down in Glance mode. The method's own `if (!_isVisible) return;` guard makes it a safe no-op when the display is not visible. One case block changed; no new fields or methods.
-
-### Glance: "Now Playing" media integration (2026-05-06)
-Media notifications from streaming apps are now absorbed into Glance line 1 instead of cycling through the notification carousel. Line 1 shows `12:41  |  100%  |  ▶ Green Day - Dookie` when playback is active; reverts to `12:41  |  100%` when stopped. New `NotificationDisposition.mediaAbsorbed` classification. Two-tier detection: auto-detect (`isMediaStyle && category == transport`) plus per-app "Now Playing" toggle in Settings. Track text truncated with `...` at 43-char display width. DB migrated v1 → v2 (`media_override` column). Settings UI gains two toggles per app: "Now Playing" and "Mute". 6 files changed: `notification_policy.dart`, `notification_settings_store.dart`, `notification_package_preference.dart`, `glance_service.dart`, `companion_controller.dart`, `settings_page.dart`.
-
-### Glance: notification display reworked to 3-line format (2026-05-04)
-`lib/services/glance_service.dart` (`_buildDisplayText`). The Glance notification HUD is now a compact 3-line layout: line 1 shows `HH:MM  |  <battery>` (pipe separator between time and battery); line 2 shows `<source>  ·  HH:MM` (mid-dot separator between source and posted time); line 3 is the message content, wrapping naturally via TextService. Earlier in the day the posted time was added as a fourth line; this follow-up merged source and posted time onto one line and dropped the count to three. No model or protocol change — `CompanionNotification.postedAt` was already populated. The "No notifications" idle branch is unchanged. Build green; no new analysis issues.
-
-### Authoritative settings reconcile — brightness, auto, head-up, double-tap (2026-05-01)
-Device testing confirmed complete. Settings persist across cold launches; slider loads its last position from `AppSettingsStore` on startup. All four firmware settings (brightness level, auto-brightness, head-up behaviour, double-tap action) re-assert on every BLE reconnect — even when the official Even Realities app has written different values in between.
-
-### Brightness readback investigation (2026-05-01)
-Empirical testing pinned `0x29` as the brightness GET path (level only; the wiki's claim that byte 3 carries the auto flag was not reproduced). Identified triggers for `0x6e` (TX `23 74`), `0x3e` (TX `3e`), and `0x2c` (host poll, not unsolicited firmware push). Confirmed the right-temple ambient light sensor location. Confirmed `F5 12` already fires unprompted ~15 s after connect with the current level. Decision: pivot to authoritative settings model rather than firmware readback — companion app re-pushes all four settings on every BLE reconnect (see 2026-05-01 authoritative settings entry above). Full protocol detail in `docs/FINDINGS-battery+brightness.md`.
-
-### Chat `0x52` streaming (Confirmed, 2026-05-01)
-Paced streaming via `StreamingRenderQueue` is fully implemented in Chat. Backend chunks are decoupled from display: the queue drains 2 words every 200 ms (~450 WPM effective with BLE overhead), wraps at 43-char word boundaries, and keeps only the last 3 lines — matching the firmware's 3 visible rows. The firmware does NOT auto-scroll; the host manages scrolling. Line 1 carries a `\n` marker; line 2 carries all visible text. Follow-up turns do `Proto.exit()` only when a prior `0x52` session is active. Full reference detail is in `AGENTS.md` and `docs/FINDINGS-layouts.md`.
-
-### Battery + wear state
-`F5 06/08/0B/0A/0F` ingestion wired into `DeviceStatusService`. Glasses battery % displays next to the Glance time line; home screen shows glasses %, case %, and a Worn / In cradle pill.
-
-### Brightness slider + auto toggle (push side)
-`0x01 <level> <auto>` set wired via `Proto.setBrightness`. `F5 12 <level>` echo handled by `DeviceStatusService`. Home screen Display section has a brightness slider (commits on release) and an auto-brightness switch.
-
-### Firmware settings dropdowns (push side)
-Head-up behaviour (`0x08`) and double-tap action (`0x26`) wired as dropdowns on the Settings page. Choices persisted in `AppSettingsStore`; companion app does not re-send on reconnect (non-invasive — superseded by authoritative model, see 2026-05-01 entry above).
-
-### Double-tap host-action mode switch
-`F5 20` wired to `CompanionController.handleDoubleTapModeSwitch`. Cycles companion app modes when the official app's double-tap action is set to a host-handled type (Transcribe / Translate / Teleprompter).
-
-### Navigate `0x0a` lifecycle proven
-Full 108-packet interleaved replay renders on the glasses. Dynamic TRIP_STATUS injection from live Google Maps fields is working. MAP_OVERVIEW direction icon is dynamically generated from the Google Maps notification PNG (decoded to 136×136 monochrome, RLE-encoded), with geometric arrow fallback via `ManoeuvreType` enum. 1-second SYNC poller keeps the session alive. Post-bootstrap updates use TRIP_STATUS+SYNC. Idle-prompt suppression prevents first-load race conditions.
+_Older completed work (2026-05-10 and earlier) has been moved to [`worklist-history.md`](worklist-history.md). The undated baseline-state entries that previously closed this section (battery + wear state, brightness slider, firmware settings dropdowns, double-tap host-action mode switch, Navigate `0x0a` lifecycle proven) were not lost — they remain described as live behaviour in the "Current Product State" section near the top of this file._
 
 ---
 
@@ -721,13 +768,17 @@ Good first prompt pattern:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
   - Capture v2 gating spike (`capture-v2-hud-probe`) — top of Next; 1-hour timebox to verify HUD writes don't corrupt LC3 audio
   - Capture v2 HUD + safer stop (`capture-v2-recording-hud`, `capture-v2-safer-stop`) — blocked on spike result
-  - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — independent stream; medium priority
+  - Pixel-aware `0x4E` wrapping (`pixel-aware-0x4e-wrapping`) — High priority, Next; port MentraOS per-glyph font table; replaces char-count wrapping throughout codebase; PR-A
+  - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — independent stream; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A
+  - Dashboard widgets v1 (`dashboard-widgets-v1`) — Medium-high priority, Next; first `0x1E` implementation; calendar events + system status widgets; PR-B
+  - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
   - `AGENTS.md`
   - `README.md`
   - `docs/current-behaviour.md`
   - `docs/current-architecture.md`
+  - `docs/g1-companion-apps-comparison-notes.md` — primary reference for all PR-A / PR-B / PR-C items added 2026-05-18
   - this file
 
 ---

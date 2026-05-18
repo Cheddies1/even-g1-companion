@@ -123,6 +123,10 @@ class BleMethodChannel(
             "stopGlassesCapture" -> stopGlassesCapture(call, result)
             "stopGlassesCaptureToTemp" -> stopGlassesCaptureToTemp(call, result)
             "cancelGlassesCapture" -> cancelGlassesCapture(call, result)
+            "listRecordings" -> listRecordings(call, result)
+            "renameRecording" -> renameRecording(call, result)
+            "deleteRecording" -> deleteRecording(call, result)
+            "shareRecording" -> shareRecording(call, result)
             "decodeLc3Frames" -> decodeLc3Frames(call, result)
             "getExternalFilesDir" -> getExternalFilesDir(call, result)
             "requestTelephonyPermissions" -> requestTelephonyPermissions(call, result)
@@ -214,6 +218,42 @@ class BleMethodChannel(
     fun cancelGlassesCapture(call: MethodCall, result: MethodChannel.Result) {
         GlassesCaptureRecorder.cancel()
         result.success(true)
+    }
+
+    fun listRecordings(call: MethodCall, result: MethodChannel.Result) {
+        result.success(GlassesCaptureRecorder.listRecordings())
+    }
+
+    fun renameRecording(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val uri = args?.get("uri") as? String
+        val newName = args?.get("newDisplayName") as? String
+        if (uri.isNullOrBlank() || newName.isNullOrBlank()) {
+            result.error("InvalidArguments", "Expected uri + newDisplayName", null)
+            return
+        }
+        result.success(GlassesCaptureRecorder.renameRecording(uri, newName))
+    }
+
+    fun deleteRecording(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val uri = args?.get("uri") as? String
+        if (uri.isNullOrBlank()) {
+            result.error("InvalidArguments", "Expected uri", null)
+            return
+        }
+        result.success(GlassesCaptureRecorder.deleteRecording(uri))
+    }
+
+    fun shareRecording(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val uri = args?.get("uri") as? String
+        val displayName = args?.get("displayName") as? String
+        if (uri.isNullOrBlank()) {
+            result.error("InvalidArguments", "Expected uri", null)
+            return
+        }
+        result.success(GlassesCaptureRecorder.shareRecording(context, uri, displayName))
     }
 
     /**

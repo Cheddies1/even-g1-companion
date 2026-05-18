@@ -11,10 +11,29 @@ class CaptureService {
   static CaptureService? _instance;
   static CaptureService get get => _instance ??= CaptureService._();
 
+  /// Set to `true` to revert to the original single-shot `REC` indicator
+  /// instead of the live pulsing HUD. Intended as a safety valve if the
+  /// periodic HUD refresh is later observed to disturb the inbound audio
+  /// stream during recording. Toggle in code and rebuild — there is no
+  /// runtime setting on purpose, this is meant for triage.
+  static const bool useStaticRecFallback = false;
+
+  /// Cadence of the live HUD refresh while recording. Mirrors the spec from
+  /// `docs/g1-companion-apps-comparison-notes.md` Capture v2 design.
+  static const Duration _hudRefreshInterval = Duration(seconds: 5);
+  static const Duration _saveConfirmationDuration = Duration(seconds: 5);
+
+  /// ASCII-only pulse characters cycled through to signal liveness on each
+  /// HUD refresh. ASCII per the G1 firmware-font constraint.
+  static const List<String> _pulseChars = <String>['*', '#', '.'];
+
   bool _isRecording = false;
   bool _isDisplayVisible = false;
   String? _lastSavedFileName;
   Timer? _displayTimer;
+  Timer? _hudTimer;
+  DateTime? _recordingStartedAt;
+  int _pulseIndex = 0;
 
   bool get isRecording => _isRecording;
   bool get isDisplayVisible => _isDisplayVisible;
@@ -55,9 +74,13 @@ class CaptureService {
     }
 
     _isRecording = true;
+    _recordingStartedAt = DateTime.now();
+    _pulseIndex = 0;
     markDisplayVisible(value: true, source: 'Capture.startRecording');
     _displayTimer?.cancel();
-    await TextService.get.startSendText('REC');
+
+    await TextService.get.startSendText(_buildRecordingHudText());
+    _startHudRefreshTimer();
     AppLog.info('${DateTime.now()} recording started', tag: 'Capture');
     return true;
   }
@@ -68,7 +91,7 @@ class CaptureService {
     }
     _displayTimer?.cancel();
     markDisplayVisible(value: true, source: 'Capture.showReadyIndicator');
-    await TextService.get.startSendText('*');
+    await TextService.get.startSendText('Capture ready\nTilt up to record');
     AppLog.debug('${DateTime.now()} ready indicator shown', tag: 'Capture');
   }
 
@@ -78,6 +101,12 @@ class CaptureService {
     }
 
     _isRecording = false;
+    _stopHudRefreshTimer();
+    final recordedFor = _recordingStartedAt == null
+        ? null
+        : DateTime.now().difference(_recordingStartedAt!);
+    _recordingStartedAt = null;
+
     markDisplayVisible(value: true, source: 'Capture.stopAndSave.result');
     final raw = await BleManager.invokeMethod<Map<dynamic, dynamic>>(
       'stopGlassesCapture',
@@ -87,11 +116,11 @@ class CaptureService {
 
     final fileName = raw?['fileName'] as String?;
     _lastSavedFileName = fileName;
-    final message =
-        fileName == null ? 'Recording saved' : 'Recording saved\n$fileName';
+
+    final message = _buildSaveConfirmation(fileName: fileName, duration: recordedFor);
     await TextService.get.startSendText(message);
     _displayTimer?.cancel();
-    _displayTimer = Timer(const Duration(seconds: 3), () async {
+    _displayTimer = Timer(_saveConfirmationDuration, () async {
       markDisplayVisible(value: false, source: 'Capture.stopAndSave.timeout');
       await TextService.get.stopTextSendingByOS();
       await Proto.exit();
@@ -106,6 +135,8 @@ class CaptureService {
   Future<void> cancel() async {
     _displayTimer?.cancel();
     _displayTimer = null;
+    _stopHudRefreshTimer();
+    _recordingStartedAt = null;
     if (!_isRecording) {
       markDisplayVisible(value: false, source: 'Capture.cancel.idle');
       return;
@@ -126,9 +157,92 @@ class CaptureService {
     _isDisplayVisible = false;
     _displayTimer?.cancel();
     _displayTimer = null;
+    _stopHudRefreshTimer();
+    _recordingStartedAt = null;
     AppLog.info(
       '${DateTime.now()} transport lost — flags cleared',
       tag: 'Capture',
     );
+  }
+
+  void _startHudRefreshTimer() {
+    _hudTimer?.cancel();
+    if (useStaticRecFallback) {
+      // Fallback path: do not refresh — the initial REC text stays put.
+      return;
+    }
+    _hudTimer = Timer.periodic(_hudRefreshInterval, (_) async {
+      if (!_isRecording) {
+        _stopHudRefreshTimer();
+        return;
+      }
+      _pulseIndex = (_pulseIndex + 1) % _pulseChars.length;
+      try {
+        await TextService.get.startSendText(_buildRecordingHudText());
+      } catch (error, stack) {
+        AppLog.error(
+          '${DateTime.now()} HUD refresh failed: $error',
+          tag: 'Capture',
+        );
+        AppLog.debug('HUD refresh stack: $stack', tag: 'Capture');
+      }
+    });
+  }
+
+  void _stopHudRefreshTimer() {
+    _hudTimer?.cancel();
+    _hudTimer = null;
+  }
+
+  String _buildRecordingHudText() {
+    if (useStaticRecFallback) {
+      return 'REC';
+    }
+    final elapsed = _recordingStartedAt == null
+        ? Duration.zero
+        : DateTime.now().difference(_recordingStartedAt!);
+    final pulse = _pulseChars[_pulseIndex % _pulseChars.length];
+    return '$pulse REC  ${_formatElapsed(elapsed)}';
+  }
+
+  String _buildSaveConfirmation({String? fileName, Duration? duration}) {
+    final durationLine = duration == null
+        ? 'Saved'
+        : 'Saved ${_formatDuration(duration)}';
+    if (fileName == null || fileName.isEmpty) {
+      return durationLine;
+    }
+    return '$durationLine\n$fileName';
+  }
+
+  /// Formats an elapsed time as MM:SS (or H:MM:SS once it crosses an hour),
+  /// for compact HUD display.
+  static String _formatElapsed(Duration elapsed) {
+    final totalSeconds = elapsed.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    final mm = minutes.toString().padLeft(2, '0');
+    final ss = seconds.toString().padLeft(2, '0');
+    if (hours > 0) {
+      return '$hours:$mm:$ss';
+    }
+    return '$mm:$ss';
+  }
+
+  /// Formats a duration in human-readable form for the save confirmation
+  /// (e.g. `12m 34s`, `1h 02m 34s`).
+  static String _formatDuration(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours}h ${minutes.toString().padLeft(2, '0')}m ${seconds.toString().padLeft(2, '0')}s';
+    }
+    if (minutes > 0) {
+      return '${minutes}m ${seconds.toString().padLeft(2, '0')}s';
+    }
+    return '${seconds}s';
   }
 }
