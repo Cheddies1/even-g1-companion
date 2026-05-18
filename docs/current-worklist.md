@@ -18,12 +18,13 @@ Working well:
 - Navigate mode boots and stays alive on the firmware `0x0a` card path (full 108-packet interleaved replay, dynamic TRIP_STATUS, 1-second SYNC poller, post-bootstrap TRIP_STATUS+SYNC updates, idle-prompt suppression)
 - Quick mode switching works from app UI and persistent notification
 - Right-hold QuickNote: full pipeline live (gesture → LC3 decode → WAV → Whisper STT → GPT-4.1-mini tidy → local notes store → in-app UI)
-- Per-leg BLE health and reconnect logic exists
+- Per-leg BLE heartbeat at 2 s cadence, independent per-leg start, parallel sends; reconnect logic exists
 - Battery + wear state ingested and displayed (home screen pills, Glance HUD)
 - Brightness slider + auto toggle (push side)
 - Firmware settings dropdowns (head-up behaviour + double-tap action) on Settings page
 - Double-tap mode switch via `F5 20`
 - Notification policy (blocked / suppressed / protected / normal), Filters UI, Runtime Settings UI
+- Time sync (`0x06 01`): epoch pushed to glasses on connect and every 60 s; drives navigation HUD clock and firmware dashboard
 
 Working, but still needs real-world observation:
 - Navigate mode startup robustness on first entry / degraded-leg recovery
@@ -40,11 +41,11 @@ Working, but still needs real-world observation:
 - **Context**: Navigate is functionally working on the `0x0a` structured-card path. Several cleanup tasks remain before it can shed its debug scaffolding. Eddie expects most are straightforward.
 - **Acceptance** — all of the following:
   - [ ] **Startup robustness** — keep observing first-entry Navigate starts, especially cases where one leg begins degraded or reconnecting. Idle prompt is now suppressed; verify no regressions.
-  - [ ] **Field extraction cleanup** — fix `turnDistance` being populated with road text such as `towards Milton Rd` or `Home (36 Campbell Rd)`. Tighten the Google Maps notification parsing model.
+  - [x] **Field extraction cleanup** — fix `turnDistance` being populated with road text such as `towards Milton Rd` or `Home (36 Campbell Rd)`. Tighten the Google Maps notification parsing model.
   - [ ] **Proper EXIT / ARRIVED handling** — sessions are currently torn down via the existing exit path, but the `0x0a 05` EXIT and `0x0a 06` ARRIVED sub-commands are not used cleanly.
   - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
-  - [ ] **Time set (0x06 01)** — periodic epoch-time push from the app to the glasses. The glasses use this for both the navigation HUD clock and the firmware dashboard. Wire format per JohnRThomas wiki: `06 16 00 <seq> 01 <epoch32> <epoch64_ms> <weather_icon> <temp_c> <c_f_flag> <24h_flag> 00`. Start with time-only; weather fields can be zeroed initially.
-  - [ ] **PANORAMIC_MAP placeholder** — replace the misleading static map capture (488x136) with the smallest viable neutral placeholder image. This is option 2 from the Parked PANORAMIC_MAP decision item. The placeholder should be honest about not being a real map — single-colour fill or minimal grid.
+  - [x] **Time set (0x06 01)** — periodic epoch-time push from the app to the glasses. The glasses use this for both the navigation HUD clock and the firmware dashboard. Wire format per JohnRThomas wiki: `06 16 00 <seq> 01 <epoch32> <epoch64_ms> <weather_icon> <temp_c> <c_f_flag> <24h_flag> 00`. Start with time-only; weather fields can be zeroed initially.
+  - [x] **PANORAMIC_MAP placeholder** — replace the misleading static map capture (488x136) with the smallest viable neutral placeholder image. This is option 2 from the Parked PANORAMIC_MAP decision item. The placeholder should be honest about not being a real map — single-colour fill or minimal grid.
 - **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
 ---
@@ -92,26 +93,7 @@ Working, but still needs real-world observation:
 
 ---
 
-### 4. ble-stability-tier2: Heartbeat cadence alignment with official app
-- **Status**: Next
-- **Priority**: Medium
-- **Context**: Tier 2 of the three-tier BLE stability plan. The current heartbeat fires every 8 s on the "both connected" event only; the official Even Realities app sends `0x1f` pings at 2 s per-leg from the moment each leg connects. Half-connections (one leg up, one re-connecting) currently receive no heartbeat and can silently die. Eddie reports frequent idle disconnects that have become more noticeable since the "Reconnected" flash was added.
-- **HCI capture findings (2026-05-18)** — official app keepalive profile derived from existing btsnoop captures:
-  - Opcode: `0x1f` (our app currently uses `0x25`)
-  - Cadence: every ~2 s per leg; p50 = 1.98 s in baseline capture
-  - Timing: sent per-leg independently from the moment each leg connects — NOT gated on "both connected"
-  - Payload structure: 3-byte packets with rotating sub-types (`0x12`, `0x01`, `0x0c`) and a monotonically incrementing counter in the low byte
-  - Baseline capture volume: 35 packets on left leg, 32 on right leg over a ~53 s session
-  - Our current divergences: `0x25` opcode, 8 s interval, only when both legs connected, paused during nav-replay — all four differ from the official app
-- **Acceptance**:
-  - [ ] Heartbeat cadence reduced from 8 s to 2 s.
-  - [ ] Heartbeats sent to both legs in parallel rather than sequentially.
-  - [ ] Per-leg heartbeat starts on individual leg connect, not only on "both connected".
-  - [ ] Heartbeat not paused during nav-replay (mirror official app behaviour).
-  - [ ] Decision recorded on opcode: switch `0x25` → `0x1f` to mirror official app (rotating sub-type + counter payload), or retain `0x25` with documented rationale. HCI evidence suggests `0x1f` is the correct keepalive; `0x25` may serve a different function.
-- **Notes**: Touches `lib/services/proto.dart` and `lib/ble_manager.dart`. Tier 1 (native GATT lifecycle) should be validated on device before starting this. Cross-ref `ble-hci-connection-params` (Backlog) — surfacing HCI LE Connection Update events from existing captures would show the official app's link-layer parameters before coding the cadence values.
-
-### 5. QuickNote polish
+### 4. QuickNote polish
 - **Status**: Next
 - **Priority**: Medium
 - **Context**: QuickNote v1 pipeline is complete and peer-reviewed (all 10 tasks done, persistence and auto-sync shipped 2026-05-09). Three housekeeping items remain before the feature is considered settled.
@@ -121,7 +103,7 @@ Working, but still needs real-world observation:
   - [ ] Visual or haptic feedback when a note is fully saved — user currently gets no on-device confirmation that the pipeline completed (toast, glasses display flash, or similar).
 - **Notes**: Cross-ref `docs/FINDINGS-quicknote.md`, `lib/services/quick_note_capture_service.dart`.
 
-### 6. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
+### 5. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
 - **Status**: Next
 - **Priority**: Low
 - **Context**: The keyword classifier fires on "to do" broadly, so phrases like "make a note to X" get tagged as todo before GPT runs. GPT classification is generally correct; the keyword fallback (which sets the initial category) catches too widely.
@@ -270,6 +252,17 @@ Working, but still needs real-world observation:
 ---
 
 ## Recently Done
+
+### ble-stability-tier2: Heartbeat cadence alignment with official app (2026-05-18, commit 280bb32)
+Tier 2 of the three-tier BLE stability plan. Closed all four cadence divergences from the official Even Realities app identified in HCI capture analysis.
+
+- **Cadence**: reduced from 8 s to 2 s per leg (matching official app p50 = 1.98 s).
+- **Parallelism**: heartbeats now sent to both legs in parallel, not sequentially.
+- **Per-leg start**: heartbeat starts on individual leg connect rather than being gated on "both connected" — half-connections now receive keepalives.
+- **Nav-replay pause removed**: heartbeat continues during nav-replay, mirroring official app behaviour.
+- **Opcode decision**: retained `0x25` pending on-device verification that `0x1f` ACKs (`04 01` responses) are returned. HCI captures show the official app uses `0x1f` with rotating sub-types (`0x12`, `0x01`, `0x0c`) and an incrementing counter; `0x25` continues to function in our app and switching is low-risk but deferred until the ACK path is confirmed. Rationale documented in commit.
+
+Files changed: `lib/services/proto.dart`, `lib/ble_manager.dart`.
 
 ### mode-title-cards: Glance and Navigate mode entry title cards, plus Connected/Reconnected clear (2026-05-13, v1.0.2+3)
 All three sub-items field-verified on device by Eddie.
@@ -607,10 +600,9 @@ Prefer narrow changes in:
 Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
-  - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; field extraction, EXIT/ARRIVED, replay scaffolding decision, time set (0x06 01), PANORAMIC_MAP placeholder
+  - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
   - Call bundle (Next #1–3): `call-state-telephony-upgrade` (TelephonyManager foundation), `incoming-call-hud` (ringing state), `call-idle-dismiss-fallback` (dismiss fallback)
-  - BLE stability tier 2 — Next #4: heartbeat cadence to 2 s per-leg; profile official app keepalive from HCI captures first
-  - QuickNote polish — Next #5
+  - QuickNote polish — Next #4
   - notification policy
   - Capture validation
 - point the agent to:

@@ -162,14 +162,24 @@ class GlanceService {
     }
     if (shouldRefresh) {
       if (_currentNotification() == null) {
-        _isVisible = false;
         _pendingDismissKey = null;
-        await TextService.get.stopTextSendingByOS();
-        await Proto.clearDisplay();
-        AppLog.info(
-          '${DateTime.now()} cleared after notification removal',
-          tag: 'Glance',
-        );
+        if (_currentCall != null) {
+          _isIdleSurfaceActive = true;
+          await _enqueueRender(autoHide: false, markInteracted: false);
+          _startCallTimerIfNeeded();
+          AppLog.info(
+            '${DateTime.now()} last notification dismissed — call HUD takeover',
+            tag: 'Glance',
+          );
+        } else {
+          _isVisible = false;
+          await TextService.get.stopTextSendingByOS();
+          await Proto.clearDisplay();
+          AppLog.info(
+            '${DateTime.now()} cleared after notification removal',
+            tag: 'Glance',
+          );
+        }
       } else {
         await _enqueueRender(autoHide: false, markInteracted: false);
       }
