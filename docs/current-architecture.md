@@ -530,10 +530,16 @@ Current model:
   - bounded reconnect attempt count
 
 Heartbeat handling:
-- `0x25` is sent per leg on a timer
-- heartbeat success marks that leg healthy
-- repeated heartbeat/request timeouts degrade that leg
-- a stale leg can be treated as degraded even before a full disconnect is reported
+- `0x25` is sent to each leg independently every 2 seconds (matching the
+  official Even Realities app's ~2 s cadence); each leg starts its own
+  heartbeat timer immediately on connect — heartbeats are not shared/broadcast
+- heartbeat success marks that leg healthy; the failure counter resets to zero
+- a leg is marked degraded after `_heartbeatDegradeThreshold = 8` consecutive
+  missed heartbeats (`_heartbeatWarningAge = 20 s` stale signal)
+- a stale leg can be treated as degraded even before a full disconnect is
+  reported
+- heartbeats are pauseable (depth-counted) to avoid degraded-leg noise during
+  the Navigate 108-packet bootstrap burst
 
 Reconnect handling (per-leg):
 - degraded legs trigger bounded reconnect attempts through the native bridge
@@ -548,7 +554,7 @@ Reconnect handling (per-leg):
 - the `wasConnected` gate prevents false positives during initial connection setup, when one
   leg may be connected but the other is still mid-GATT-discovery
 - reconnect is per-leg, not always full-session teardown
-- reconnect attempts are intentionally bounded (`_maxReconnectAttempts = 3`) to avoid loops or storms
+- reconnect attempts are intentionally bounded (`_maxReconnectAttempts = 5`) to avoid loops or storms
 - **30s watchdog:** after calling `reconnectLeg` (which uses `autoConnect=true`), Android can
   silently pend with no GATT callback. A `Future.delayed(30s)` clears `reconnectInFlight` when
   it expires without a successful connection, unblocking the health monitor to retry
@@ -714,6 +720,28 @@ Bridge methods/events:
 - [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt)
 
 This listener path is a core foundation for both Glance and Navigate.
+
+## Telephony event ingestion
+
+Separate from the notification listener, a dedicated Android service monitors
+phone call state directly via the telephony API:
+- [android/app/src/main/kotlin/com/eddie/evencompanion/telephony/TelephonyEventService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/telephony/TelephonyEventService.kt)
+
+Key design points:
+- requires `READ_PHONE_STATE` permission
+- uses `TelephonyCallback` (Android 12+) with `PhoneStateListener` fallback
+- bridges call events to Flutter via `eventTelephony` `EventChannel`
+- fires on incoming call, call answered (active), and call ended — all three
+  states are forwarded
+- consumed by `CompanionController`, which routes call start/end to
+  `GlanceService.updateCall()` / `GlanceService.clearCall()`
+- a notification-based fallback path also exists for cases where telephony
+  permission is unavailable; `callAbsorbed` classification in
+  `NotificationPolicy` detects active-call notifications as a secondary signal
+- `GlanceService` maintains a `_currentCall` state; when `close()` fires
+  mid-call, the call HUD idle surface activates instead of going blank
+  (`_isIdleSurfaceActive = true`) and a 1 Hz `_callTimer` re-renders call
+  duration each second until the call ends
 
 Maps payload dump logging:
 - the Android notification listener still contains a deep Google Maps payload dump path for investigation

@@ -23,7 +23,7 @@ Form: `MAJOR.MINOR.PATCH+BUILD` — semantic version followed by a build number.
 1. Bump *with* the change, in the same commit as the code. Do not batch version bumps separately.
 2. The build number always moves forward, even if the semver part stays the same (e.g. two builds of `1.0.1` go `1.0.1+5` → `1.0.1+6`).
 3. When semver moves forward, the build number still moves forward — never reset it to `+1`.
-4. The currently-installed APK on the device is `1.0.0+1`. The next code change bumps to at least `+2`.
+4. The build number is a monotonic counter across the lifetime of the project. Check `pubspec.yaml` for the current value.
 
 ## Examples
 

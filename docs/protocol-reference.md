@@ -580,7 +580,13 @@ Implementation:
 - TX command: [Proto.setDoubleTapAction](../lib/services/proto.dart)
 - UI / persistence: same triplet as Head-up settings
 
-## Note management: `0x06 ... / 0x22` ack
+## `0x06` transaction family
+
+`0x06` is a general-purpose transactional wrapper. The firmware accepts a
+consistent three-step structure for multiple operations; the sub-codes in
+step 2 identify the payload type. Two variants are currently known.
+
+### Variant A — Note management: delete / reorder (`0x06 ... / 0x22` ack)
 
 Source:
 - 2026-04-28 settings capture, Phase 4 (delete / reorder of saved notes
@@ -605,6 +611,49 @@ Notes:
 - a future "delete a saved note from the companion app" feature would need
   the UID, plausibly recoverable either from `R21` payloads or from a
   not-yet-identified list-all opcode
+
+### Variant B — Time-set (`0x06 01` payload)
+
+Source:
+- current companion app `Proto.setTimeAndWeather()` (commit dc9d959, 2026-05-18)
+- not observed in HCI captures; derived from shipped app code
+
+Observed reality (`Confirmed`, shipped code):
+
+- the companion app sends a three-step `0x06` transaction to both legs on
+  connect to sync the wall-clock time with the glasses:
+  ```
+  TX  06 07 00 <seq1>   06 00 00                              — request
+  TX  06 16 00 <seq2>   01 <epoch32-LE> <epoch64-LE> <4 bytes>  — payload (22 bytes total)
+  TX  06 0c 00 <seq3>   03 01 00 01 00 00 00 01               — finalise
+  ```
+- the `seq` counter increments across all three steps
+- the `0x22` ack observed for note management has not been confirmed for
+  time-set (no capture evidence; behaviour consistent with note-management
+  framing)
+
+**Epoch encoding (important):** both `epoch32` and `epoch64` carry
+**local wall-clock time encoded as if it were UTC** — i.e. the UTC epoch
+plus the local timezone offset in milliseconds, so that the firmware can
+treat the value as a simple seconds-since-midnight counter without needing
+timezone metadata. This is NOT a true UTC timestamp. `epoch32` is a
+`uint32` little-endian seconds value; `epoch64` is an `int64` little-endian
+milliseconds value. Both encode the same instant.
+
+Example computation (`Proto.setTimeAndWeather()`):
+```dart
+final localOffsetMs = now.timeZoneOffset.inMilliseconds;
+final localSec     = (now.millisecondsSinceEpoch + localOffsetMs) ~/ 1000;  // epoch32
+final localMs      = now.millisecondsSinceEpoch + localOffsetMs;             // epoch64
+```
+
+Notes:
+- the same `0x06` three-step framing is used for note management (Variant A
+  above), confirming this is a general transactional pattern, not specific
+  to notes
+- prior to the 2026-05-18 fix, the app sent `now.millisecondsSinceEpoch`
+  (true UTC) which caused the glasses clock to display UTC time rather than
+  local time
 
 ## Brightness: `0x01 <level> <auto>` and `F5 12 <level>`
 
@@ -667,6 +716,9 @@ Observed reality:
 - the official Even Realities app uses a different periodic exchange
   (`0x1f`) at ~2 s cadence; firmware accepts both, so the `0x25` heartbeat in
   this app remains valid
+- the companion app sends `0x25` per leg every 2 seconds (matching the
+  official app's observed p50 cadence), starting a per-leg timer immediately
+  on connect rather than sharing a single broadcast timer
 
 ## QuickNote protocol family
 

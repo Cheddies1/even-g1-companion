@@ -127,6 +127,10 @@ general-purpose product.
   the glasses, proactive auto-pop, deliberate recall / cycling with head
   tilt, double-tap to close, plus a Glance-only assistant shortcut that
   reuses the same OpenAI-backed transcription / assistant path as Chat mode.
+  Includes a persistent call HUD: active phone calls are detected via
+  `TelephonyEventService` (with `READ_PHONE_STATE` permission) and rendered
+  as a duration-counting HUD that stays on the glasses for the call's lifetime,
+  resuming automatically after any notification carousel interaction.
 - `Capture` — start recording from the glasses mic on a trusted gesture, save
   WAV to the public `Internal storage/Recordings/Even Companion` collection.
   Practically usable; stop / save reliability is still an open validation
@@ -234,12 +238,13 @@ Important Flutter files:
 
 Important Android / native files:
 
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt](android/app/src/main/kotlin/com/example/demo_ai_even/notifications/RecentNotificationsListenerService.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt](android/app/src/main/kotlin/com/example/demo_ai_even/notifications/NotificationFeedStore.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt](android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/notifications/NotificationFeedStore.kt](android/app/src/main/kotlin/com/eddie/evencompanion/notifications/NotificationFeedStore.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/telephony/TelephonyEventService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/telephony/TelephonyEventService.kt)
 - [android/app/src/main/cpp/liblc3.cpp](android/app/src/main/cpp/liblc3.cpp)
 
 Capture / analysis material:
@@ -272,9 +277,11 @@ are not exercised.
 ### Connection reliability
 
 - Per-leg health is tracked separately (connected / degraded / disconnected).
-- Heartbeat `0x25` is sent per leg on a timer.
-- Repeated missed heartbeats degrade the leg; degraded legs trigger bounded
-  reconnect attempts.
+- Heartbeat `0x25` is sent to each leg independently every 2 seconds (matching
+  the official Even Realities app's ~2 s cadence). Each leg starts its own
+  heartbeat timer immediately on connect.
+- A leg is marked degraded after 8 consecutive missed heartbeats; degraded legs
+  trigger bounded reconnect attempts.
 - When a leg recovers, the app resends current active content so left/right
   displays converge again.
 
@@ -283,6 +290,8 @@ are not exercised.
 - Notification access — required for Glance and Navigate. Toggle under
   `Settings > Notification access` on the phone.
 - Bluetooth — required for scanning, pairing, and the dual-leg connection.
+- Phone state (`READ_PHONE_STATE`) — required for the call HUD. Grants access
+  to incoming/outgoing/active call detection via `TelephonyEventService`.
 - Foreground service — used so the app continues working while backgrounded.
 
 ### Chat backend configuration
@@ -348,7 +357,15 @@ Working well:
 - BLE scan / connect / dual-leg pairing
 - text rendering to the glasses
 - Glance notification display, cycling, deliberate dismissal
+- call HUD: incoming and active call detection via `TelephonyEventService`,
+  duration counter, persistent idle surface that survives carousel dismissal
+- QuickNote: right-temple long-press → `0x21` → `0x1e c8` LC3 audio stream →
+  STT → tidy → categorised notes in a 3-tab Notes panel
 - Chat mode end-to-end voice loop
+- Navigate mode via `0x0a` structured card (interleaved 108-packet bootstrap,
+  live `TRIP_STATUS`, dynamic `MAP_OVERVIEW` direction icon, 1-second `SYNC`
+  keepalive)
+- time sync on connect (`0x06` three-step transaction, local-epoch encoded)
 - battery / wear / brightness state on the home screen
 - Firmware settings dropdowns (tilt-up + double-tap) writing persisted
   values via the newly-decoded settings opcodes
@@ -356,10 +373,7 @@ Working well:
 
 In progress / needs more device validation:
 
-- Navigate mode via `0x0a` structured card — the interleaved 108-packet
-  bootstrap, live `TRIP_STATUS`, dynamic `MAP_OVERVIEW` direction icon (scraped
-  from Google Maps notification PNG), and 1-second `SYNC` keepalive are all
-  working. Remaining: startup hardening, field extraction cleanup, PANORAMIC_MAP
+- Navigate mode — startup hardening, field extraction cleanup, `PANORAMIC_MAP`
   production path (currently captured/static)
 - Capture mode end-to-end recording reliability
 - background behaviour polish

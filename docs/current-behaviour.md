@@ -156,9 +156,9 @@ Interactions while the call HUD is showing:
 The Glance assistant is not available while the call HUD is visible (the HUD
 counts as an active display, blocking the left-hold assistant trigger).
 
-Known gap: if the user dismisses the last carousel notification mid-call (via
-tilt-up), the display currently goes blank rather than returning to the call
-HUD. Tracked in Backlog (`call-idle-dismiss-fallback`).
+When the last carousel notification is dismissed mid-call (via tilt-up),
+`GlanceService` detects the idle state and activates the call HUD idle surface
+automatically rather than going blank (commit d4f0f0e, 2026-05-18).
 
 If the glasses have not yet pushed a battery reading (e.g. immediately after
 connect, before the first `F5 0A`), the battery field is omitted and line 1 is
@@ -588,10 +588,10 @@ Quick mode switching is now part of normal companion behaviour.
 ### App and glasses behaviour
 
 - app UI mode buttons switch mode immediately through the same central controller path as notification actions
-- idle right-hold can cycle mode when a right-leg `R21` packet with the current stable `len == 42` shape is observed
 - double tap still closes the current feature when something is active on the glasses
 - if the glasses display is idle, double tap is now a no-op
-- if the glasses display is active, the right-hold POC does nothing
+- right-hold (`R21`) is consumed entirely by the QuickNote pipeline — it is
+  not available as a mode-switch trigger (see QuickNote section below)
 
 ### Passive switching rules
 
@@ -600,20 +600,8 @@ Quick mode switches are passive:
 - they do not auto-start Chat listening
 - they do not auto-open a live Navigate instruction card
 - they do not force a Glance notification render
-- the right-hold POC does not depend on `F5` companion events
 
 Leaving a mode through quick switching follows the same cleanup rules as normal mode changes, including Chat session reset.
-
-### Right-hold POC limits
-
-- this is a proof of concept, not yet a fully trusted primary control
-- it is gated on right-leg `R21` only
-- it currently requires the observed stable `len == 42` packet shape
-- repeated `R21` triggers are ignored for `1500ms`
-- it is intentionally idle-only to avoid colliding with active display content or firmware QuickNote UI
-- in the 2026-04-28 taps capture every right-hold release produced an `R21`
-  of length `15`, not `42`, so the gate may need updating before this POC
-  re-enters active use
 
 ### Double-tap mode switch
 
