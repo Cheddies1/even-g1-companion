@@ -54,27 +54,12 @@ Working, but still needs real-world observation:
 
 ## Next — Prioritised
 
-### ~~Call bundle (items 1–3 complete)~~
-
-### ~~1. call-state-telephony-upgrade: Migrate call detection from notification listener to TelephonyManager~~
-- **Status**: Done — closed 2026-05-18, commit dc9d959, v1.0.2+8
-
-### ~~2. incoming-call-hud: Incoming call notification on glasses~~
-- **Status**: Done — closed 2026-05-18, commit dc9d959, v1.0.2+8
-
-### ~~3. call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed~~
-- **Status**: Done — closed 2026-05-18, commit d4f0f0e, v1.0.2+6
-
----
-
 ### 4. QuickNote polish
 - **Status**: Next
 - **Priority**: Medium
-- **Context**: QuickNote v1 pipeline is complete and peer-reviewed (all 10 tasks done, persistence and auto-sync shipped 2026-05-09). Three housekeeping items remain before the feature is considered settled.
-- **Acceptance** — all of the following:
+- **Context**: QuickNote v1 pipeline is complete and peer-reviewed. This is a log cleanup pass only — revert diagnostic promotions that were temporarily raised to INFO during development.
+- **Acceptance**:
   - [ ] Revert diagnostic logs to debug: `BleRx` INFO-level log tag (`ble_manager.dart`), R21Probe and QuickNoteProbe info promotions — revert to `AppLog.debug`.
-  - [ ] Clean up probe WAV files written to device storage during LC3 GO/NO-GO testing (`quick_note_capture_service.dart`).
-  - [ ] Visual or haptic feedback when a note is fully saved — user currently gets no on-device confirmation that the pipeline completed (toast, glasses display flash, or similar).
 - **Notes**: Cross-ref `docs/FINDINGS-quicknote.md`, `lib/services/quick_note_capture_service.dart`.
 
 ### 5. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
@@ -85,14 +70,11 @@ Working, but still needs real-world observation:
   - [ ] Either tighten keyword patterns to exclude constructions like "make a note to …" from the todo trigger, or suppress the keyword-derived category until GPT confirms/overrides it.
   - [ ] "Make a note to X" phrases consistently land in the Notes category, not Todo.
   - [ ] Existing unambiguous todo phrases ("remind me to", "I need to") still classified correctly.
-- **Notes**: Polish item — the feature works well overall. No protocol changes; purely a classifier adjustment in the categorisation logic.
+- **Notes**: Polish item — the feature works well overall. No protocol changes; purely a classifier adjustment in the categorisation logic. Needs more variety of note types tested before acting on this. Not ready yet.
 
 ---
 
 ## Backlog — Unprioritised
-
-### glance-assistant-reset-on-reconnect: ~~Decide whether GlanceAssistantService.reset() should be split for transport-lost path~~
-- **Status**: Done — closed 2026-05-13. Flag-only `handleTransportLost()` confirmed sufficient by v1.0.1+2 field verification; the "Mic start failed" ghost has not recurred. No need to split `reset()`. Cross-ref `ble-mic-on-reconnect-ghost` (Recently Done — 2026-05-13).
 
 ### dashboard-injection: Dashboard content injection
 - **Status**: Backlog
@@ -100,9 +82,6 @@ Working, but still needs real-world observation:
 - **Context**: `0x1e` TX can push titled content into the firmware's dashboard grid layout — useful for summaries, reminders, or status info.
 - **Acceptance**: Demonstrable injection of titled content into a dashboard slot, with a real use case identified.
 - **Notes**: Eddie's view: "Probably less useful than QuickNote unless you have a clear use case." Open question: what would actually go in the slot? Demoted from Next — lacks a concrete use case. Revisit when a clear scenario emerges.
-
-### quicknote-seq-counter: ~~Confirm outbound `0x1e` seq counter range~~
-- **Status**: Done — closed 2026-05-09. Seq counter starting at `0x40` works fine; firmware does not enforce a specific range. Dart counter unchanged.
 
 ### quicknote-dashboard-push: QuickNote v2 — push transcribed note to glasses dashboard via 0x1e TX
 - **Status**: Backlog
@@ -123,53 +102,19 @@ Working, but still needs real-world observation:
 - **Acceptance**: Audible (and similarly-behaving apps) produce a non-empty title/text pair that the Now Playing feature can display on the glasses. Apps that already populate standard notification fields (Spotify, YouTube Music, Podcast Addict) are unaffected.
 - **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Other audiobook/podcast apps may behave similarly and would benefit automatically. Files likely touched: `android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt`, possibly `lib/models/companion_notification.dart` if new fields are added for media metadata.
 
-### ghost-listening-screen: ~~Investigate~~ Root cause identified — `0x18` is vendor-demo legacy
-- **Status**: Done (Glance paths fixed, 2026-05-08). Awaiting extended observation before fanning out.
-- **Root cause**: `Proto.exit()` sends opcode `0x18`, which the official Even app **never sends** (confirmed across all HCI captures). `0x18` is vendor-demo legacy; the firmware interprets it as a synthetic left-long-press-release event, triggering the "Even AI is listening" overlay when not already in a listening state. The official app uses `0x50 06 00 00 01 01` (display mode control) for screen clearing.
-- **Fix applied**: New `Proto.clearDisplay()` helper in `lib/services/proto.dart` sends `0x50` clear. Four Glance call sites swapped: `glance_service.dart:168` (empty-carousel), `glance_service.dart:230` (close/tilt-down), `glance_assistant_service.dart:221` (assistant close), `glance_assistant_service.dart:246` (assistant auto-dismiss timer). One site deliberately left as `Proto.exit()`: `glance_assistant_service.dart:133` (post-mic-stop flow, potential audio-routing dependency).
-- **Observation**: Tilt-up/down ghost screen appears resolved. 14 remaining `Proto.exit()` call sites in chat/capture/navigate/dashboard/features unchanged — follow-up if Glance experiment proves successful.
-
-### mode-title-cards: ~~Glance and Navigate mode entry title cards, plus Connected/Reconnected clear~~
-- **Status**: Done — closed 2026-05-13. All three sub-items field-verified on v1.0.2+3.
-
-
 #### BLE stability — deferred tiers
 
 ### ble-stability-tier3: Reconnect tuning and connection priority
 - **Status**: Backlog
-- **Priority**: Medium
+- **Priority**: Low
 - **Context**: Tier 3 of the BLE stability plan. Current auto-reconnect schedule `[0, 30, 60, 120]` gives up at ~3.5 minutes — a UX cliff for overnight or "glasses in pocket" scenarios. Also covers per-session connection priority management and tightening degraded-leg detection once Tier 2's 2 s cadence is in place.
 - **Acceptance**:
   - [ ] Auto-reconnect schedule widened to an exponential-like curve with a long-tail floor that never permanently gives up while the foreground service is alive.
   - [ ] Degraded-leg detection thresholds tightened: warning age 20 s → 6 s, consecutive-miss threshold 2 → 3 (only safe once Tier 2's 2 s cadence is confirmed stable).
   - [ ] `requestConnectionPriority(HIGH)` added during nav-card replay and `0x52` streaming sessions; returns to `BALANCED` when done.
-- **Notes**: Touches `lib/ble_manager.dart` (Flutter side) and `BleManager.kt` (native side for connection priority). Depends on Tier 2 being in place before adjusting detection thresholds.
-
-### ble-fast-flap-investigation: Investigate why freshly-established BLE connections drop within ~6 ms
-- **Status**: Backlog
-- **Priority**: Medium
-- **Context**: In the 2026-05-11 reconnect-storm capture, every successful reconnection survived only ~6 ms before dropping again. Same `clientIf`s repeatedly connect → disconnect with `status=0` (clean teardown) at ~280-390 cycles/sec. The `ble-reconnect-pacing` fix makes this survivable but does not address the root cause. Candidates: `discoverServices`/MTU/descriptor write tripping an error path; `autoConnect=true` racing with a still-tearing-down prior gatt; G1 firmware kicking the link under load; bond state churn.
-- **Acceptance**: Identify why the freshly-established BLE connection drops within ~6 ms, and either fix it or document it as a known device-side behaviour we tolerate.
-- **Notes**: Best investigated during the next field-disconnect event with `ble-reconnect-pacing` in place — fewer cycles/sec will make the logs far more readable. Also covers the secondary Kotlin cleanup: `reconnectInFlight.remove(lr)` currently clears in `finally` after the synchronous `connectGatt` returns (`android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt:289`); it should hold until the callback settles (CONNECTED success or terminal DISCONNECTED). Not load-bearing now that the Flutter cooldown gates the rate, but worth tidying in this pass.
-
-### ble-hci-connection-params: Extend btsnoop parser to surface HCI LE Connection Update events
-- **Status**: Backlog
-- **Priority**: Medium
-- **Context**: `logs/bluetooth/parse_btsnoop.py` currently extracts ATT-level PDUs only. Without HCI LE Connection Update events we cannot see what connection interval, slave latency, and supervision timeout the official app negotiates — the link-layer parameters that most directly govern whether a BLE link survives idle periods. Tuning Tier 2/3 without this data means tuning blind.
-- **Acceptance**: Parser surfaces HCI LE Connection Update events alongside ATT PDUs. Output includes the connection parameters (interval, latency, supervision timeout) negotiated by the official app across a representative capture.
-- **Notes**: Should ideally be done before committing to specific values in Tier 2/3. Low implementation risk — additive change to existing parse script.
-
-### ble-single-leg-disconnect: ~~Single-leg disconnect robustness~~
-- **Status**: Done — closed 2026-05-10. See Recently Done.
+- **Notes**: Much less urgent now that tier-2 heartbeats have significantly improved stability. Touches `lib/ble_manager.dart` (Flutter side) and `BleManager.kt` (native side for connection priority). Depends on Tier 2 being in place before adjusting detection thresholds.
 
 #### Protocol research and hardening
-
-### protocol-lifecycle: Formal lifecycle/state-machine modelling
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: The app understands many packet families empirically but lacks a formal state-machine model for rendering surfaces or mode transitions. Current approach is "this sequence works" — long-term stability requires a properly defined lifecycle model.
-- **Acceptance**: Valid lifecycle transitions defined for `0x52` streaming text, `0x0a` navigation, and `0x1e` dashboard content. For each: session start conditions, active/ready states, timeout behaviour, reconnect semantics, exit semantics, invalid transitions. Timing/lifecycle diagrams built from captures.
-- **Notes**: Potential outputs include state diagrams, lifecycle spec, reusable transport/session abstractions.
 
 ### protocol-0x22: Reverse-engineer 0x22 dashboard/status family
 - **Status**: Backlog
@@ -177,15 +122,6 @@ Working, but still needs real-world observation:
 - **Context**: `0x22` is known to exist and appears tied to dashboard state. Payload semantics remain mostly unresolved — a protocol blind spot.
 - **Acceptance**: Field structure decoded. Payloads correlated against dashboard visibility, pagination, unread counts, widget selection, notification state. Determination made on whether `0x22` supports firmware UI awareness, dashboard sync, or richer glance integration.
 - **Notes**: Understanding firmware-side dashboard state may reduce future UI conflicts and reduce the need for speculative sequencing hacks.
-
-### quicknote-decode: ~~QuickNote audio pipeline decoding~~
-- **Status**: Done — closed 2026-05-09. LC3 confirmed at 200-byte frames; full stream reconstructed; audio intelligible. Hosted transcription path shipped as v1 (see Recently Done). Full detail in `docs/FINDINGS-quicknote.md`.
-
-### transport-model: Transport and timing model formalisation
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: Current pacing/retry behaviour is largely empirical. Stable timings are known but not formally modelled. Important for future rendering complexity and reliability.
-- **Acceptance**: BLE throughput limits characterised. Per-leg scheduling constraints, packet burst thresholds, timeout behaviour, and sync drift conditions documented. Safe pacing windows, stable batching rules, and degradation/recovery strategies defined.
 
 ### navigate-cleanup: Navigation protocol cleanup and de-replay work
 - **Status**: Backlog
@@ -339,7 +275,7 @@ Full right-hold → transcribed local note pipeline shipped across two sessions.
 - `NotesPage` UI — `ReorderableListView`, swipe-to-delete, status toggle, expand/collapse raw vs clean, empty state; auto-syncs unknown glasses notes on first press after launch
 - `HomePage` notes card — active note count
 
-**Polish remaining**: diagnostic log revert, probe WAV cleanup, save notification — tracked as Next #2.
+**Polish remaining**: diagnostic log revert — tracked as Next #4.
 
 Full protocol detail in `docs/FINDINGS-quicknote.md`.
 
@@ -593,8 +529,8 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - QuickNote polish — Next #4
-  - Call bundle — fully done 2026-05-18 (all three items: `call-idle-dismiss-fallback`, `call-state-telephony-upgrade`, `incoming-call-hud`)
+  - QuickNote polish — Next #4 (log cleanup pass only — revert diagnostic promotions to debug)
+  - QuickNote classifier tuning — Next #5 (not ready yet; needs more variety tested first)
   - notification policy
   - Capture validation
 - point the agent to:
