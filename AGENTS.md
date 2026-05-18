@@ -20,7 +20,7 @@ Active app modes:
 - `navigate` — Google Maps turn-by-turn via firmware navigation card
 - `chat` — voice loop with OpenAI-compatible backend
 
-## Current implementation status (2026-05-07)
+## Current implementation status (2026-05-18)
 
 Recently implemented:
 - **Battery + wear state** on home screen and Glance HUD (pushed by firmware, no polling)
@@ -81,6 +81,20 @@ Recently implemented:
   bond-state `BroadcastReceiver` added to surface `bond_failed` to Flutter.
   Deferred: Tier 2 (heartbeat cadence to match official app's 2 s `0x1f`)
   and Tier 3 (reconnect tuning, connection priority for streaming).
+- **Capture v2 — live recording HUD + recordings list** (v1.2.0+10,
+  2026-05-18) — `CaptureService` pushes a live `0x4E` HUD every 5 s during
+  recording (idle, animated `* REC  MM:SS`, save confirmation). Tilt-up
+  while recording is now a no-op (was: toggle stop/start); double-tap stops
+  and saves. `handleDoubleTapModeSwitch` guards block `F5 20` during active
+  recording. New `RecordingsPage` (MediaStore-backed, no local db) lets the
+  user browse, rename, share, and delete recordings. New filename pattern:
+  `Capture-YYYY-MM-DD-HH-mm.wav`; dual-regex parser handles legacy format.
+  New `G1TextLayout` module provides pixel-accurate `0x4E` line wrapping
+  using the firmware's actual glyph-width table (replaces `TextPainter`-based
+  measurement in `EvenAIDataMethod.measureStringList`; three call sites
+  upgraded transparently). New files: `lib/services/g1_text_layout.dart`,
+  `lib/models/recording.dart`, `lib/services/recordings_service.dart`,
+  `lib/views/recordings_page.dart`.
 
 Under active development:
 - Navigate `0x0a` structured card — **protocol confirmed working** (full
@@ -104,7 +118,6 @@ Under active development:
   first-load race condition with `Proto.exit()`.
 
 Not yet implemented (documented, protocol known):
-- **QuickNote via hosted transcription** — right-hold → `0xf1` audio → LC3 decode → STT → `0x1e` TX note push to dashboard
 - **Dashboard content injection** — push summaries/reminders into the firmware's grid via `0x1e` TX
 
 ## Trusted behaviour
@@ -173,7 +186,11 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - [lib/services/companion_controller.dart](lib/services/companion_controller.dart) — mode ownership + gesture routing
 - [lib/services/device_status_service.dart](lib/services/device_status_service.dart) — battery, wear, brightness, settings state
 - [lib/services/glance_service.dart](lib/services/glance_service.dart)
-- [lib/services/capture_service.dart](lib/services/capture_service.dart)
+- [lib/services/capture_service.dart](lib/services/capture_service.dart) — Capture session, live HUD, start/stop/save
+- [lib/services/recordings_service.dart](lib/services/recordings_service.dart) — MediaStore platform-channel wrapper for recordings list
+- [lib/models/recording.dart](lib/models/recording.dart) — Recording model, dual-format filename parser, duration computation
+- [lib/views/recordings_page.dart](lib/views/recordings_page.dart) — recordings list UI (browse, rename, share, delete)
+- [lib/services/g1_text_layout.dart](lib/services/g1_text_layout.dart) — pixel-accurate 0x4E line wrapping using firmware font-width table
 - [lib/services/navigate_service.dart](lib/services/navigate_service.dart) — now uses `0x0a` card protocol
 - [lib/services/nav_icon_generator.dart](lib/services/nav_icon_generator.dart) — PNG-to-RLE MAP_OVERVIEW conversion, ManoeuvreType enum, geometric arrow fallback
 - [lib/services/navigate_bitmap_service.dart](lib/services/navigate_bitmap_service.dart) — legacy BMP renderer (preserved, not called from Navigate)
@@ -182,13 +199,13 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - [lib/services/proto.dart](lib/services/proto.dart) — wire-level BLE commands (brightness, settings, nav card, heartbeat)
 - [lib/services/app_settings_store.dart](lib/services/app_settings_store.dart) — persisted user preferences
 - [lib/services/app_log.dart](lib/services/app_log.dart) — central logger
-- [lib/views/home_page.dart](lib/views/home_page.dart) — battery/wear pills, brightness slider, mode selector
+- [lib/views/home_page.dart](lib/views/home_page.dart) — battery/wear pills, brightness slider, mode selector, Recordings card
 - [lib/views/settings_page.dart](lib/views/settings_page.dart) — API config, notification filters, firmware settings
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleManager.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt](android/app/src/main/kotlin/com/example/demo_ai_even/bluetooth/BleChannelHelper.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/CompanionForegroundService.kt)
-- [android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/example/demo_ai_even/service/GlassesCaptureRecorder.kt)
-- [android/app/src/main/cpp/liblc3.cpp](android/app/src/main/cpp/liblc3.cpp) — LC3 audio decode (used by Capture + Chat, future QuickNote)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt](android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt) — also contains listRecordings / renameRecording / deleteRecording / shareRecording platform-channel methods
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt) — native WAV recorder + MediaStore publishing; recordings management methods
+- [android/app/src/main/cpp/liblc3.cpp](android/app/src/main/cpp/liblc3.cpp) — LC3 audio decode (used by Capture, Chat, QuickNote)
 
 ## Architectural guardrails
 - mode ownership must stay in CompanionController

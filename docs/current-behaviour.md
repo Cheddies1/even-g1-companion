@@ -21,9 +21,13 @@ It is intentionally separate from:
 - double tap closes the current visible item
 
 ### Capture
-- intended to record glasses mic audio and save WAV on phone
-- partially implemented
-- still needs focused device validation
+- records glasses mic audio and saves WAV to the public recordings collection
+- live recording HUD pushed via `0x4E` every 5 s: idle state, animated
+  recording indicator with elapsed time, save confirmation on stop
+- recordings list UI (`RecordingsPage`) lets the user browse, rename, share,
+  and delete past recordings without leaving the app
+- practically usable; stop/save semantics and recordings-list behaviour
+  benefit from continued real-world validation
 
 ### Navigate
 - intended to surface Google Maps navigation guidance from notifications
@@ -323,33 +327,80 @@ Behavioural notes:
 
 ## Capture mode
 
-Capture is practically usable and has survived at least one long real-world recording session, but stop/save semantics still need broader confidence.
+Capture is practically usable for real-world recording sessions. The live HUD and recordings list shipped with v1.2.0+10 (2026-05-18).
 
 ### Intended behaviour
 
-- idle + tilt-up -> start recording after a short `500ms` intent gate
-- recording + tilt-up -> stop and save after the same `500ms` intent gate
-- recording + double tap -> stop and save
-- idle + double tap -> no-op
-- idle display shows `*`
-- show a recording `REC` indicator while active
-- show a short save confirmation after recording completes
+- idle + tilt-up → start recording after a `500ms` intent gate
+- **recording + tilt-up → no-op** (was: stop and save — disabled to prevent
+  accidental stops, e.g. looking up while recording)
+- recording + double-tap → stop and save
+- idle + double-tap → no-op
+- mode-switch double-tap (`F5 20`) is blocked during active recording — the
+  defensive guard in `handleDoubleTapModeSwitch` refuses the gesture while
+  `_isRecording` is true
+
+### HUD states
+
+The glasses display is updated via `0x4E` every 5 seconds during a Capture session.
+
+**Idle:**
+```
+Capture ready
+Tilt up to record
+```
+
+**Recording:** pulse character cycles `*` → `#` → `.` on each 5-second tick.
+```
+* REC  03:30
+```
+Elapsed time is formatted as `MM:SS` up to 59:59, then `H:MM:SS`. The HUD
+refreshes every 5 s in-flight.
+
+**Save confirmation** (shown for 5 s then auto-clears):
+```
+Saved 12m 34s
+Capture-2026-05-18-14-32.wav
+```
+
+Feature flag `useStaticRecFallback` (default `false`) — if HUD refreshes are
+found to interfere with inbound audio in future testing, flipping this to
+`true` reverts the recording state to a single one-shot `REC` send with no
+further refresh.
+
+### Filename pattern
+
+New recordings: `Capture-<YYYY-MM-DD-HH-mm>.wav`
+(example: `Capture-2026-05-18-14-32.wav`)
+
+The older pattern `capture_<YYYYMMDD_HHMMSS>.wav` is still parsed correctly
+by the Recording model's dual-regex parser — files recorded before v1.2.0+10
+appear in the recordings list without any migration.
+
+### Recordings list
+
+`RecordingsPage` provides an in-app view of all recordings:
+- backed by MediaStore queries (no local database); files live under
+  `Internal storage/Recordings/Even Companion`
+- most-recent-first ordering
+- per-row: date/time, duration, filename, popup menu
+- popup actions: **Rename** (prefix only — timestamp suffix always preserved),
+  **Share** (system share intent), **Delete** (confirmation dialog)
+- accessible via a card on the Home page, between Notes and Chat history
 
 ### Current technical status
 
-- native LC3 decode path exists
-- decoded PCM can be written to a WAV recorder
-- the Flutter/native bridge for capture is in place
-- saved WAV files are published to the public Android recordings collection
-- on the target phone this should appear as `Internal storage/Recordings/Even Companion`
+- native LC3 decode path in use
+- decoded PCM published to the public Android recordings collection
+- saved WAV files appear in `Internal storage/Recordings/Even Companion`
+- Flutter/native bridge handles `listRecordings`, `renameRecording`,
+  `deleteRecording`, `shareRecording` via MediaStore platform-channel methods
 
 ### Current caveat
 
-What still needs device confirmation is whether the glasses mic session stops cleanly in practice when Capture mode stops saving.
-
-So:
-- WAV save path now targets a normal user-visible recordings location
-- real stop semantics are still an open validation item
+Whether the glasses mic session stops cleanly in practice across all
+real-world scenarios (e.g. range drops mid-recording) still benefits from
+continued validation.
 
 ## Navigate mode
 
@@ -613,6 +664,9 @@ Leaving a mode through quick switching follows the same cleanup rules as normal 
 - no idle-only gate is needed: when a feature is already active, the firmware
   emits `F5 00` (close-active) instead of `F5 20`, and that path is the
   existing close-active handling
+- **blocked during active Capture recording:** `handleDoubleTapModeSwitch`
+  refuses the gesture while a recording is in progress, preventing an
+  accidental mode change from stopping or discarding an active recording
 - this depends on the user setting the official Even Realities app's
   double-tap action to any **host-handled** feature. Verified configurations:
   - **Transcribe** ✓ — `F5 20` fires, mode cycle works
@@ -656,7 +710,9 @@ is suppressed entirely. The clear sequence that ends a title card would cancel t
 bootstrap if it landed mid-replay. See "Current status" in the Navigate section above, and
 `current-architecture.md` § "Transport health and recovery" for the `CompanionController` design.
 
-Capture and Chat do not receive title cards in this version.
+Chat does not receive a title card in this version. Capture shows its idle
+HUD (`Capture ready / Tilt up to record`) on mode entry rather than a
+one-shot title card.
 
 ### Reconnected force-clear
 
@@ -665,7 +721,7 @@ On transport recovery after a real disconnect, the app:
 1. Flashes "Reconnected" on the glasses for ~1 s (via `Proto.showTitleCard`).
 2. Force-clears the display with `0x50 + 0x18`.
 3. Conditionally resumes content in this priority order:
-   - **REC indicator** — if a Capture recording is active.
+   - **Recording HUD** — if a Capture recording is active.
    - **Nav refresh** — if Navigate was the visible mode and a nav instruction is held.
    - **Call HUD** — if a phone call is active.
    - **Blank** — otherwise; no content is sent.
@@ -881,7 +937,7 @@ This supports:
 
 - Glance left/right synchronisation still needs watching under rapid notification arrival
 - some notification sources/messages still need smarter formatting
-- Capture mode needs real device validation for start/stop/save reliability
+- Capture mode stop/save semantics and recordings-list behaviour need continued real-world validation
 - Navigate mode still needs longer human review against real Google Maps walking sessions
 - Chat mode still needs broader real-world testing for latency, retries, and edge-case error handling
 - Chat `0x52` streaming is confirmed working (host-managed scrolling, 43 chars/row, 3 rows, 200 ms pacing); follow-up turn rendering still benefits from broader real-world observation

@@ -102,13 +102,76 @@ Owns:
 **Idle surface** — when `close()` fires (tilt-down timeout or carousel advance exhaustion) and `_currentCall` is non-null, `GlanceService` does **not** call `Proto.exit()` and go blank. Instead it sets `_isIdleSurfaceActive = true`, enqueues a render via the call HUD text builder, and starts a 1 Hz `Timer.periodic` (`_callTimer`) that re-renders the duration every second. This branch is embedded directly in `close()`. A separate public method `showIdleSurfaceIfAvailable()` provides the same transition and returns `false` when no call is active (intended for external callers who need to explicitly activate the idle surface). Tilt-up clears `_isIdleSurfaceActive` and cancels `_callTimer`, restoring normal carousel behaviour. Call end (`clearCall()`) cancels the timer, clears `_isIdleSurfaceActive`, and calls `close()` to tear down via `Proto.exit()`.
 
 ### Capture
+
+New files (v1.2.0+10, 2026-05-18):
+- [lib/models/recording.dart](../lib/models/recording.dart)
+- [lib/services/recordings_service.dart](../lib/services/recordings_service.dart)
+- [lib/views/recordings_page.dart](../lib/views/recordings_page.dart)
+
+Service:
 - [lib/services/capture_service.dart](../lib/services/capture_service.dart)
 
 Owns:
 - capture session state
 - start / stop / cancel flow
-- recording indicator / save confirmation rendering
+- live recording HUD rendering via `0x4E` every 5 s
+- save confirmation rendering
 - bridge calls into native WAV recording
+- recordings list surface via `RecordingsPage` and `RecordingsService`
+
+#### Recording HUD
+
+`CaptureService` pushes a live HUD to the glasses via `0x4E` on a 5-second
+timer during recording. Three states:
+
+- **Idle:** `Capture ready\nTilt up to record`
+- **Recording:** `<pulse> REC  <MM:SS>` — pulse character cycles `*` → `#`
+  → `.` on each tick; elapsed time formatted as `MM:SS` up to 59:59, then
+  `H:MM:SS`. Timer starts on recording start; each tick increments the pulse
+  character and re-sends the HUD.
+- **Save confirmation:** `Saved <m>m <s>s\n<filename>` — displayed for 5 s
+  then auto-clears.
+
+Feature flag: `useStaticRecFallback` (default `false`). When `true`, the
+recording state reverts to a single one-shot `REC` send with no subsequent
+refresh. Intended as a fallback if live HUD refreshes are found to interfere
+with inbound audio on a specific device.
+
+#### Safer-stop gesture model
+
+- Tilt-up (`F5 02`) while recording is a **no-op** (was: toggle stop/start).
+  This prevents accidental stops when the user looks up mid-recording.
+- Double-tap (`F5 00`) while recording stops and saves.
+- `handleDoubleTapModeSwitch` has a defensive guard: `F5 20` mode-switch is
+  refused while `_isRecording` is true.
+
+#### Recordings list
+
+`RecordingsPage` is a MediaStore-backed list of all WAVs under
+`Recordings/Even Companion`, most-recent-first.
+
+- No local database — all metadata is derived from MediaStore and from
+  filename parsing in the `Recording` model.
+- `RecordingsService` is a platform-channel wrapper; the corresponding Kotlin
+  methods (`listRecordings`, `renameRecording`, `deleteRecording`,
+  `shareRecording`) live in `GlassesCaptureRecorder.kt` and `BleChannelHelper.kt`.
+- Per-row UI: date/time, duration, filename, popup menu (Rename / Share / Delete).
+- Rename: prefix-only disk rename via MediaStore; timestamp suffix is always
+  preserved.
+- Share: system share intent. Delete: confirmation dialog.
+
+#### Recording model and filename parsing
+
+`Recording` (`lib/models/recording.dart`) parses filenames and derives
+metadata (duration, display date/time). A dual-regex parser handles both the
+current and legacy formats:
+
+| Format | Example |
+|--------|---------|
+| Current (v1.2.0+10+) | `Capture-2026-05-18-14-32.wav` |
+| Legacy (pre-v1.2.0+10) | `capture_20260518_153000.wav` |
+
+Both are parsed transparently; no migration is required for existing files.
 
 ### Navigate
 - [lib/services/navigate_service.dart](../lib/services/navigate_service.dart)
@@ -480,7 +543,7 @@ Current session-history behaviour:
 - the cap is intentionally light-touch so useful follow-up context is preserved for normal conversations
 
 Current mode-entry idle displays:
-- `capture`: `*`
+- `capture`: `Capture ready` / `Tilt up to record` (pushed via `0x4E`)
 - `chat`: `Chat ready` / `Tilt up to talk`
 - `navigate`: "Navigate" title card (~500 ms, via `Proto.showTitleCard`) on mode entry, **gated
   on no nav instruction currently held**; if an instruction is in hand the title card is suppressed
@@ -515,6 +578,30 @@ Key preserved behaviours:
 - native GATT notification setup
 - existing text rendering send path
 - existing LC3 decode path
+
+## G1 text layout and line wrapping
+
+New file (v1.2.0+10, 2026-05-18):
+- [lib/services/g1_text_layout.dart](../lib/services/g1_text_layout.dart)
+
+`G1TextLayout` provides pixel-accurate `0x4E` text wrapping based on the G1
+firmware's actual proportional font. It replaces the previous `TextPainter`-
+based measurement that was in `EvenAIDataMethod.measureStringList`
+(`lib/services/evenai.dart`).
+
+Key design:
+- ~120-glyph font-width table sourced from MentraOS `G1Text.kt`; each glyph
+  has its measured pixel width in the firmware's proportional font
+- wrapping uses binary search against cumulative pixel widths, with a
+  space-break preference (wraps at the last space before the limit rather
+  than mid-word)
+- constants: `DISPLAY_WIDTH = 488` px, `LINES_PER_SCREEN = 5`,
+  `MAX_CHUNK_SIZE = 176` bytes (body constraint for `0x4E` packets)
+- `screenStatus = 0x71` (`0x01` new-content | `0x70` text-show)
+
+The module is consumed through the existing `measureStringList` function
+signature; all three call sites (`evenai.dart` ×2, `text_service.dart` ×1)
+were upgraded transparently.
 
 ## Transport health and recovery
 
@@ -562,7 +649,7 @@ Reconnect handling (per-leg):
 Reconnect display recovery:
 - on transport recovery after a real disconnect (`_hasEverConnectedThisSession` is `true`), `CompanionController.handleTransportRecovered` runs
 - "Reconnected" is flashed for ~1 s via `Proto.showTitleCard`, then `0x50 + 0x18` force-clears the display
-- content is then conditionally resumed in priority order: Capture REC indicator → Navigate refresh (only if Navigate was visible with an instruction held) → Call HUD → blank
+- content is then conditionally resumed in priority order: Capture recording HUD → Navigate refresh (only if Navigate was visible with an instruction held) → Call HUD → blank
 - the `_hasEverConnectedThisSession` flag is set on the first successful leg connect and cleared only on process exit; it ensures the flash and force-clear do not fire on the initial cold-connect at app startup
 - the previous `TextService.resendLastText` / `FeaturesServices.resendLastBmpData` resync path has been removed; stale content replay on reconnect was the wrong policy
 
@@ -797,12 +884,24 @@ Native recorder:
 Decode path:
 - [android/app/src/main/cpp/liblc3.cpp](../android/app/src/main/cpp/liblc3.cpp)
 
+Platform-channel bridge:
+- [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt)
+
 Current technical model:
 - glasses mic packets arrive natively
 - LC3 is decoded to PCM natively
 - decoded PCM is buffered privately, then the final WAV is published via Android's public recordings media collection
 
 Capture mode depends on this existing path rather than inventing a new one.
+
+New platform-channel methods added in v1.2.0+10 (in `GlassesCaptureRecorder.kt`
+and `BleChannelHelper.kt`):
+- `listRecordings` — returns MediaStore metadata for all WAVs in
+  `Recordings/Even Companion`
+- `renameRecording` — renames the prefix of an existing recording via
+  MediaStore; preserves the timestamp suffix
+- `deleteRecording` — deletes a recording via MediaStore
+- `shareRecording` — launches a system share intent for a recording file
 
 Chat mode reuse:
 - Chat reuses the same native LC3 decode and PCM buffering path
@@ -821,10 +920,13 @@ Current phone control surface:
 - [lib/main.dart](../lib/main.dart)
 - [lib/views/home_page.dart](../lib/views/home_page.dart)
 - [lib/views/settings_page.dart](../lib/views/settings_page.dart)
+- [lib/views/recordings_page.dart](../lib/views/recordings_page.dart)
 
 The UI is intentionally simple:
 - a prominent connection/status area that collapses once both legs are healthy
 - mode selector
+- Notes card (QuickNote — opens `NotesPage`)
+- Recordings card (Capture — opens `RecordingsPage`; positioned between Notes and Chat history)
 - chat log
 - settings entry for occasional setup tasks
 - legacy/demo area separated from the main UX

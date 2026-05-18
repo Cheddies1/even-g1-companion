@@ -224,6 +224,36 @@ Observed reality:
 - field-level transport structure is broadly consistent with the vendor/demo description
 - the old Even AI-specific semantic labels should be treated as historical/demo framing, not as current product truth
 
+### Confirmed packet header layout
+
+The 9-byte `0x4E` header, derived from the MentraOS `G1Text.kt` font-width
+table and confirmed against live device rendering (2026-05-18):
+
+| Byte | Field | Notes |
+|------|-------|-------|
+| 0 | `0x4E` | Opcode |
+| 1 | `textSeqNum` | Monotonic per-send sequence counter |
+| 2 | `totalChunks` | Total number of chunks for this text block |
+| 3 | `i` | Current chunk index (0-based) |
+| 4 | `screenStatus` | `0x71` = `0x01` (new content) \| `0x70` (text show) |
+| 5 | `new_char_pos0` | New character position, low byte |
+| 6 | `new_char_pos1` | New character position, high byte |
+| 7 | `page` | Current page (0-based; 0 for single-page sends) |
+| 8 | `totalPages` | Total pages (1 for single-page sends) |
+| 9..end | body | UTF-8 text payload, max `MAX_CHUNK_SIZE = 176` bytes |
+
+**Display constants** (firmware 1.6.6, confirmed via pixel-width measurements):
+- `DISPLAY_WIDTH = 488` pixels
+- `LINES_PER_SCREEN = 5`
+- `MAX_CHUNK_SIZE = 176` bytes per chunk body
+
+**`screenStatus = 0x71`** is the standard value for new text content: lower
+bits `0x01` = display new content; upper bits `0x70` = text-show mode. This
+aligns with the vendor/demo labelling above.
+
+Multi-page support (the `page` / `totalPages` fields) exists in the protocol
+but is not commonly used — most sends are single-page (`page=0`, `totalPages=1`).
+
 ## BMP transfer
 
 Vendor/demo reference:
