@@ -105,6 +105,7 @@ class BleManager {
       .map((ret) => BleReceive.fromMap(ret));
 
   Timer? beatHeartTimer;
+  Timer? _timeSyncTimer;
   Timer? _reconnectMonitorTimer;
   int? _lastF5EventMs;
   int? _lastCmd21EventMs;
@@ -321,6 +322,10 @@ class BleManager {
         tag: tag,
       );
     }
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    AppLog.info('${DateTime.now()} time sync: initial push', tag: tag);
+    await Proto.setTimeAndWeather();
   }
 
   void startSendBeatHeart() async {
@@ -354,6 +359,12 @@ class BleManager {
     _reconnectMonitorTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _monitorLegHealth();
     });
+
+    _timeSyncTimer?.cancel();
+    _timeSyncTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
+      if (!isConnected) return;
+      await Proto.setTimeAndWeather();
+    });
   }
 
   void _onGlassesConnecting() {
@@ -369,6 +380,8 @@ class BleManager {
     isConnected = false;
     beatHeartTimer?.cancel();
     beatHeartTimer = null;
+    _timeSyncTimer?.cancel();
+    _timeSyncTimer = null;
     _reconnectMonitorTimer?.cancel();
     _reconnectMonitorTimer = null;
     _settingsReconcileFired = false;
@@ -1562,6 +1575,8 @@ class BleManager {
   void _handleFullDisconnect({required String source}) {
     beatHeartTimer?.cancel();
     beatHeartTimer = null;
+    _timeSyncTimer?.cancel();
+    _timeSyncTimer = null;
     _reconnectMonitorTimer?.cancel();
     _reconnectMonitorTimer = null;
     _settingsReconcileFired = false;

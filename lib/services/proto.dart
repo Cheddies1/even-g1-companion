@@ -282,6 +282,46 @@ class Proto {
     await BleManager.sendData(data);
   }
 
+  static int _timeSeq = 0;
+
+  static Future<void> setTimeAndWeather() async {
+    final epochMs = DateTime.now().millisecondsSinceEpoch;
+    final epochSec = epochMs ~/ 1000;
+
+    final epoch32 = (ByteData(4)..setUint32(0, epochSec, Endian.little))
+        .buffer
+        .asUint8List();
+    final epoch64 = (ByteData(8)..setInt64(0, epochMs, Endian.little))
+        .buffer
+        .asUint8List();
+
+    final seq1 = _timeSeq % 0xff;
+    _timeSeq++;
+    final seq2 = _timeSeq % 0xff;
+    _timeSeq++;
+    final seq3 = _timeSeq % 0xff;
+    _timeSeq++;
+
+    await BleManager.sendData(Uint8List.fromList(
+        [0x06, 0x07, 0x00, seq1, 0x06, 0x00, 0x00]));
+
+    await BleManager.sendData(Uint8List.fromList([
+      0x06, 0x16, 0x00, seq2, 0x01,
+      ...epoch32,
+      ...epoch64,
+      0x00, 0x00, 0x00, 0x00, 0x02,
+    ]));
+
+    await BleManager.sendData(Uint8List.fromList([
+      0x06, 0x0c, 0x00, seq3, 0x03, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    ]));
+
+    AppLog.info(
+      '${DateTime.now()} time sync TX: epoch=$epochSec',
+      tag: 'TimeSync',
+    );
+  }
+
   /// Sequence counter for `0x0a` navigation card packets.
   static int _navSeq = 0;
 
@@ -421,6 +461,7 @@ class Proto {
       replayPackets,
       dynamicTripStatus,
     );
+    _replacePanoramicMapWithPlaceholder(replayPackets);
     final availableLegs = ['L', 'R']
         .where((lr) => BleManager.get().isLegAvailable(lr))
         .toList(growable: false);
@@ -432,7 +473,7 @@ class Proto {
     final pairStats = _NavReplayPairStats();
 
     AppLog.info(
-      'bootstrap: packets=${replayPackets.length} legs=${availableLegs.join(",")} tripStatus=$tripStatusReplaced mapOverview=$mapOverviewReplaced',
+      'bootstrap: packets=${replayPackets.length} legs=${availableLegs.join(",")} tripStatus=$tripStatusReplaced mapOverview=$mapOverviewReplaced panoramicMap=blanked',
       tag: 'Navigate',
     );
 
@@ -1163,5 +1204,19 @@ class Proto {
       tag: 'Navigate',
     );
     return true;
+  }
+
+  static void _replacePanoramicMapWithPlaceholder(List<Uint8List> replayPackets) {
+    int count = 0;
+    for (final p in replayPackets) {
+      if (p[0] == 0x0a && p.length > 8 && p[4] == 0x03) {
+        p.fillRange(8, p.length, 0x00);
+        count++;
+      }
+    }
+    AppLog.info(
+      'panoramic map: blanked $count packets',
+      tag: 'Navigate',
+    );
   }
 }

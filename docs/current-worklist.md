@@ -35,24 +35,83 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-*(No items currently in flight.)*
-
----
-
-## Next — Prioritised
-
-### 1. Navigate cleanup (composite)
-- **Status**: Next
-- **Priority**: Medium
+### 4. Navigate cleanup (composite)
+- **Status**: Now
 - **Context**: Navigate is functionally working on the `0x0a` structured-card path. Several cleanup tasks remain before it can shed its debug scaffolding. Eddie expects most are straightforward.
 - **Acceptance** — all of the following:
   - [ ] **Startup robustness** — keep observing first-entry Navigate starts, especially cases where one leg begins degraded or reconnecting. Idle prompt is now suppressed; verify no regressions.
   - [ ] **Field extraction cleanup** — fix `turnDistance` being populated with road text such as `towards Milton Rd` or `Home (36 Campbell Rd)`. Tighten the Google Maps notification parsing model.
   - [ ] **Proper EXIT / ARRIVED handling** — sessions are currently torn down via the existing exit path, but the `0x0a 05` EXIT and `0x0a 06` ARRIVED sub-commands are not used cleanly.
   - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
+  - [ ] **Time set (0x06 01)** — periodic epoch-time push from the app to the glasses. The glasses use this for both the navigation HUD clock and the firmware dashboard. Wire format per JohnRThomas wiki: `06 16 00 <seq> 01 <epoch32> <epoch64_ms> <weather_icon> <temp_c> <c_f_flag> <24h_flag> 00`. Start with time-only; weather fields can be zeroed initially.
+  - [ ] **PANORAMIC_MAP placeholder** — replace the misleading static map capture (488x136) with the smallest viable neutral placeholder image. This is option 2 from the Parked PANORAMIC_MAP decision item. The placeholder should be honest about not being a real map — single-colour fill or minimal grid.
 - **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
-### 2. QuickNote polish
+---
+
+## Next — Prioritised
+
+### Call bundle (items 1–3 are a coherent set; `call-state-telephony-upgrade` is the prerequisite foundation)
+
+### 1. call-state-telephony-upgrade: Migrate call detection from notification listener to TelephonyManager
+- **Status**: Next
+- **Priority**: High
+- **Context**: The current call detection path (for the `ongoing-call-idle` HUD shipped 2026-05-06) relies on the notification listener watching for `com.samsung.android.incallui` notifications with `isOngoing=true`. This gives no ringing-state signal, depends on Samsung-specific behaviour, and forces two items in this bundle to source call state from two different places. Migrating to `TelephonyManager` / `PhoneStateListener` (or the API 31+ `TelephonyCallback` equivalent) gives authoritative, manufacturer-agnostic call state in a single place.
+- **Acceptance**:
+  - [ ] `READ_PHONE_STATE` permission declared in `AndroidManifest.xml` and requested at runtime.
+  - [ ] `TelephonyManager` / `PhoneStateListener` (or `TelephonyCallback` on API 31+) wired up and publishing call state to the rest of the app.
+  - [ ] Existing ongoing-call HUD (`ongoing-call-idle` path) migrated off notification-listener detection and onto telephony state.
+  - [ ] `incoming-call-hud` and `call-idle-dismiss-fallback` (items 2 and 3 in this bundle) consume the same telephony-driven state.
+  - [ ] Caller name still resolved via contacts lookup as needed (`READ_CONTACTS`).
+  - [ ] The notification listener continues to do its non-call work (notification carousel, media absorption, etc.) — it is no longer the call-state oracle, but it is not removed.
+- **Notes**: Foundation for items 2 and 3. A single `READ_PHONE_STATE` request covers the whole bundle. Likely touches `android/app/src/main/kotlin/com/eddie/evencompanion/` (new telephony listener class) and `lib/services/companion_controller.dart` / `lib/services/glance_service.dart` for wiring.
+
+### 2. incoming-call-hud: Incoming call notification on glasses
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: The glasses currently surface ongoing calls (via the `ongoing-call-idle` HUD, Recently Done 2026-05-06), but give no indication when a call is ringing. When the phone rings from a locked or off-screen state, nothing appears on the glasses. Depends on `call-state-telephony-upgrade` (item 1) for the ringing-state signal.
+- **What's needed**:
+  - Detect incoming call state (phone ringing) via telephony state (from item 1).
+  - Immediately push caller identity (name from contacts if available, otherwise the number) to the glasses HUD.
+  - Handle state transitions: on answer, transition to the existing ongoing-call HUD; on decline or missed call, clear the display.
+  - Must work regardless of phone screen state (locked, screen off, app in background).
+- **Acceptance**:
+  - [ ] When a call comes in, caller name or number appears on the glasses within ~1 s.
+  - [ ] Display persists while the phone is ringing.
+  - [ ] On answer: transitions cleanly to the existing ongoing-call HUD (cross-ref `ongoing-call-idle`, Recently Done 2026-05-06).
+  - [ ] On decline or missed call: clears the display.
+  - [ ] Works regardless of phone screen state (locked, off, app in background).
+- **Notes**: Extends the pre-answer state not covered by `ongoing-call-idle`. Cross-ref `call-idle-dismiss-fallback` (item 3) — together they give complete call-lifecycle coverage. Files likely touched: `lib/services/glance_service.dart`, `lib/services/companion_controller.dart`.
+
+### 3. call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: When the user dismisses the last carousel notification while a call is active, `GlanceService.removeNotificationByKey` calls `Proto.exit()` directly rather than falling back to the call HUD. This leaves the glasses blank mid-call. Part of the call bundle; benefits from telephony-driven call state (item 1) as the authoritative source for `_currentCall != null`.
+- **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
+- **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
+
+---
+
+### 4. ble-stability-tier2: Heartbeat cadence alignment with official app
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: Tier 2 of the three-tier BLE stability plan. The current heartbeat fires every 8 s on the "both connected" event only; the official Even Realities app sends `0x1f` pings at 2 s per-leg from the moment each leg connects. Half-connections (one leg up, one re-connecting) currently receive no heartbeat and can silently die. Eddie reports frequent idle disconnects that have become more noticeable since the "Reconnected" flash was added.
+- **HCI capture findings (2026-05-18)** — official app keepalive profile derived from existing btsnoop captures:
+  - Opcode: `0x1f` (our app currently uses `0x25`)
+  - Cadence: every ~2 s per leg; p50 = 1.98 s in baseline capture
+  - Timing: sent per-leg independently from the moment each leg connects — NOT gated on "both connected"
+  - Payload structure: 3-byte packets with rotating sub-types (`0x12`, `0x01`, `0x0c`) and a monotonically incrementing counter in the low byte
+  - Baseline capture volume: 35 packets on left leg, 32 on right leg over a ~53 s session
+  - Our current divergences: `0x25` opcode, 8 s interval, only when both legs connected, paused during nav-replay — all four differ from the official app
+- **Acceptance**:
+  - [ ] Heartbeat cadence reduced from 8 s to 2 s.
+  - [ ] Heartbeats sent to both legs in parallel rather than sequentially.
+  - [ ] Per-leg heartbeat starts on individual leg connect, not only on "both connected".
+  - [ ] Heartbeat not paused during nav-replay (mirror official app behaviour).
+  - [ ] Decision recorded on opcode: switch `0x25` → `0x1f` to mirror official app (rotating sub-type + counter payload), or retain `0x25` with documented rationale. HCI evidence suggests `0x1f` is the correct keepalive; `0x25` may serve a different function.
+- **Notes**: Touches `lib/services/proto.dart` and `lib/ble_manager.dart`. Tier 1 (native GATT lifecycle) should be validated on device before starting this. Cross-ref `ble-hci-connection-params` (Backlog) — surfacing HCI LE Connection Update events from existing captures would show the official app's link-layer parameters before coding the cadence values.
+
+### 5. QuickNote polish
 - **Status**: Next
 - **Priority**: Medium
 - **Context**: QuickNote v1 pipeline is complete and peer-reviewed (all 10 tasks done, persistence and auto-sync shipped 2026-05-09). Three housekeeping items remain before the feature is considered settled.
@@ -62,7 +121,7 @@ Working, but still needs real-world observation:
   - [ ] Visual or haptic feedback when a note is fully saved — user currently gets no on-device confirmation that the pipeline completed (toast, glasses display flash, or similar).
 - **Notes**: Cross-ref `docs/FINDINGS-quicknote.md`, `lib/services/quick_note_capture_service.dart`.
 
-### 3. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
+### 6. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
 - **Status**: Next
 - **Priority**: Low
 - **Context**: The keyword classifier fires on "to do" broadly, so phrases like "make a note to X" get tagged as todo before GPT runs. GPT classification is generally correct; the keyword fallback (which sets the initial category) catches too widely.
@@ -114,46 +173,11 @@ Working, but still needs real-world observation:
 - **Fix applied**: New `Proto.clearDisplay()` helper in `lib/services/proto.dart` sends `0x50` clear. Four Glance call sites swapped: `glance_service.dart:168` (empty-carousel), `glance_service.dart:230` (close/tilt-down), `glance_assistant_service.dart:221` (assistant close), `glance_assistant_service.dart:246` (assistant auto-dismiss timer). One site deliberately left as `Proto.exit()`: `glance_assistant_service.dart:133` (post-mic-stop flow, potential audio-routing dependency).
 - **Observation**: Tilt-up/down ghost screen appears resolved. 14 remaining `Proto.exit()` call sites in chat/capture/navigate/dashboard/features unchanged — follow-up if Glance experiment proves successful.
 
-### incoming-call-hud: Incoming call notification on glasses
-- **Status**: Backlog
-- **Priority**: Medium
-- **Context**: The glasses currently surface ongoing calls (via the notification listener picking up the in-progress call notification and the `ongoing-call-idle` HUD path), but they give no indication when a call is actually incoming/ringing. When the phone rings — especially from a locked or off-screen state — nothing appears on the glasses. The whole point is knowing who is calling before deciding whether to pull out the phone.
-- **What's needed**:
-  - Detect incoming call state (phone ringing) — likely via `TelephonyManager`/`PhoneStateListener` on Android, or the notification listener catching the incoming-call notification.
-  - Immediately push caller identity (name from contacts if available, otherwise the number) to the glasses HUD.
-  - Handle state transitions: on answer, transition to the existing ongoing-call HUD; on decline or missed call, clear the display.
-  - Must work regardless of phone screen state (locked, screen off, app in background).
-- **Acceptance**:
-  - [ ] When a call comes in, caller name or number appears on the glasses within ~1 s.
-  - [ ] Display persists while the phone is ringing.
-  - [ ] On answer: transitions cleanly to the existing ongoing-call HUD (cross-ref `ongoing-call-idle`, Recently Done 2026-05-06).
-  - [ ] On decline or missed call: clears the display.
-  - [ ] Works regardless of phone screen state (locked, off, app in background).
-- **Notes**: Extends the pre-answer state not covered by `ongoing-call-idle`. Cross-ref `call-idle-dismiss-fallback` (below) — the two items together would give complete call-lifecycle coverage on the glasses. Files likely touched: `lib/services/glance_service.dart`, `lib/services/companion_controller.dart`, and the Android notification listener (`RecentNotificationsListenerService.kt`). The `TelephonyManager`/`PhoneStateListener` route may be more reliable than a notification-based approach for the ringing state on locked screens — worth investigating both.
-
-### call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed
-- **Status**: Backlog
-- **Priority**: Unprioritised
-- **Context**: When the user dismisses the *last* carousel notification while a call is active, `GlanceService.removeNotificationByKey` calls `Proto.exit()` directly rather than falling back to the call HUD. This leaves the glasses blank mid-call, contrary to the expected "call HUD is always the idle fallback when a call is active" behaviour.
-- **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
-- **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
-
 ### mode-title-cards: ~~Glance and Navigate mode entry title cards, plus Connected/Reconnected clear~~
 - **Status**: Done — closed 2026-05-13. All three sub-items field-verified on v1.0.2+3.
 
 
 #### BLE stability — deferred tiers
-
-### ble-stability-tier2: Heartbeat cadence alignment with official app
-- **Status**: Backlog
-- **Priority**: Medium
-- **Context**: Tier 2 of the three-tier BLE stability plan. The current heartbeat fires every 8 s on the "both connected" event only; the official Even Realities app sends `0x1f` pings at 2 s per-leg from the moment each leg connects. Half-connections (one leg up, one re-connecting) currently receive no heartbeat and can silently die.
-- **Acceptance**:
-  - [ ] Heartbeat cadence reduced from 8 s to 2 s.
-  - [ ] Heartbeats sent to both legs in parallel rather than sequentially.
-  - [ ] Per-leg heartbeat starts on individual leg connect, not only on "both connected".
-  - [ ] (Optional) Heartbeat opcode switched from `0x25` to `0x1f` to mirror the official app — cosmetic only, firmware accepts both. Decide and note rationale.
-- **Notes**: Touches `lib/services/proto.dart` and `lib/ble_manager.dart`. Tier 1 (native GATT lifecycle) should be validated on device before starting this.
 
 ### ble-stability-tier3: Reconnect tuning and connection priority
 - **Status**: Backlog
@@ -240,7 +264,8 @@ Working, but still needs real-world observation:
   2. Generate a neutral placeholder (decorative, honest about not being a map)
   3. Build the real local-surroundings line-drawing path (significant lift, maps-service dependency)
 - **Constraint**: Do NOT attempt to render the user's actual route geometry — Google Maps notifications do not expose the geometry, and that path is described as "tiny cartography hell".
-- **Revival trigger**: Revisit if a clear use case emerges, or if the static capture becomes actively annoying enough to warrant the placeholder fix.
+- **Cross-ref**: Option 2 (neutral placeholder) is being actioned as part of the Navigate cleanup composite (Now #4). This item remains Parked for option 3 only — the "real map" path. If the placeholder lands cleanly in the Navigate cleanup session, this item can be narrowed to option 3 exclusively.
+- **Revival trigger**: Revisit option 3 if a clear use case emerges, or if the placeholder proves insufficient.
 
 ---
 
@@ -582,8 +607,10 @@ Prefer narrow changes in:
 Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
-  - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — top of Next; field extraction, EXIT/ARRIVED, replay scaffolding decision
-  - QuickNote transcription experiment (`0x21` + LC3 + STT) — Next #2
+  - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; field extraction, EXIT/ARRIVED, replay scaffolding decision, time set (0x06 01), PANORAMIC_MAP placeholder
+  - Call bundle (Next #1–3): `call-state-telephony-upgrade` (TelephonyManager foundation), `incoming-call-hud` (ringing state), `call-idle-dismiss-fallback` (dismiss fallback)
+  - BLE stability tier 2 — Next #4: heartbeat cadence to 2 s per-leg; profile official app keepalive from HCI captures first
+  - QuickNote polish — Next #5
   - notification policy
   - Capture validation
 - point the agent to:
