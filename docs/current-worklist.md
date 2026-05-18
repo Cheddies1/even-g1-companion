@@ -25,6 +25,7 @@ Working well:
 - Double-tap mode switch via `F5 20`
 - Notification policy (blocked / suppressed / protected / normal), Filters UI, Runtime Settings UI
 - Time sync (`0x06 01`): epoch pushed to glasses on connect and every 60 s; drives navigation HUD clock and firmware dashboard
+- Call HUD fallback on last-notification dismiss: dismissing the final carousel item mid-call transitions to the call HUD, not blank (`GlanceService.removeNotificationByKey`, v1.0.2+6)
 
 Working, but still needs real-world observation:
 - Navigate mode startup robustness on first entry / degraded-leg recovery
@@ -84,12 +85,8 @@ Working, but still needs real-world observation:
   - [ ] Works regardless of phone screen state (locked, off, app in background).
 - **Notes**: Extends the pre-answer state not covered by `ongoing-call-idle`. Cross-ref `call-idle-dismiss-fallback` (item 3) — together they give complete call-lifecycle coverage. Files likely touched: `lib/services/glance_service.dart`, `lib/services/companion_controller.dart`.
 
-### 3. call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed
-- **Status**: Next
-- **Priority**: Medium
-- **Context**: When the user dismisses the last carousel notification while a call is active, `GlanceService.removeNotificationByKey` calls `Proto.exit()` directly rather than falling back to the call HUD. This leaves the glasses blank mid-call. Part of the call bundle; benefits from telephony-driven call state (item 1) as the authoritative source for `_currentCall != null`.
-- **Acceptance**: Dismissing the final carousel item during an active call transitions to the call HUD, not to blank.
-- **Notes**: Small targeted fix in `GlanceService.removeNotificationByKey` — check `_currentCall != null` before calling `Proto.exit()` and mirror the `close()` transition logic. No protocol changes needed. Cross-ref: `ongoing-call-idle` Recently Done (2026-05-06).
+### ~~3. call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed~~
+- **Status**: Done — closed 2026-05-18, commit d4f0f0e, v1.0.2+6
 
 ---
 
@@ -252,6 +249,11 @@ Working, but still needs real-world observation:
 ---
 
 ## Recently Done
+
+### call-idle-dismiss-fallback: Call HUD restored when last carousel notification dismissed (2026-05-18, commit d4f0f0e, v1.0.2+6)
+`GlanceService.removeNotificationByKey()` now checks `_currentCall != null` before calling `Proto.exit()`; when the last carousel notification is dismissed during an active call it transitions to the call HUD instead of clearing the display. No protocol changes — targeted fix to the notification-removal logic only.
+
+Files changed: `lib/services/glance_service.dart`.
 
 ### ble-stability-tier2: Heartbeat cadence alignment with official app (2026-05-18, commit 280bb32)
 Tier 2 of the three-tier BLE stability plan. Closed all four cadence divergences from the official Even Realities app identified in HCI capture analysis.
@@ -601,7 +603,7 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - Call bundle (Next #1–3): `call-state-telephony-upgrade` (TelephonyManager foundation), `incoming-call-hud` (ringing state), `call-idle-dismiss-fallback` (dismiss fallback)
+  - Call bundle (Next #1–2): `call-state-telephony-upgrade` (TelephonyManager foundation), `incoming-call-hud` (ringing state) — `call-idle-dismiss-fallback` done 2026-05-18
   - QuickNote polish — Next #4
   - notification policy
   - Capture validation
