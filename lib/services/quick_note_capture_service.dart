@@ -25,18 +25,7 @@ class QuickNoteCaptureService {
   static const _channelCount = 1;
   static const _bitsPerSample = 16;
 
-  /// Frame sizes to probe, in order. Primary first.
-  ///
-  /// If 200-byte framing returns zero PCM (every frame errored in the JNI
-  /// decoder), the loop falls through to 80 then 40. Otherwise the first
-  /// non-empty result wins and only one WAV is written. To compare frame
-  /// sizes manually, re-trigger and edit this list.
-  // The LC3 frame size is 200 bytes — same as the live-mic 0xF1 path.
-  // BLE chunk boundaries (190-byte payloads after stripping the 10-byte
-  // header) do NOT align with LC3 frame boundaries. The concatenated stream
-  // must be sliced at 200-byte intervals, not 190. Slicing at 190 produces
-  // audible frame-boundary clicks because each "frame" straddles two real
-  // LC3 frames. 80/40 are standard LC3 fallbacks.
+  // LC3 frame size is 200 bytes (confirmed). 80/40 are standard fallbacks.
   static const _frameSizeCandidates = [200, 80, 40];
 
   static const _subDir = 'quicknote';
@@ -94,7 +83,7 @@ class QuickNoteCaptureService {
         continue;
       }
 
-      final fileName = 'probe_${timestamp}_${uidHex}_f$frameSize.wav';
+      final fileName = '${timestamp}_${uidHex}.wav';
       final wavPath = '$outputDir/$fileName';
       try {
         await _writeWav(wavPath, pcm);
@@ -165,7 +154,12 @@ class QuickNoteCaptureService {
       tag: _tag,
     );
 
-    // Step 3: If raw transcript exists, tidy it asynchronously.
+    // Step 3: Delete the temporary WAV — no longer needed after STT.
+    try {
+      await File(wavPath).delete();
+    } catch (_) {}
+
+    // Step 4: If raw transcript exists, tidy it asynchronously.
     if (rawTranscript != null && rawTranscript.isNotEmpty) {
       _tidyAsync(noteId, rawTranscript);
     }

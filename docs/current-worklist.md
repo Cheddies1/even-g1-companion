@@ -54,14 +54,6 @@ Working, but still needs real-world observation:
 
 ## Next — Prioritised
 
-### 4. QuickNote polish
-- **Status**: Next
-- **Priority**: Medium
-- **Context**: QuickNote v1 pipeline is complete and peer-reviewed. This is a log cleanup pass only — revert diagnostic promotions that were temporarily raised to INFO during development.
-- **Acceptance**:
-  - [ ] Revert diagnostic logs to debug: `BleRx` INFO-level log tag (`ble_manager.dart`), R21Probe and QuickNoteProbe info promotions — revert to `AppLog.debug`.
-- **Notes**: Cross-ref `docs/FINDINGS-quicknote.md`, `lib/services/quick_note_capture_service.dart`.
-
 ### 5. quicknote-classifier-tuning: Keyword fallback too broad on "to do" phrases
 - **Status**: Next
 - **Priority**: Low
@@ -162,6 +154,9 @@ Working, but still needs real-world observation:
 ---
 
 ## Recently Done
+
+### quicknote-polish: QuickNote diagnostic log revert (2026-05-18, commit e1182dd)
+Diagnostic log promotions from QuickNote v1 development reverted: `BleRx`, `R21Probe`, and `QuickNoteProbe` info promotions reverted to `AppLog.debug`; capture service probe/decode/tidy logs demoted; class doc updated.
 
 ### call-state-telephony-upgrade + incoming-call-hud: Telephony-driven call handling (2026-05-18, commit dc9d959, v1.0.2+8)
 Full call-lifecycle coverage on the glasses, sourced from `TelephonyManager` rather than the notification listener.
@@ -529,7 +524,6 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - QuickNote polish — Next #4 (log cleanup pass only — revert diagnostic promotions to debug)
   - QuickNote classifier tuning — Next #5 (not ready yet; needs more variety tested first)
   - notification policy
   - Capture validation
