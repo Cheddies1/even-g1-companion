@@ -26,6 +26,7 @@ Working well:
 - Notification policy (blocked / suppressed / protected / normal), Filters UI, Runtime Settings UI
 - Time sync (`0x06 01`): epoch pushed to glasses on connect and every 60 s; drives navigation HUD clock and firmware dashboard
 - Call HUD fallback on last-notification dismiss: dismissing the final carousel item mid-call transitions to the call HUD, not blank (`GlanceService.removeNotificationByKey`, v1.0.2+6)
+- Telephony-driven call handling: `TelephonyEventService.kt` wires `PhoneStateListener` / `TelephonyCallback` to an `eventTelephony` EventChannel; `GlanceService` shows incoming-call HUD (caller name from notification metadata), active-call HUD with live timer, and auto-clears on idle; call notifications suppressed from carousel when telephony is active; outgoing call detection (IDLE→OFFHOOK) covered (v1.0.2+8)
 
 Working, but still needs real-world observation:
 - Navigate mode startup robustness on first entry / degraded-leg recovery
@@ -53,37 +54,13 @@ Working, but still needs real-world observation:
 
 ## Next — Prioritised
 
-### Call bundle (items 1–3 are a coherent set; `call-state-telephony-upgrade` is the prerequisite foundation)
+### ~~Call bundle (items 1–3 complete)~~
 
-### 1. call-state-telephony-upgrade: Migrate call detection from notification listener to TelephonyManager
-- **Status**: Next
-- **Priority**: High
-- **Context**: The current call detection path (for the `ongoing-call-idle` HUD shipped 2026-05-06) relies on the notification listener watching for `com.samsung.android.incallui` notifications with `isOngoing=true`. This gives no ringing-state signal, depends on Samsung-specific behaviour, and forces two items in this bundle to source call state from two different places. Migrating to `TelephonyManager` / `PhoneStateListener` (or the API 31+ `TelephonyCallback` equivalent) gives authoritative, manufacturer-agnostic call state in a single place.
-- **Acceptance**:
-  - [ ] `READ_PHONE_STATE` permission declared in `AndroidManifest.xml` and requested at runtime.
-  - [ ] `TelephonyManager` / `PhoneStateListener` (or `TelephonyCallback` on API 31+) wired up and publishing call state to the rest of the app.
-  - [ ] Existing ongoing-call HUD (`ongoing-call-idle` path) migrated off notification-listener detection and onto telephony state.
-  - [ ] `incoming-call-hud` and `call-idle-dismiss-fallback` (items 2 and 3 in this bundle) consume the same telephony-driven state.
-  - [ ] Caller name still resolved via contacts lookup as needed (`READ_CONTACTS`).
-  - [ ] The notification listener continues to do its non-call work (notification carousel, media absorption, etc.) — it is no longer the call-state oracle, but it is not removed.
-- **Notes**: Foundation for items 2 and 3. A single `READ_PHONE_STATE` request covers the whole bundle. Likely touches `android/app/src/main/kotlin/com/eddie/evencompanion/` (new telephony listener class) and `lib/services/companion_controller.dart` / `lib/services/glance_service.dart` for wiring.
+### ~~1. call-state-telephony-upgrade: Migrate call detection from notification listener to TelephonyManager~~
+- **Status**: Done — closed 2026-05-18, commit dc9d959, v1.0.2+8
 
-### 2. incoming-call-hud: Incoming call notification on glasses
-- **Status**: Next
-- **Priority**: Medium
-- **Context**: The glasses currently surface ongoing calls (via the `ongoing-call-idle` HUD, Recently Done 2026-05-06), but give no indication when a call is ringing. When the phone rings from a locked or off-screen state, nothing appears on the glasses. Depends on `call-state-telephony-upgrade` (item 1) for the ringing-state signal.
-- **What's needed**:
-  - Detect incoming call state (phone ringing) via telephony state (from item 1).
-  - Immediately push caller identity (name from contacts if available, otherwise the number) to the glasses HUD.
-  - Handle state transitions: on answer, transition to the existing ongoing-call HUD; on decline or missed call, clear the display.
-  - Must work regardless of phone screen state (locked, screen off, app in background).
-- **Acceptance**:
-  - [ ] When a call comes in, caller name or number appears on the glasses within ~1 s.
-  - [ ] Display persists while the phone is ringing.
-  - [ ] On answer: transitions cleanly to the existing ongoing-call HUD (cross-ref `ongoing-call-idle`, Recently Done 2026-05-06).
-  - [ ] On decline or missed call: clears the display.
-  - [ ] Works regardless of phone screen state (locked, off, app in background).
-- **Notes**: Extends the pre-answer state not covered by `ongoing-call-idle`. Cross-ref `call-idle-dismiss-fallback` (item 3) — together they give complete call-lifecycle coverage. Files likely touched: `lib/services/glance_service.dart`, `lib/services/companion_controller.dart`.
+### ~~2. incoming-call-hud: Incoming call notification on glasses~~
+- **Status**: Done — closed 2026-05-18, commit dc9d959, v1.0.2+8
 
 ### ~~3. call-idle-dismiss-fallback: Call HUD not restored when last carousel notification is dismissed~~
 - **Status**: Done — closed 2026-05-18, commit d4f0f0e, v1.0.2+6
@@ -249,6 +226,19 @@ Working, but still needs real-world observation:
 ---
 
 ## Recently Done
+
+### call-state-telephony-upgrade + incoming-call-hud: Telephony-driven call handling (2026-05-18, commit dc9d959, v1.0.2+8)
+Full call-lifecycle coverage on the glasses, sourced from `TelephonyManager` rather than the notification listener.
+
+- `READ_PHONE_STATE` permission added to `AndroidManifest.xml` with runtime request flow.
+- `TelephonyEventService.kt`: dual-path implementation — `PhoneStateListener` (pre-API 31) and `TelephonyCallback` (API 31+). Publishes `RINGING` / `OFFHOOK` / `IDLE` states to Dart via a new `eventTelephony` `EventChannel`.
+- `GlanceService`: incoming-ring path shows `"Incoming Call\n<caller name>"` on the glasses immediately on `RINGING`; active-call HUD with live timer on `OFFHOOK`; display clears automatically on `IDLE`.
+- Caller identity sourced from notification metadata (the `com.samsung.android.incallui` notification carries the caller name) — `READ_CONTACTS` was deliberately not added.
+- Call notifications suppressed from the Glance carousel while telephony is active (identity fed from notification metadata to the telephony-driven HUD).
+- Outgoing call detection: `IDLE→OFFHOOK` without a preceding `RINGING` is treated as an outgoing call.
+- Notification-based detection retained as fallback for the permission-denied case.
+
+Files changed: `AndroidManifest.xml`, `TelephonyEventService.kt` (new), `lib/services/glance_service.dart`, `lib/services/companion_controller.dart`, `pubspec.yaml`.
 
 ### call-idle-dismiss-fallback: Call HUD restored when last carousel notification dismissed (2026-05-18, commit d4f0f0e, v1.0.2+6)
 `GlanceService.removeNotificationByKey()` now checks `_currentCall != null` before calling `Proto.exit()`; when the last carousel notification is dismissed during an active call it transitions to the call HUD instead of clearing the display. No protocol changes — targeted fix to the notification-removal logic only.
@@ -603,8 +593,8 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - Call bundle (Next #1–2): `call-state-telephony-upgrade` (TelephonyManager foundation), `incoming-call-hud` (ringing state) — `call-idle-dismiss-fallback` done 2026-05-18
   - QuickNote polish — Next #4
+  - Call bundle — fully done 2026-05-18 (all three items: `call-idle-dismiss-fallback`, `call-state-telephony-upgrade`, `incoming-call-hud`)
   - notification policy
   - Capture validation
 - point the agent to:
@@ -628,3 +618,4 @@ Good first prompt pattern:
 - [lib/services/features_services.dart](../lib/services/features_services.dart)
 - [lib/controllers/bmp_update_manager.dart](../lib/controllers/bmp_update_manager.dart)
 - [android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/notifications/RecentNotificationsListenerService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/TelephonyEventService.kt](../android/app/src/main/kotlin/com/eddie/evencompanion/TelephonyEventService.kt)
