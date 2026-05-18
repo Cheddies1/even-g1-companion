@@ -11,31 +11,8 @@ import 'package:even_companion/services/quick_note_classifier.dart';
 import 'package:even_companion/services/quick_note_tidy_service.dart';
 
 /// Receives a flushed QuickNote audio payload from the BLE layer, decodes it
-/// from LC3 to PCM via the native JNI decoder, and writes a WAV file the user
-/// can inspect.
-///
-/// **GO/NO-GO probe** — this service exists solely to answer the question
-/// "is the buffered audio coherent speech?". No notes are stored, no
-/// transcription is attempted. The deliverable is a WAV file at a stable,
-/// discoverable path.
-///
-/// ## How to use
-///
-/// 1. Trigger a long-press-right on the G1 glasses.
-/// 2. Run: `adb logcat -s QuickNoteCapture`
-/// 3. The log line `WAV saved: <path>` gives the absolute device path.
-/// 4. Pull the file: `adb pull <path> probe.wav`
-/// 5. Listen. If it sounds like speech → GO. If noise → investigate codec.
-///
-/// ## Frame-size hypothesis
-///
-/// Primary: **200 bytes** — matches the live-mic `0xF1` path (`value.copyOfRange(2, 202)`).
-/// If the resulting WAV is silent or obviously garbled, fall back to:
-///   - 80 bytes (standard LC3 frame at 16 kHz / 64 kbps, 20 ms)
-///   - 40 bytes (standard LC3 frame at 16 kHz / 64 kbps, 10 ms)
-/// The first candidate that yields non-empty PCM wins; one WAV is written per
-/// probe cycle. Only if every frame of a given size errors at the JNI level
-/// does the loop advance to the next candidate.
+/// from LC3 to PCM via the native JNI decoder, transcribes via OpenAI Whisper,
+/// and stores the result in [NotesStore] with async GPT tidy and classification.
 class QuickNoteCaptureService {
   QuickNoteCaptureService._();
 
@@ -110,7 +87,7 @@ class QuickNoteCaptureService {
       final pcm = await _decodeLc3(audio, frameSize);
       if (pcm == null) continue;
       if (pcm.isEmpty) {
-        AppLog.info(
+        AppLog.debug(
           '${DateTime.now()} frameSize=$frameSize produced 0 PCM bytes — trying next candidate',
           tag: _tag,
         );
@@ -121,7 +98,7 @@ class QuickNoteCaptureService {
       final wavPath = '$outputDir/$fileName';
       try {
         await _writeWav(wavPath, pcm);
-        AppLog.info(
+        AppLog.debug(
           '${DateTime.now()} WAV saved: $wavPath (frameSize=$frameSize pcmBytes=${pcm.length})',
           tag: _tag,
         );
@@ -214,7 +191,7 @@ class QuickNoteCaptureService {
             id: noteId,
             transcriptClean: tidiedText,
           );
-          AppLog.info(
+          AppLog.debug(
             '${DateTime.now()} tidy complete for note $noteId: '
             '"${tidiedText.length > 60 ? '${tidiedText.substring(0, 60)}...' : tidiedText}"',
             tag: _tag,
@@ -222,7 +199,7 @@ class QuickNoteCaptureService {
         }
 
         await NotesStore.get.updateCategory(id: noteId, category: category);
-        AppLog.info(
+        AppLog.debug(
           '${DateTime.now()} category set for note $noteId: $category',
           tag: _tag,
         );
@@ -240,7 +217,7 @@ class QuickNoteCaptureService {
             id: noteId,
             category: fallbackCategory,
           );
-          AppLog.info(
+          AppLog.debug(
             '${DateTime.now()} keyword fallback category for note $noteId: $fallbackCategory',
             tag: _tag,
           );
@@ -276,7 +253,7 @@ class QuickNoteCaptureService {
         );
         return null;
       }
-      AppLog.info(
+      AppLog.debug(
         '${DateTime.now()} decodeLc3Frames: frameSize=$frameSize pcmBytes=${result.length}',
         tag: _tag,
       );

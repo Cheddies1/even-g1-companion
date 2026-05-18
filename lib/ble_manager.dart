@@ -469,10 +469,7 @@ class BleManager {
 
     String cmd = "${res.lr}${res.getCmd().toRadixString(16).padLeft(2, '0')}";
     if (res.getCmd() != 0xf1) {
-      // Temporarily promoted from debug → info while diagnosing whether the
-      // QuickNote 0x21 release frame ever reaches the host. Revert once the
-      // feature is wired and stable.
-      AppLog.info(
+      AppLog.debug(
         "${DateTime.now()} BleManager receive cmd: $cmd, len: ${res.data.length}, data = ${res.data.hexString}",
         tag: 'BleRx',
       );
@@ -653,12 +650,12 @@ class BleManager {
     final rawPayload = res.data.hexString;
     final probeContext = _probeContext();
 
-    AppLog.info(
+    AppLog.debug(
       '${DateTime.now()} lr=${res.lr} len=${res.data.length} lengthField=$lengthField sequenceGuess=$sequenceGuess deltaMs=${deltaMs ?? 'n/a'} raw=$rawPayload mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
       tag: 'R21Probe',
     );
     if (res.lr == 'R') {
-      AppLog.info(
+      AppLog.debug(
         '${DateTime.now()} candidate=R21-primary lr=${res.lr} len=${res.data.length} raw=$rawPayload groups=[$grouped] mode=${probeContext.modeLabel} hasActiveDisplay=${probeContext.hasActiveDisplay} owner=${probeContext.activeDisplayOwner}',
         tag: 'QuickNoteProbe',
       );
