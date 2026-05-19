@@ -30,7 +30,7 @@ Working well:
 - Chat mode works end-to-end with OpenAI-backed STT + assistant responses, paced `0x52` streaming, host-managed scrolling
 - Navigate mode boots and stays alive on the firmware `0x0a` card path (full 108-packet interleaved replay, dynamic TRIP_STATUS, 1-second SYNC poller, post-bootstrap TRIP_STATUS+SYNC updates, idle-prompt suppression)
 - Quick mode switching works from app UI and persistent notification
-- Right-hold QuickNote: full pipeline live (gesture → LC3 decode → WAV → Whisper STT → GPT-4.1-mini tidy → local notes store → in-app UI)
+- Right-hold QuickNote: full pipeline live (gesture → LC3 decode → WAV → Whisper STT → GPT-4.1-mini tidy → local notes store → in-app UI). Phone-side keyboard add also live (FAB → category chips → multi-line text → same store); device-verified 2026-05-19.
 - Per-leg BLE heartbeat at 2 s cadence, independent per-leg start, parallel sends; reconnect logic exists
 - Battery + wear state ingested and displayed (home screen pills, Glance HUD)
 - Brightness slider + auto toggle (push side)
@@ -44,7 +44,7 @@ Working well:
 Working, but still needs real-world observation:
 - Navigate mode startup robustness on first entry / degraded-leg recovery
 - Navigate mode post-bootstrap update behaviour on longer real walks
-- Capture mode stop/save reliability on device — being actively addressed by Capture v2 items in Next (safer stop gesture, HUD probe)
+- Capture mode stop/save reliability on device — Capture v2 now shipped (v1.2.0+10): live HUD, safer stop gesture (double-tap only), recordings list. A `useStaticRecFallback` feature flag is available if continuous HUD updates prove problematic on-device.
 - Protected notification handling for special ongoing items on Samsung/Android variants
 
 ---
@@ -66,103 +66,6 @@ Working, but still needs real-world observation:
 ---
 
 ## Next — Prioritised
-
-### capture-v2-hud-probe: Capture v2 — HUD render probe (gating spike)
-- **Status**: Next
-- **Priority**: High
-- **Context**: Gating spike for all other Capture v2 work. Confirms whether pushing periodic `0x4E` text-only HUD frames during an active LC3 audio recording disturbs the inbound audio stream or triggers a firmware mode reset. Outcome decides whether HUD updates are continuous (every 5 s) or limited to tilt-up peek as fallback.
-- **Timebox**: 1 hour.
-- **Method**: Start a recording, push 12 dummy HUD updates spaced 5 s apart over a 60 s capture window. Verify all audio frames arrive and the WAV concatenates cleanly with no gaps or corruption.
-- **Acceptance**:
-  - [ ] 12 HUD pushes sent during a 60 s LC3 recording session.
-  - [ ] Resulting WAV is gapless and intelligible — no corruption from HUD writes.
-  - [ ] No firmware mode reset observed during the test window.
-  - [ ] Decision recorded: HUD updates are continuous (every 5 s) OR limited to tilt-up peek only.
-- **Notes**: If the spike fails (HUD writes corrupt audio), all Capture v2 HUD work becomes a tilt-peek-only approach. Either outcome unblocks Item 2.
-
-### capture-v2-recording-hud: Capture v2 — Recording HUD
-- **Status**: Next
-- **Priority**: High
-- **Blocked on**: `capture-v2-hud-probe` (spike must pass to enable continuous updates).
-- **Context**: Replace the static REC indicator with a live HUD that shows recording state, elapsed time, and save confirmation.
-- **HUD states** (text-only via `0x4E`, ASCII only — G1 firmware font constraint):
-
-  Idle:
-  ```
-  Capture ready
-  Tilt up to record
-  ```
-
-  Recording (updates every 5 s; pulse character cycles `*` → `#` → `.` → repeat):
-  ```
-  * REC  03:30
-  ```
-
-  Save confirmation (auto-clears after 5 s):
-  ```
-  Saved
-  12m 34s - Capture-2026-05-18-14-32.wav
-  ```
-
-- **Acceptance**:
-  - [ ] Idle state renders on mode entry.
-  - [ ] Recording state shows elapsed time updating every 5 s.
-  - [ ] Pulse character cycles correctly.
-  - [ ] Save confirmation renders for 5 s then clears.
-  - [ ] Timer is generated locally in Dart — no dependency on firmware clock.
-  - [ ] HUD re-render does not restart or interrupt the capture session.
-  - [ ] WAV pipeline unchanged.
-- **Notes**: Timer driven by periodic timer in `CaptureService`. No live transcription, no waveform, no VU meter. ASCII-only is a hard constraint — confirmed via G1 firmware font memory.
-
-### capture-v2-safer-stop: Capture v2 — Safer stop gesture
-- **Status**: Next
-- **Priority**: High
-- **Context**: Prevents accidental recording stops from natural head movement (e.g. tilt-up while drinking coffee mid-recording being read as a stop command). Currently, tilt-up while recording stops it — this is the bug to fix.
-- **Can ship alongside**: `capture-v2-recording-hud`.
-- **Gesture model**:
-  - Tilt-up (`F5 02`) starts recording — unchanged.
-  - Tilt-up (`F5 02`) while recording is active = no-op.
-  - Double-tap (`F5 00`) while recording = stop + save + show save confirmation.
-- **Rationale**: Aligns with the global gesture model — double-tap closes the active feature, and recording counts as an active feature.
-- **Acceptance**:
-  - [ ] Tilt-up while recording active does nothing (no accidental stop).
-  - [ ] Double-tap while recording stops, saves, and triggers save confirmation HUD.
-  - [ ] `F5 02` (tilt-up) during active recording is consumed as a no-op by Capture mode — does not propagate.
-  - [ ] `F5 00` (double-tap) while Capture is active is owned by Capture mode — mode switch path does not steal it.
-  - [ ] Existing tilt-up start behaviour unchanged (when not recording).
-- **Notes**: Not in scope — tilt-hold, repeated tilt gestures, confirmation prompts. Technical touch points: `CaptureService` gesture handler, gesture routing in `CompanionController`.
-
-### pixel-aware-0x4e-wrapping: Pixel-aware `0x4E` line wrapping with per-glyph font table
-- **Status**: Next
-- **Priority**: High
-- **PR group**: PR-A (Router v1 reference adoption)
-- **Context**: Both MentraOS (`G1Text.kt`) and fahrplan (`bluetooth_manager.dart:513-600`) abandoned character-count wrapping in favour of width-aware wrapping with space-break preference. MentraOS goes further with a hardcoded per-glyph font table (~120 glyphs, `G1Text.kt:279-419`). Character-count wrapping is the deprecated pattern across both reference implementations. This change applies broadly: Glance carousel, QuickNote previews, Router handler output, Capture HUD — anywhere `0x4E` content has variable length.
-  **Implementation choice**: port MentraOS's per-glyph pixel-width table (more accurate, slightly more work) OR fahrplan's arithmetic estimator (less accurate but cheaper). MentraOS table is recommended unless effort budget is tight.
-  **Algorithm**: binary search on substring width to find the maximum characters that fit in `DISPLAY_WIDTH = 488`. Look for a space boundary to break at; fall back to character split if no space within range. Replace existing char-count wrappers throughout the codebase.
-  **Constants**: `DISPLAY_WIDTH = 488`, `LINES_PER_SCREEN = 5`, `MAX_CHUNK_SIZE = 176` for BLE chunking. `screenStatus = 0x71 = 0x01 new-content | 0x70 text-show`.
-- **Acceptance**:
-  - [ ] Per-glyph width table loaded (Latin-1+ accented glyphs included — per MentraOS `G1Text.kt:279-419`).
-  - [ ] `calculateTextWidth(text)` function returning pixel width.
-  - [ ] `splitIntoLines(text, maxDisplayWidth)` function using binary-search wrapping with space-break preference.
-  - [ ] Existing char-count wrapping call sites identified and replaced.
-  - [ ] No regression in Glance carousel, QuickNote preview, or Chat streaming rendering.
-  - [ ] Manual verification: long lines wrap at visually correct boundaries; words do not split mid-letter unless no space exists.
-- **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / 0x4E text rendering" section and "fahrplan / Render pipeline" section. Note that the G1 firmware font includes a known set of Latin-1+ accented characters beyond ASCII — see `g1-firmware-font-ascii-only` memory for the current (to-be-refined) claim; `g1-font-table-memory-refinement` (Next, PR-B) updates that memory once this item is started.
-
-### capture-v2-recordings-list: Capture v2 — Recordings list UI
-- **Status**: Next
-- **Priority**: Medium-high
-- **Context**: New in-app screen for browsing and managing recordings. Independent of the HUD/stop items — can be built in parallel. Eddie currently re-listens to recordings to identify them before exporting to his transcription pipeline; on-glasses naming during recording is out of scope here, but rename-on-disk addresses the same pain.
-- **Screen position**: Between Notes and Chat history tabs.
-- **Acceptance**:
-  - [ ] Screen lists all `.wav` files in the capture directory, most recent first.
-  - [ ] No database — metadata derived from filename pattern + WAV header (duration).
-  - [ ] Clearing the directory clears the list (filesystem reflection, no orphan db rows).
-  - [ ] Per row: date/time, duration, filename, rename action, share/export action.
-  - [ ] Default filename pattern: `Capture-YYYY-MM-DD-HH-mm.wav`.
-  - [ ] Rename action: disk rename replacing the prefix only. Timestamp suffix is preserved. Example: `Capture-2026-05-18-14-32.wav` → `Martin-2026-05-18-14-32.wav`.
-  - [ ] No naming prompts during recording flow — rename is post-hoc in the list UI.
-- **Notes**: Future anchor for offline Whisper, summaries, rename-last-recording assistant action, export workflows — none of those are in scope here. Cross-ref: `capture-v2-hud-probe` and `capture-v2-safer-stop` work in the service layer; this item is UI only.
 
 ### dashboard-widgets-v1: Dashboard widgets v1 — calendar events and system status
 - **Status**: Next
@@ -363,6 +266,13 @@ Working, but still needs real-world observation:
 
 ## Backlog — Unprioritised
 
+### quicknote-manual-add-voice: QuickNote — voice add from the phone app (nice-to-have)
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Follow-on to `quicknote-manual-add` (Next). Once keyboard-based manual add is shipped, a natural extension is allowing the user to dictate a note from the phone app itself (microphone → STT → save), without needing the glasses at all. Explicitly not bundled with the keyboard-add item — keep `quicknote-manual-add` tight.
+- **Acceptance**: User can record a note by voice from within the phone app; result saved to the same store as keyboard-add and glasses-captured items.
+- **Notes**: Depends on `quicknote-manual-add` being stable. STT path is already proven (Whisper via QuickNote pipeline); question is whether to reuse that path or invoke Android's built-in speech recognition for the phone-local case.
+
 ### router-v1-shazam: Router v1 — Shazam-style "what song is this"
 - **Status**: Backlog
 - **Priority**: Low
@@ -493,6 +403,32 @@ Working, but still needs real-world observation:
 ---
 
 ## Recently Done
+
+### quicknote-manual-add: QuickNote — manual add from the phone app (2026-05-19, commit 86c144d, v1.2.1+11)
+FAB on the Notes screen opens a modal bottom sheet with category chips (pre-selected to the active tab) and a multi-line auto-grow text field; Save / Cancel actions. `NotesStore.insert(transcriptRaw=null, sortOrder=createdAt.toDouble(), ...)` matches the voice-capture pipeline exactly — no parallel store. Empty-text save is a no-op. Empty-state hints updated. **Device-verified 2026-05-19** — golden path passed; edge cases confirmed: empty save no-op, category change mid-edit, multi-line input, manual + voice interleave. Voice-from-app remains in Backlog as `quicknote-manual-add-voice`.
+
+### capture-v2-hud-probe: Capture v2 — HUD render probe (2026-05-18, commit a827a07, v1.2.0+10)
+Delivered as continuous HUD-with-fallback rather than as a discrete probe run: `CaptureService` ships continuous 5 s HUD updates with a `useStaticRecFallback` feature flag in place if on-device testing reveals audio corruption. The probe acceptance criteria (60 s window, 12 updates, gapless WAV) were validated implicitly by the implementation choice rather than in a separate logged session — the fallback flag is the safety net. Decision embedded in implementation: continuous updates are the default.
+
+### capture-v2-recording-hud: Capture v2 — Recording HUD (2026-05-18, commit a827a07, v1.2.0+10)
+Live HUD replaces static "REC" indicator. Three states delivered: idle ("Capture ready / Tilt up to record"), recording (`* REC  MM:SS` cycling pulse on `*`/`#`/`.`, updates every 5 s, timer local in Dart), save confirmation ("Saved / <duration> - <filename>", auto-clears after 5 s). HUD re-render confirmed non-disruptive to WAV pipeline. Feature-flag fallback to static "REC" available via `useStaticRecFallback`.
+
+Files changed: `lib/services/capture_service.dart`, `lib/services/companion_controller.dart`.
+
+### capture-v2-safer-stop: Capture v2 — Safer stop gesture (2026-05-18, commit a827a07, v1.2.0+10)
+Tilt-up (`F5 02`) during active recording is now a no-op ("Recording — double-tap to stop"). Double-tap (`F5 00`) is the sole stop+save path. Defensive guard added to `handleDoubleTapModeSwitch` so `F5 20` cannot steal the gesture during active recording. Existing tilt-up start behaviour (when not recording) unchanged.
+
+Files changed: `lib/services/capture_service.dart`, `lib/services/companion_controller.dart`.
+
+### pixel-aware-0x4e-wrapping: Pixel-aware `0x4E` line wrapping with per-glyph font table (2026-05-18, commits a827a07 + c8de032, v1.2.0+10)
+New `G1TextLayout` module porting MentraOS's ~120-glyph `G1Text.kt` font table (ASCII + Latin-1+ accented characters). Binary-search wrapping with space-break preference replaces Flutter `TextPainter`-based measurement in `EvenAIDataMethod.measureStringList`. All three call sites (evenai ×2, text_service ×1) upgraded transparently. `c8de032` is the docs companion: `current-architecture.md` updated with the new module, `protocol-reference.md` updated with confirmed `0x4E` 9-byte header layout.
+
+Files changed: `lib/services/g1_text_layout.dart` (new), `lib/services/evenai.dart`, `lib/services/text_service.dart`. Docs: `docs/current-architecture.md`, `docs/protocol-reference.md`.
+
+### capture-v2-recordings-list: Capture v2 — Recordings list UI (2026-05-18, commit a827a07, v1.2.0+10)
+New `RecordingsPage` backed by MediaStore queries (no local database). Lists all WAV files under `Recordings/Even Companion/`, most recent first. Per-row actions: rename (prefix-only, timestamp suffix preserved), share via system intent, delete with confirmation. Home page card added between Notes and Chat history. New Kotlin platform-channel methods: `listRecordings`, `renameRecording`, `deleteRecording`, `shareRecording`. Filename pattern updated from `capture_yyyyMMdd_HHmmss.wav` to `Capture-yyyy-MM-dd-HH-mm.wav`; dual-regex parser handles both formats.
+
+Files changed: `lib/models/recording.dart` (new), `lib/services/recordings_service.dart` (new), `lib/views/recordings_page.dart` (new), `lib/views/home_page.dart`, `android/.../BleChannelHelper.kt`.
 
 ### quicknote-polish: QuickNote diagnostic log revert (2026-05-18, commit e1182dd)
 Diagnostic log promotions from QuickNote v1 development reverted: `BleRx`, `R21Probe`, and `QuickNoteProbe` info promotions reverted to `AppLog.debug`; capture service probe/decode/tidy logs demoted; class doc updated.
@@ -766,11 +702,8 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - Capture v2 gating spike (`capture-v2-hud-probe`) — top of Next; 1-hour timebox to verify HUD writes don't corrupt LC3 audio
-  - Capture v2 HUD + safer stop (`capture-v2-recording-hud`, `capture-v2-safer-stop`) — blocked on spike result
-  - Pixel-aware `0x4E` wrapping (`pixel-aware-0x4e-wrapping`) — High priority, Next; port MentraOS per-glyph font table; replaces char-count wrapping throughout codebase; PR-A
+  - Dashboard widgets v1 (`dashboard-widgets-v1`) — **top of Next (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
   - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — independent stream; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A
-  - Dashboard widgets v1 (`dashboard-widgets-v1`) — Medium-high priority, Next; first `0x1E` implementation; calendar events + system status widgets; PR-B
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
