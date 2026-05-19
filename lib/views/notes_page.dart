@@ -1,4 +1,5 @@
 import 'package:even_companion/models/note.dart';
+import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/notes_store.dart';
 import 'package:flutter/material.dart';
 
@@ -28,21 +29,21 @@ const _categories = <_CategoryMeta>[
     label: 'Shopping',
     icon: Icons.shopping_cart_outlined,
     emptyTitle: 'No shopping items',
-    emptyHint: "Say 'buy' or 'add to shopping list'",
+    emptyHint: "Tap + or say 'buy' to add an item",
   ),
   _CategoryMeta(
     key: 'todo',
     label: 'To Do',
     icon: Icons.check_circle_outline,
     emptyTitle: 'No tasks',
-    emptyHint: "Say 'remember to' or 'need to'",
+    emptyHint: "Tap + or say 'remember to' to add a task",
   ),
   _CategoryMeta(
     key: 'notes',
     label: 'Notes',
     icon: Icons.note_outlined,
     emptyTitle: 'No notes yet',
-    emptyHint: 'Long-press the right temple to record one',
+    emptyHint: 'Tap + or long-press the right temple to add a note',
   ),
 ];
 
@@ -418,7 +419,7 @@ class _NotesPageState extends State<NotesPage> with TickerProviderStateMixin {
                 // Expanded view: raw vs clean comparison.
                 if (isExpanded && canExpand) ...[
                   const SizedBox(height: 12),
-                  Divider(color: const Color(0xFF1D262E), height: 1),
+                  const Divider(color: Color(0xFF1D262E), height: 1),
                   const SizedBox(height: 12),
                   _buildTranscriptRow(
                     context,
@@ -540,6 +541,32 @@ class _NotesPageState extends State<NotesPage> with TickerProviderStateMixin {
   }
 
   // ---------------------------------------------------------------------------
+  // Manual-add bottom sheet
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showNewEntrySheet() async {
+    final initialCategory = _categories[_tabController.index].key;
+
+    final savedCategory = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF10161C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) =>
+          _NewEntrySheet(initialCategory: initialCategory),
+    );
+
+    if (!mounted || savedCategory == null) return;
+
+    final targetIndex = _categories.indexWhere((m) => m.key == savedCategory);
+    if (targetIndex != -1 && targetIndex != _tabController.index) {
+      _tabController.animateTo(targetIndex);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
 
@@ -570,6 +597,184 @@ class _NotesPageState extends State<NotesPage> with TickerProviderStateMixin {
         children: _categories
             .map((meta) => _buildCategoryList(context, meta))
             .toList(growable: false),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showNewEntrySheet,
+        tooltip: 'New entry',
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// _NewEntrySheet — manual-add bottom sheet
+// ---------------------------------------------------------------------------
+
+class _NewEntrySheet extends StatefulWidget {
+  const _NewEntrySheet({required this.initialCategory});
+
+  final String initialCategory;
+
+  @override
+  State<_NewEntrySheet> createState() => _NewEntrySheetState();
+}
+
+class _NewEntrySheetState extends State<_NewEntrySheet> {
+  late final TextEditingController _textController;
+  late String _selectedCategory;
+  bool _saveEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedCategory = widget.initialCategory;
+    _textController = TextEditingController();
+    _textController.addListener(_onTextChanged);
+  }
+
+  @override
+  void dispose() {
+    _textController.removeListener(_onTextChanged);
+    _textController.dispose();
+    super.dispose();
+  }
+
+  void _onTextChanged() {
+    final hasContent = _textController.text.trim().isNotEmpty;
+    if (hasContent != _saveEnabled) {
+      setState(() => _saveEnabled = hasContent);
+    }
+  }
+
+  Future<void> _save() async {
+    final text = _textController.text.trim();
+    if (text.isEmpty) return;
+
+    final createdAt = DateTime.now().millisecondsSinceEpoch;
+    await NotesStore.get.insert(
+      createdAt: createdAt,
+      transcriptRaw: null,
+      transcriptClean: text,
+      status: 'active',
+      sortOrder: createdAt.toDouble(),
+      noteUid: null,
+      category: _selectedCategory,
+      error: null,
+    );
+
+    AppLog.info(
+      'notes_manual_add: inserted category=$_selectedCategory',
+      tag: 'notes_manual_add',
+    );
+
+    if (mounted) Navigator.of(context).pop(_selectedCategory);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 16, 20, 16 + bottomInset),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'New entry',
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: const Color(0xFF7C8C99),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              children: _categories.map((meta) {
+                final isSelected = meta.key == _selectedCategory;
+                return ChoiceChip(
+                  label: Text(meta.label),
+                  selected: isSelected,
+                  onSelected: (_) =>
+                      setState(() => _selectedCategory = meta.key),
+                  selectedColor: const Color(0xFF2E8A7A),
+                  backgroundColor: const Color(0xFF1D262E),
+                  labelStyle: TextStyle(
+                    color: isSelected
+                        ? const Color(0xFFD4DDE5)
+                        : const Color(0xFF9AB7C8),
+                  ),
+                  side: BorderSide(
+                    color: isSelected
+                        ? const Color(0xFF2E8A7A)
+                        : const Color(0xFF28313A),
+                  ),
+                  showCheckmark: false,
+                );
+              }).toList(growable: false),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _textController,
+              autofocus: true,
+              maxLines: null,
+              minLines: 1,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFFD4DDE5),
+              ),
+              decoration: InputDecoration(
+                hintText: 'Type your note…',
+                hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF7C8C99),
+                ),
+                filled: true,
+                fillColor: const Color(0xFF1D262E),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFF28313A)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFF28313A)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFF2E8A7A)),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(null),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF7C8C99),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _saveEnabled ? _save : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF2E8A7A),
+                    disabledBackgroundColor: const Color(0xFF1D262E),
+                    foregroundColor: const Color(0xFFD4DDE5),
+                    disabledForegroundColor: const Color(0xFF7C8C99),
+                  ),
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
