@@ -34,6 +34,7 @@ migrate_working_dir/
 # Bluetooth HCI capture data is local-only; only the named analysis scripts
 # are tracked (see heartbeat_*.py below).
 /logs/*
+/temp/*
 !/logs/bluetooth/
 /logs/bluetooth/*
 !/logs/bluetooth/heartbeat_*.py
