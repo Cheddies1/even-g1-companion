@@ -89,6 +89,28 @@ Working, but still needs real-world observation:
   - [ ] Note slots correctly deleted when widgets are dismissed or empty.
 - **Notes**: Supersedes the former `dashboard-injection` Backlog entry. Cross-ref `quicknote-dashboard-push` (Backlog) — that item pushes a completed QuickNote to a named slot; they share the `0x1E` byte format but are separate features. Decide at implementation time whether to fold `quicknote-dashboard-push` into this item or keep it as a follow-on. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x1E dashboard widgets" section. fahrplan source references: `models/g1/note.dart`, `models/fahrplan/fahrplan_dashboard.dart:147-183`, `bluetooth_manager.dart:806-822`.
 
+### hermes-agent-v1: Hermes Agent — replace OpenAI direct with Hermes over Tailscale
+- **Status**: Next
+- **Priority**: Medium-high
+- **Context**: Swap the Quick Ask reasoning endpoint from direct OpenAI to a self-hosted Hermes Agent reachable over Tailscale. Hermes runs a compatible `/v1/chat/completions` API (base URL `http://<tailscale-host>:8642/v1`, model `hermes-agent`). Eddie's phone is already on Tailscale; infrastructure is ready. STT path is untouched — only the downstream reasoning call is swapped. Direct OpenAI is retained as a live fallback.
+- **Architecture**: G1 glasses → Even Companion → Hermes API (Tailscale) → Hermes Agent → response → glasses. Fallback: Hermes unreachable → current OpenAI direct flow.
+- **V1 scope**:
+  1. Configurable assistant backend setting (OpenAI direct vs Hermes Agent).
+  2. Hermes client using `/v1/chat/completions` with glasses-native system instruction (keep responses short).
+  3. Health check on startup (`/v1/health`); clean fallback to OpenAI with "Hermes unreachable. Using fallback." user-visible message.
+  4. Secure storage for Hermes API key (Flutter secure storage — not hardcoded).
+  5. App settings: Hermes URL / key / model / timeout / fallback toggle.
+- **V2 scope (follow-on, not this item)**: `/v1/responses` with `previous_response_id` for session persistence; Whisper-over-Tailscale STT; server-owned voice pipeline.
+- **Acceptance**:
+  - [ ] Left-hold Quick Ask sends prompt to Hermes and displays response on glasses.
+  - [ ] Existing OpenAI direct path still works as fallback when Hermes is unreachable.
+  - [ ] App Settings expose Hermes URL / key / model configuration.
+  - [ ] Hermes response is short enough for glasses by default (glasses-native system instruction enforced).
+  - [ ] Network failure handled cleanly with user-visible fallback message.
+  - [ ] STT unchanged.
+  - [ ] API key stored in Flutter secure storage (not `SharedPreferences` or hardcoded).
+- **Notes**: `chat_service.dart` is the primary target — the OpenAI client call is the swap point. Cross-ref `router-v1-glance-handlers` (Next) — that item adds deterministic routing before the LLM call; they compose cleanly, Hermes just replaces the LLM endpoint.
+
 ### router-v1-glance-handlers: Router v1 — `glance` trigger + Calendar, Notes, Media handlers
 - **Status**: Next
 - **Priority**: Medium
@@ -404,6 +426,12 @@ Working, but still needs real-world observation:
 
 ## Recently Done
 
+### emoji-notification-parsing: Emoji notification parsing — substitution map for G1 display (2026-05-25, commit 1019324, main)
+- **Status**: Done
+- **Outcome**: `EmojiSubstitution.apply()` implemented in `lib/services/emoji_substitution.dart` with a ~25-entry glyph → ASCII-token map (👍 → `{thumbs up}`, ❤️ → `{heart}`, plus thumbs-down, smile/laugh/sad/crying, pray, fire, party, check, x, star, 100, thinking, wave, eye roll, wink, kiss, love). Applied inside `CompanionNotification.fromMap` so substitution happens at ingest — one chokepoint, before all downstream truncation/wrapping paths (glance HUD, G1TextLayout chunking, navigate/dashboard renders). Multi-codepoint sequences (e.g. `❤️` = U+2764 + U+FE0F) handled by length-descending match. Unit tests in `test/services/emoji_substitution_test.dart` cover: single emoji, mixed text, VS-16 multi-codepoint, unknown emoji passthrough, pure ASCII untouched, empty string, repeated emoji. V1 scope fully delivered.
+- **Caveat**: Tests not executed on the Linux dev box (no flutter/dart toolchain); validated on the Windows side.
+- **Notes**: Map is a plain `const Map<String, String>` — future additions are one-line. V2 scope (richer tokenisation) remains available as a future item if needed.
+
 ### quicknote-manual-add: QuickNote — manual add from the phone app (2026-05-19, commit 86c144d, v1.2.1+11)
 FAB on the Notes screen opens a modal bottom sheet with category chips (pre-selected to the active tab) and a multi-line auto-grow text field; Save / Cancel actions. `NotesStore.insert(transcriptRaw=null, sortOrder=createdAt.toDouble(), ...)` matches the voice-capture pipeline exactly — no parallel store. Empty-text save is a no-op. Empty-state hints updated. **Device-verified 2026-05-19** — golden path passed; edge cases confirmed: empty save no-op, category change mid-edit, multi-line input, manual + voice interleave. Voice-from-app remains in Backlog as `quicknote-manual-add-voice`.
 
@@ -702,8 +730,9 @@ Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - Dashboard widgets v1 (`dashboard-widgets-v1`) — **top of Next (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
-  - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — independent stream; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A
+  - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
+  - Hermes Agent (`hermes-agent-v1`) — **Next #2 (Medium-high)**; swap Quick Ask reasoning from direct OpenAI to self-hosted Hermes over Tailscale; fallback to OpenAI; Flutter secure storage for key; STT unchanged
+  - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — **Next #3–4**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
