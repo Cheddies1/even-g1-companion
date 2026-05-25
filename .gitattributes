@@ -1,0 +1,45 @@
+# Normalise text files to LF in the index. Each platform checks out the form
+# its tooling expects (Linux/macOS: LF; Windows with autocrlf=true: CRLF).
+* text=auto eol=lf
+
+# Force CRLF for Windows-specific scripts even on a Linux checkout.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Force LF for scripts that must stay Unix-shell-executable.
+*.sh text eol=lf
+gradlew text eol=lf
+
+# Explicit binary markers — `text=auto` usually detects these correctly,
+# but pinning the common ones avoids surprises (e.g. on a file with a
+# pure-ASCII header that git might guess wrong).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.bmp binary
+*.webp binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.opus binary
+*.pcm binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.pdf binary
+*.jar binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.dex binary
+*.apk binary
+*.aab binary
+*.keystore binary
+*.jks binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
