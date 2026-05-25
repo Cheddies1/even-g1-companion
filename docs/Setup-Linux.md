@@ -178,7 +178,6 @@ Several services read keys at compile time via `String.fromEnvironment`:
 |-----------------------|------------------------------------------------------|-----------------------------------------|
 | `OPENAI_API_KEY`      | `lib/services/assistant_backend_config.dart`         | Quick Ask / Chat fallback key           |
 | `OPENAI_API_BASE_URL` | `lib/services/assistant_backend_config.dart`         | Optional override (defaults to OpenAI)  |
-| `DASHSCOPE_API_KEY`   | `lib/services/api_services{,_deepseek}.dart`         | Aliyun fallback path (legacy)           |
 
 Pass them at build time:
 
@@ -189,11 +188,6 @@ flutter run --dart-define=OPENAI_API_KEY=sk-... --dart-define=OPENAI_API_BASE_UR
 Runtime settings UI also accepts an API key; that overrides the compile-time
 fallback. Day-to-day development can rely on the in-app settings without
 rebuilding.
-
-> **Security note:** `lib/services/api_services{,_deepseek}.dart` carry
-> hard-coded DASHSCOPE keys as `defaultValue` in `String.fromEnvironment`. These
-> are committed to the repo. Treat as already-leaked and rotate before any
-> public push.
 
 ---
 

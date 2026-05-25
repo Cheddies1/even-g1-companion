@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math';
 import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/controllers/evenai_model_controller.dart';
-import 'package:even_companion/services/api_services_deepseek.dart';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/g1_text_layout.dart';
 import 'package:even_companion/services/proto.dart';
@@ -120,50 +119,6 @@ class EvenAI {
         _recordingTimer = null;
       }
     });
-  }
-
-  // 收到眼镜端Even AI录音结束指令
-  Future<void> recordOverByOS() async {
-    AppLog.debug('${DateTime.now()} recordOverByOS', tag: 'EvenAI');
-
-    int currentTime = DateTime.now().millisecondsSinceEpoch;
-    if (currentTime - _lastStopTime < stopTimeGap) {
-      return;
-    }
-    _lastStopTime = currentTime;
-
-    isReceivingAudio = false;
-    _recordingTimer?.cancel();
-    _recordingTimer = null;
-
-    await BleManager.invokeMethod("stopEvenAI");
-    await Future.delayed(Duration(seconds: 2)); // todo
-
-    AppLog.debug(
-      'recordOverByOS startSendReply pre combinedText="$combinedText"',
-      tag: 'EvenAI',
-    );
-
-    if (combinedText.isEmpty) {
-      
-      updateDynamicText("No Speech Recognized");
-      isEvenAISyncing.value = false;
-      startSendReply("No Speech Recognized");
-      return;
-    }
-
-    final apiService = ApiDeepSeekService();
-    String answer = await apiService.sendChatRequest(combinedText);
-  
-    AppLog.debug(
-      'recordOverByOS startSendReply combinedText="$combinedText" answer=$answer',
-      tag: 'EvenAI',
-    );
-
-    updateDynamicText("$combinedText\n\n$answer");
-    isEvenAISyncing.value = false;
-    saveQuestionItem(combinedText, answer);
-    startSendReply(answer);
   }
 
   void saveQuestionItem(String title, String content) {

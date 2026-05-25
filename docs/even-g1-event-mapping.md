@@ -98,12 +98,13 @@ For the full model with examples and evidence, see
 - Meaning: left long-press release (voice / Even AI stop)
 - Confidence: Confirmed
 - Evidence:
-  - during isolated left-hold testing, `F5 18` is followed by
-    `EvenAI.get.recordOverByOS()`
   - in the 2026-04-28 taps capture, paired with `F5 17` press-down on every
     left long-press: e.g. `14:10:05 F5 17` → `14:10:08 F5 18`,
     `14:19:00 F5 17` → `14:19:08 F5 18`. Never observed without a preceding
     `F5 17`.
+  - current routing: handled by `companion_controller.dart` (`F5 18 routed in
+    Glance mode`); the legacy `EvenAI.recordOverByOS()` handler that was the
+    original demo response has been removed.
 - Notes:
   - right long-press (QuickNote) does **not** fire `F5 17`/`F5 18`; it uses
     the `0x21` family instead (see the right-hold section below)
