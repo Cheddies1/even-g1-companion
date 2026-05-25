@@ -365,6 +365,20 @@ Working, but still needs real-world observation:
 - **Acceptance**: Audible (and similarly-behaving apps) produce a non-empty title/text pair that the Now Playing feature can display on the glasses. Apps that already populate standard notification fields (Spotify, YouTube Music, Podcast Addict) are unaffected.
 - **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Cross-ref `router-v1-glance-handlers` — fixing this would improve what the Router v1 `MediaHandler` can render for Audible and similar apps.
 
+### android-kotlin-kgp-upgrade: Android — upgrade Kotlin + migrate to Flutter Built-in Kotlin
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: Discovered on 2026-05-25 during the first Linux-side `flutter build apk --debug` (Flutter 3.44.0 / Pop!_OS 24.04). Build succeeded but emitted two future-compat warnings: (1) Kotlin 2.1.10 will soon be unsupported — Flutter wants KGP >= 2.2.20; (2) the app still applies the legacy `org.jetbrains.kotlin.android` plugin instead of Flutter's new Built-in Kotlin path. Two transitive plugins (`fluttertoast`, `shared_preferences_android`) also apply legacy KGP — a future Flutter release will fail to build if they are not upgraded to versions that opt into Built-in Kotlin. The first build auto-inserted opt-outs into `android/gradle.properties` (`android.builtInKotlin=false`, `android.newDsl=false`), committed in `5a78d81` to keep the build green today — those flags should be removed once the upgrade lands.
+- **Files involved**: `android/settings.gradle` (declares `org.jetbrains.kotlin.android` version `2.1.10`), `android/gradle.properties` (carries the temporary migrator flags), `pubspec.yaml` (version-pins for `fluttertoast` `^8.2.14` and `shared_preferences` `^2.5.3` / `shared_preferences_android` — may need bumps). Migration guide: https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-app-developers
+- **Acceptance**:
+  - [ ] Kotlin bumped to >= 2.2.20 in `android/settings.gradle` (track Flutter's recommended minimum at time of work).
+  - [ ] App migrated to Flutter's Built-in Kotlin path per the official guide.
+  - [ ] `fluttertoast` and `shared_preferences` (or their Android sub-plugins) on versions that use Built-in Kotlin — confirmed via `flutter pub deps` with no plugin still applying legacy KGP.
+  - [ ] `android.builtInKotlin=false` and `android.newDsl=false` removed from `android/gradle.properties`.
+  - [ ] `flutter build apk --debug` and `flutter build apk --release` both succeed without KGP / Kotlin-version warnings.
+  - [ ] No regression on existing Android features (BLE, notifications, capture, navigate, glance HUD).
+- **Notes**: Non-blocking today, but will become blocking when a future Flutter stable refuses these versions. If a plugin cannot be upgraded (e.g. `fluttertoast` has gone unmaintained), the fallback is to fork or replace — note the alternative in this item if that becomes the case.
+
 #### BLE stability — deferred tiers
 
 ### ble-stability-tier3: Reconnect tuning and connection priority
