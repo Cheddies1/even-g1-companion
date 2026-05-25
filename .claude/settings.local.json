@@ -41,7 +41,8 @@
       "Bash(grep -r \"Java_com_example\" android/app/src/main/cpp/)",
       "Bash(powershell *)",
       "WebFetch(domain:happy.engineering)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(grep -n '^#\\\\{2,3\\\\} ' docs/current-worklist.md)"
     ]
   }
 }
