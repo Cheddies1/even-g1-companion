@@ -16,20 +16,20 @@ but are not actively built or tested.
 
 ## Version matrix (cross-referenced from project files)
 
-| Component               | Required version                | Source of truth                          |
-|-------------------------|---------------------------------|------------------------------------------|
-| Flutter SDK             | stable channel, ≥ 3.24          | `pubspec.yaml` (Dart `^3.5.3`)           |
-| Dart SDK                | bundled with Flutter            | `pubspec.yaml`                           |
-| JDK                     | 17 (Temurin or OpenJDK)         | Gradle 8.7 + AGP 8.6.1 compatibility     |
-| Android Gradle Plugin   | 8.6.1                           | `android/settings.gradle`                |
-| Kotlin                  | 2.1.10                          | `android/settings.gradle`                |
-| Gradle                  | 8.7 (via wrapper, no install)   | `android/gradle/wrapper/gradle-wrapper.properties` |
-| Android `compileSdk`    | Flutter default (currently 35)  | `android/app/build.gradle`               |
-| Android `minSdk`        | 21                              | `pubspec.yaml` (flutter_launcher_icons)  |
-| Android `targetSdk`     | Flutter default (currently 35)  | `android/app/build.gradle`               |
-| Android NDK             | Flutter default (currently 27.x)| `android/app/build.gradle`               |
-| CMake                   | 3.22.1                          | `android/app/build.gradle` (pinned)      |
-| ABI filters             | `armeabi-v7a`, `arm64-v8a`      | `android/app/build.gradle`               |
+| Component               | Required version                       | Source of truth                          |
+|-------------------------|----------------------------------------|------------------------------------------|
+| Flutter SDK             | stable channel, ≥ 3.24 (tested 3.44.0) | `pubspec.yaml` (Dart `^3.5.3`)           |
+| Dart SDK                | bundled with Flutter (3.12.0 today)    | `pubspec.yaml`                           |
+| JDK                     | 17 (Temurin or OpenJDK)                | Gradle 8.7 + AGP 8.6.1 compatibility     |
+| Android Gradle Plugin   | 8.6.1                                  | `android/settings.gradle`                |
+| Kotlin                  | 2.1.10                                 | `android/settings.gradle`                |
+| Gradle                  | 8.7 (via wrapper, no install)          | `android/gradle/wrapper/gradle-wrapper.properties` |
+| Android `compileSdk`    | Flutter default (36 today)             | `android/app/build.gradle`               |
+| Android `minSdk`        | 21                                     | `pubspec.yaml` (flutter_launcher_icons)  |
+| Android `targetSdk`     | Flutter default (36 today)             | `android/app/build.gradle`               |
+| Android NDK             | Flutter default (`28.2.13676358` today)| `android/app/build.gradle`               |
+| CMake                   | 3.22.1                                 | `android/app/build.gradle` (pinned)      |
+| ABI filters             | `armeabi-v7a`, `arm64-v8a`             | `android/app/build.gradle`               |
 
 The Flutter SDK ships its own pinned values for `compileSdkVersion`,
 `targetSdkVersion`, `ndkVersion`, and `versionCode` — the gradle files reference
@@ -57,16 +57,18 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ### 2. Flutter SDK
 
-Install via the official tarball (avoid `snap` — its sandboxing breaks
-`adb` device detection and writes to a non-standard prefix):
+Install via git clone on the `stable` channel. Avoid `snap` — its sandboxing
+breaks `adb` device detection and writes to a non-standard prefix.
 
 ```bash
 mkdir -p ~/dev
 cd ~/dev
-# Replace VERSION with the current stable from https://docs.flutter.dev/release/archive
-curl -O https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_<VERSION>-stable.tar.xz
-tar xf flutter_linux_<VERSION>-stable.tar.xz
+git clone --depth 1 --branch stable https://github.com/flutter/flutter.git
 ```
+
+The first `flutter --version` run will auto-fetch the matching Dart SDK
+(~220 MB) and build the `flutter` tool — expect a one-time delay of a couple
+of minutes.
 
 Add to `~/.bashrc`:
 
@@ -83,14 +85,15 @@ dart --version    # bundled with Flutter
 
 ### 3. Android SDK command-line tools
 
-Flutter does not bundle the Android SDK. Install command-line tools manually:
+Flutter does not bundle the Android SDK. Install command-line tools manually
+(the build number changes; pull the current one from
+https://developer.android.com/studio#command-line-tools-only):
 
 ```bash
 mkdir -p ~/Android/Sdk/cmdline-tools
 cd ~/Android/Sdk/cmdline-tools
-# Latest URL: https://developer.android.com/studio#command-line-tools-only
-curl -O https://dl.google.com/android/repository/commandlinetools-linux-<BUILD>_latest.zip
-unzip commandlinetools-linux-<BUILD>_latest.zip
+curl -fLO https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+unzip commandlinetools-linux-13114758_latest.zip && rm commandlinetools-linux-13114758_latest.zip
 mv cmdline-tools latest    # final layout: ~/Android/Sdk/cmdline-tools/latest/
 ```
 
@@ -106,15 +109,17 @@ Install platform components:
 ```bash
 yes | sdkmanager --licenses
 sdkmanager "platform-tools" \
-           "platforms;android-35" \
-           "build-tools;35.0.0" \
-           "ndk;27.0.12077973" \
+           "platforms;android-36" \
+           "build-tools;36.0.0" \
+           "ndk;28.2.13676358" \
            "cmake;3.22.1"
 ```
 
-> Adjust `android-35`, `27.0.12077973`, `3.22.1` to match what `flutter doctor`
+> Adjust `android-36`, `28.2.13676358`, `3.22.1` to match what `flutter doctor`
 > later asks for if Flutter has moved on. The Flutter SDK is the source of
-> truth for the NDK and `compileSdk` defaults.
+> truth for the NDK and `compileSdk` defaults — confirm by grepping
+> `~/dev/flutter/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt`
+> for `compileSdkVersion` and `ndkVersion`.
 
 ### 4. `flutter doctor` and Android licences
 
