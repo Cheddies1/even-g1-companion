@@ -1,3 +1,5 @@
+import 'package:even_companion/services/emoji_substitution.dart';
+
 class CompanionNotification {
   const CompanionNotification({
     required this.key,
@@ -97,13 +99,20 @@ class CompanionNotification {
       isOngoing: (raw['isOngoing'] as bool?) ?? false,
       isMediaStyle: (raw['isMediaStyle'] as bool?) ?? false,
       template: ((raw['template'] as String?) ?? '').trim(),
-      summaryText: ((raw['summaryText'] as String?) ?? '').trim(),
-      title: ((raw['title'] as String?) ?? '').trim(),
-      text: ((raw['text'] as String?) ?? '').trim(),
-      bigText: ((raw['bigText'] as String?) ?? '').trim(),
-      subText: ((raw['subText'] as String?) ?? '').trim(),
-      message:
-          ((raw['message'] as String?) ?? 'Open your phone for details').trim(),
+      summaryText: EmojiSubstitution.apply(
+        ((raw['summaryText'] as String?) ?? '').trim(),
+      ),
+      title: EmojiSubstitution.apply(((raw['title'] as String?) ?? '').trim()),
+      text: EmojiSubstitution.apply(((raw['text'] as String?) ?? '').trim()),
+      bigText: EmojiSubstitution.apply(
+        ((raw['bigText'] as String?) ?? '').trim(),
+      ),
+      subText: EmojiSubstitution.apply(
+        ((raw['subText'] as String?) ?? '').trim(),
+      ),
+      message: EmojiSubstitution.apply(
+        ((raw['message'] as String?) ?? 'Open your phone for details').trim(),
+      ),
       navPrimaryInfo: ((raw['navPrimaryInfo'] as String?) ?? '').trim(),
       navSecondaryInfo: ((raw['navSecondaryInfo'] as String?) ?? '').trim(),
       navChipExpandedText: ((raw['navChipExpandedText'] as String?) ?? '')
