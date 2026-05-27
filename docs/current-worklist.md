@@ -90,26 +90,29 @@ Working, but still needs real-world observation:
 - **Notes**: Supersedes the former `dashboard-injection` Backlog entry. Cross-ref `quicknote-dashboard-push` (Backlog) — that item pushes a completed QuickNote to a named slot; they share the `0x1E` byte format but are separate features. Decide at implementation time whether to fold `quicknote-dashboard-push` into this item or keep it as a follow-on. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x1E dashboard widgets" section. fahrplan source references: `models/g1/note.dart`, `models/fahrplan/fahrplan_dashboard.dart:147-183`, `bluetooth_manager.dart:806-822`.
 
 ### hermes-agent-v1: Hermes Agent — replace OpenAI direct with Hermes over Tailscale
-- **Status**: Next
+- **Status**: Next — implementation committed on branch `hermes-agent-v1`; Chat mode happy path device-verified 2026-05-27; left-hold Quick Ask path implemented (bdb7881) but not yet device-tested; two fallback paths implemented but not yet device-tested (see Acceptance below).
 - **Priority**: Medium-high
-- **Context**: Swap the Quick Ask reasoning endpoint from direct OpenAI to a self-hosted Hermes Agent reachable over Tailscale. Hermes runs a compatible `/v1/chat/completions` API (base URL `http://<tailscale-host>:8642/v1`, model `hermes-agent`). Eddie's phone is already on Tailscale; infrastructure is ready. STT path is untouched — only the downstream reasoning call is swapped. Direct OpenAI is retained as a live fallback.
-- **Architecture**: G1 glasses → Even Companion → Hermes API (Tailscale) → Hermes Agent → response → glasses. Fallback: Hermes unreachable → current OpenAI direct flow.
+- **Context**: Swap the Quick Ask reasoning endpoint from direct OpenAI to a self-hosted Hermes Agent reachable over Tailscale. Hermes runs a compatible `/v1/chat/completions` API (base URL `http://deepthought:8642/v1`, model `hermes-agent`). Eddie's phone is already on Tailscale; infrastructure is ready. STT path is untouched — only the downstream reasoning call is swapped. Direct OpenAI is retained as a live fallback.
+- **Architecture note**: Both surfaces now share `ChatBackendRouter`. Chat mode (`ChatService`) was wired first; follow-up commit bdb7881 brought `GlanceAssistantService` (left-hold Quick Ask) onto the same router. No separate Hermes client class was needed — Hermes exposes a standard OpenAI-compatible SSE interface reused via `OpenAiChatBackend`. Contract confirmed: model id `hermes-agent`, standard OpenAI SSE, `/v1/health` returns 200 unauthenticated. See `docs/hermes-api-tailscale-bind-brief.md` for the hermes-side change (`hermes-api-tailscale-bind`) that bound the Hermes API to Tailscale IP 100.120.15.61 — that change is SHIPPED.
+- **G1 wire**: G1 glasses → Even Companion → `ChatBackendRouter` → Hermes API (Tailscale) → response → glasses. Fallback: Hermes unreachable → `OpenAiChatBackend` (direct OpenAI). Both `GlanceAssistantService` and `ChatService` share this router.
+- **History unified (bdb7881)**: both Chat mode and left-hold Quick Ask persist sessions to `chat_sessions`. DB migrated v1→v2: `kind` column added (`'chat'` / `'quick_ask'`; existing rows default to `'chat'`). Chat Log list badges each row "Chat" or "Quick Ask". Session titles derived from kind + time at read time.
 - **V1 scope**:
   1. Configurable assistant backend setting (OpenAI direct vs Hermes Agent).
-  2. Hermes client using `/v1/chat/completions` with glasses-native system instruction (keep responses short).
+  2. Hermes route via `ChatBackendRouter` using `/v1/chat/completions` with glasses-native system instruction (keep responses short).
   3. Health check on startup (`/v1/health`); clean fallback to OpenAI with "Hermes unreachable. Using fallback." user-visible message.
   4. Secure storage for Hermes API key (Flutter secure storage — not hardcoded).
-  5. App settings: Hermes URL / key / model / timeout / fallback toggle.
+  5. App settings: Hermes URL / key / model / timeout / backend selector / fallback toggle / "Test connection" reachability chip.
 - **V2 scope (follow-on, not this item)**: `/v1/responses` with `previous_response_id` for session persistence; Whisper-over-Tailscale STT; server-owned voice pipeline.
 - **Acceptance**:
-  - [ ] Left-hold Quick Ask sends prompt to Hermes and displays response on glasses.
-  - [ ] Existing OpenAI direct path still works as fallback when Hermes is unreachable.
-  - [ ] App Settings expose Hermes URL / key / model configuration.
-  - [ ] Hermes response is short enough for glasses by default (glasses-native system instruction enforced).
-  - [ ] Network failure handled cleanly with user-visible fallback message.
-  - [ ] STT unchanged.
-  - [ ] API key stored in Flutter secure storage (not `SharedPreferences` or hardcoded).
-- **Notes**: `chat_service.dart` is the primary target — the OpenAI client call is the swap point. Cross-ref `router-v1-glance-handlers` (Next) — that item adds deterministic routing before the LLM call; they compose cleanly, Hermes just replaces the LLM endpoint.
+  - [x] Left-hold Quick Ask sends prompt to Hermes and displays response on glasses. — implemented for both surfaces. Chat mode DEVICE-VERIFIED 2026-05-27 (live round-trip: phone → Tailscale → Hermes → glasses; Hermes self-identified). Left-hold Quick Ask path wired in bdb7881, NOT yet device-tested.
+  - [ ] Existing OpenAI direct path still works as fallback when Hermes is unreachable. — implemented, NOT yet device-tested.
+  - [x] App Settings expose Hermes URL / key / model configuration. — done; also added timeout field, backend selector (OpenAI/Hermes SegmentedButton), fallback toggle, and a "Test connection" reachability chip.
+  - [x] Hermes response is short enough for glasses by default (glasses-native system instruction enforced). — reuses the existing glasses system prompt + length caps verbatim; verified responses render fine.
+  - [ ] Network failure handled cleanly with user-visible fallback message. — implemented ("Hermes unreachable. Using fallback." one-time notice; fallback-off surfaces "Network problem"), NOT yet device-tested.
+  - [x] STT unchanged. — `AssistantBackendConfig.resolve()` kept as the OpenAI profile; STT + note-tidy untouched.
+  - [x] API key stored in Flutter secure storage (not `SharedPreferences` or hardcoded). — Hermes key in secure storage (`assistant.hermes_api_key`), alongside the OpenAI key.
+- **Remaining to close**: device-test (1) left-hold Quick Ask → Hermes happy path; (2) Hermes unreachable → fallback notice → OpenAI; (3) fallback disabled → "Network problem" surface. All three paths need verification on both the Chat and Quick Ask surfaces. A real or simulated unreachable Hermes endpoint is needed for paths 2 and 3.
+- **Notes**: Cross-ref `router-v1-glance-handlers` (Next) — that item adds deterministic routing before the LLM call; they compose cleanly, Hermes just replaces the LLM endpoint. See `docs/hermes-api-tailscale-bind-brief.md` for full infrastructure context.
 
 ### router-v1-glance-handlers: Router v1 — `glance` trigger + Calendar, Notes, Media handlers
 - **Status**: Next
@@ -745,7 +748,7 @@ Good first prompt pattern:
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
   - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
-  - Hermes Agent (`hermes-agent-v1`) — **Next #2 (Medium-high)**; swap Quick Ask reasoning from direct OpenAI to self-hosted Hermes over Tailscale; fallback to OpenAI; Flutter secure storage for key; STT unchanged
+  - Hermes Agent (`hermes-agent-v1`) — **Next #2 (Medium-high)**; both surfaces (`ChatService` + `GlanceAssistantService`) now share `ChatBackendRouter`; Chat mode device-verified 2026-05-27; left-hold Quick Ask path + two fallback paths (Hermes unreachable → OpenAI; fallback-off → "Network problem") implemented but not yet device-tested; history unified (kind column, Chat Log badges "Chat"/"Quick Ask")
   - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — **Next #3–4**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
