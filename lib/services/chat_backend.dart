@@ -18,3 +18,16 @@ enum ChatBackendErrorKind {
   network,
   generic,
 }
+
+class ChatBackendException implements Exception {
+  const ChatBackendException(
+    this.message, {
+    this.kind = ChatBackendErrorKind.generic,
+  });
+
+  final String message;
+  final ChatBackendErrorKind kind;
+
+  @override
+  String toString() => message;
+}
