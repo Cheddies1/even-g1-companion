@@ -3,18 +3,20 @@ import 'dart:io';
 
 import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/models/chat_message.dart';
+import 'package:even_companion/models/chat_session_record.dart';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/chat_backend.dart';
-import 'package:even_companion/services/openai_chat_backend.dart';
+import 'package:even_companion/services/chat_backend_router.dart';
+import 'package:even_companion/services/chat_history_store.dart';
 import 'package:even_companion/services/openai_transcription_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 
 class GlanceAssistantService {
   GlanceAssistantService._({
-    OpenAiChatBackend? backend,
+    ChatBackendRouter? router,
     OpenAiTranscriptionService? transcriptionService,
-  })  : _backend = backend ?? OpenAiChatBackend(),
+  })  : _router = router ?? ChatBackendRouter(),
         _transcriptionService =
             transcriptionService ?? OpenAiTranscriptionService();
 
@@ -26,10 +28,14 @@ class GlanceAssistantService {
   static GlanceAssistantService? _instance;
   static GlanceAssistantService get get => _instance ??= GlanceAssistantService._();
 
-  final OpenAiChatBackend _backend;
+  final ChatBackendRouter _router;
   final OpenAiTranscriptionService _transcriptionService;
 
   final List<ChatMessage> _messages = <ChatMessage>[];
+  // History session spanning the current ephemeral context window. Created
+  // lazily on the first persisted user turn, ended when the window clears.
+  String? _historySessionId;
+  int _historySequence = 0;
   bool _isListening = false;
   bool _isThinking = false;
   bool _isDisplayVisible = false;
@@ -156,6 +162,8 @@ class GlanceAssistantService {
           content: cleanedTranscript,
         ),
       );
+      await _ensureHistorySession();
+      await _persistGlanceMessage(role: 'user', text: cleanedTranscript);
 
       await _showText('You said:\n${_shortPreview(cleanedTranscript)}');
       await Future<void>.delayed(_previewDelay);
@@ -164,8 +172,25 @@ class GlanceAssistantService {
         return 'Glance assistant request changed';
       }
 
+      // Pre-flight route selection (shared with Chat mode): for Hermes this
+      // runs a short health probe; on a clean fallback it returns a one-time
+      // notice surfaced here before the answer.
+      final route = await _router.resolveRoute();
+      if (!_isCurrentRequest(requestVersion)) {
+        return 'Glance assistant request changed';
+      }
+      final notice = route.notice;
+      if (notice != null) {
+        await _showText(notice);
+        await Future<void>.delayed(_previewDelay);
+        if (!_isCurrentRequest(requestVersion)) {
+          return 'Glance assistant request changed';
+        }
+      }
+
       await _showText('Thinking...');
-      final answer = await _backend.send(messages: List<ChatMessage>.from(_messages));
+      final answer =
+          await route.backend.send(messages: List<ChatMessage>.from(_messages));
 
       if (!_isCurrentRequest(requestVersion)) {
         return 'Glance assistant request changed';
@@ -178,6 +203,7 @@ class GlanceAssistantService {
           content: cleanedAnswer,
         ),
       );
+      await _persistGlanceMessage(role: 'assistant', text: cleanedAnswer);
       _lastActivityAt = DateTime.now();
       _restartSessionExpiryTimer();
 
@@ -223,7 +249,7 @@ class GlanceAssistantService {
 
   Future<void> reset() async {
     await close();
-    _messages.clear();
+    _clearEphemeralContext();
     _lastActivityAt = null;
     _sessionExpiryTimer?.cancel();
     _sessionExpiryTimer = null;
@@ -286,7 +312,7 @@ class GlanceAssistantService {
     if (DateTime.now().difference(lastActivityAt) < _sessionExpiry) {
       return;
     }
-    _messages.clear();
+    _clearEphemeralContext();
     _lastActivityAt = null;
     _sessionExpiryTimer?.cancel();
     _sessionExpiryTimer = null;
@@ -295,9 +321,62 @@ class GlanceAssistantService {
   void _restartSessionExpiryTimer() {
     _sessionExpiryTimer?.cancel();
     _sessionExpiryTimer = Timer(_sessionExpiry, () {
-      _messages.clear();
+      _clearEphemeralContext();
       _lastActivityAt = null;
     });
+  }
+
+  /// Lazily open a history session for the current ephemeral window, tagged as
+  /// a Quick Ask so the chat log can distinguish it from full Chat-mode
+  /// conversations.
+  Future<void> _ensureHistorySession() async {
+    if (_historySessionId != null) {
+      return;
+    }
+    final id = 'qa-${DateTime.now().millisecondsSinceEpoch}';
+    _historySessionId = id;
+    _historySequence = 0;
+    await ChatHistoryStore.get.startSession(
+      id: id,
+      startedAt: DateTime.now(),
+      kind: ChatSessionKind.quickAsk,
+    );
+  }
+
+  Future<void> _persistGlanceMessage({
+    required String role,
+    required String text,
+  }) async {
+    final sessionId = _historySessionId;
+    if (sessionId == null) {
+      return;
+    }
+    await ChatHistoryStore.get.appendMessage(
+      sessionId: sessionId,
+      role: role,
+      text: text,
+      sequence: _historySequence,
+      createdAt: DateTime.now(),
+    );
+    _historySequence++;
+  }
+
+  /// Clear the in-memory context and close its history session. The 4-minute
+  /// window maps to one Quick Ask session, mirroring Chat mode's per-session
+  /// persistence. endSession is fire-and-forget — it only stamps ended_at.
+  void _clearEphemeralContext() {
+    _messages.clear();
+    final sessionId = _historySessionId;
+    _historySessionId = null;
+    _historySequence = 0;
+    if (sessionId != null) {
+      unawaited(
+        ChatHistoryStore.get.endSession(
+          sessionId: sessionId,
+          endedAt: DateTime.now(),
+        ),
+      );
+    }
   }
 
   bool _isCurrentRequest(int requestVersion) {

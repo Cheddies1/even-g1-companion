@@ -28,7 +28,7 @@ class ChatHistoryStore extends ChangeNotifier {
       final dbPath = path.join(databasePath, 'even_companion_chat.db');
       _db = await openDatabase(
         dbPath,
-        version: 1,
+        version: 2,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE chat_sessions (
@@ -36,7 +36,8 @@ class ChatHistoryStore extends ChangeNotifier {
               started_at INTEGER NOT NULL,
               ended_at INTEGER,
               title_text TEXT,
-              preview_text TEXT
+              preview_text TEXT,
+              kind TEXT NOT NULL DEFAULT 'chat'
             )
           ''');
           await db.execute('''
@@ -54,6 +55,15 @@ class ChatHistoryStore extends ChangeNotifier {
             'CREATE INDEX idx_chat_messages_session_order ON chat_messages(session_id, sequence_order)',
           );
         },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            // Pre-existing sessions are all Chat mode; default them so the
+            // chat log keeps showing them correctly.
+            await db.execute(
+              "ALTER TABLE chat_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'",
+            );
+          }
+        },
       );
       await _refreshRecentSessions();
       _initialized = true;
@@ -65,17 +75,25 @@ class ChatHistoryStore extends ChangeNotifier {
   Future<void> startSession({
     required String id,
     required DateTime startedAt,
+    ChatSessionKind kind = ChatSessionKind.chat,
     String? titleText,
   }) async {
     await init();
+    final normalizedTitle = titleText?.trim();
     await _db!.insert(
       'chat_sessions',
       {
         'id': id,
         'started_at': startedAt.millisecondsSinceEpoch,
         'ended_at': null,
-        'title_text': titleText ?? _defaultTitle(startedAt),
+        // Stored NULL unless an explicit title is given; the display title is
+        // derived from kind + start time at read time (ChatSessionRecord).
+        'title_text':
+            (normalizedTitle == null || normalizedTitle.isEmpty)
+                ? null
+                : normalizedTitle,
         'preview_text': null,
+        'kind': kind.wireValue,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -177,14 +195,6 @@ class ChatHistoryStore extends ChangeNotifier {
     );
     _recentSessions = rows.map(ChatSessionRecord.fromMap).toList(growable: false);
     notifyListeners();
-  }
-
-  String _defaultTitle(DateTime value) {
-    final date =
-        '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
-    final time =
-        '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
-    return 'Chat $date $time';
   }
 
   String _preview(String text) {
