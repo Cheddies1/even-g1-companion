@@ -335,6 +335,20 @@ Working, but still needs real-world observation:
 - **Acceptance**: Audible (and similarly-behaving apps) produce a non-empty title/text pair that the Now Playing feature can display on the glasses. Apps that already populate standard notification fields (Spotify, YouTube Music, Podcast Addict) are unaffected.
 - **Notes**: Low urgency — the feature works correctly for the three most common music/podcast apps. Audible is the only confirmed failure case. Cross-ref `router-v1-glance-handlers` — fixing this would improve what the Router v1 `MediaHandler` can render for Audible and similar apps.
 
+### quick-ask-intermittent-capture-failure: Quick Ask — intermittent capture failure on consecutive asks
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: Left-hold Quick Ask intermittently fails after a preceding successful ask — the user is in listening state but never sees the "You said:…" transcript preview and no answer renders. The display either clears generically or stays blank. Pattern (observed 2026-05-27): the second consecutive Quick Ask fails; the first ask of a fresh session succeeds. Strongly implicates state/teardown not being reset cleanly between asks.
+- **Log evidence** (GlanceAssistant tag, `logs/hermes.txt`): repeated `micOn failed`, `transport lost — flags cleared`, and `close -> cancel capture and clear` — the in-flight request is cancelled via a `requestVersion` bump before the transcript preview can show. No transcription or network errors in the logs. This is a BLE/gesture/capture-lifecycle issue, NOT a Hermes or network issue, and NOT related to `hermes-agent-v1`.
+- **Likely root cause**: `GlanceAssistantService.startListening` (BleManager `startGlassesCapture` + `Proto.micOn`) and the teardown/reset path after a successful ask. The second `micOn` may be failing because the prior capture session or the `0x52` display surface was not fully released before the next mic start. Cross-ref `ChatService.startListening`, which has an explicit guard to exit any active `0x52` streaming surface (comment notes firmware needs `0x18` before mic audio routes correctly after a `0x52` session) — `GlanceAssistantService` may lack the equivalent guard. Also worth checking per-leg BLE capture state between asks.
+- **Acceptance**:
+  - [ ] Reproduce with fresh targeted logcat across two consecutive Quick Asks (first succeeds, second fails).
+  - [ ] Identify whether the second mic start fails because the prior capture/`0x52` surface was not released.
+  - [ ] Identify whether the per-leg BLE capture state is being reset between asks.
+  - [ ] Add equivalent `0x52` surface-exit guard to `GlanceAssistantService.startListening` if missing (mirroring `ChatService`).
+  - [ ] Confirm second consecutive ask succeeds reliably on device after fix.
+- **Notes**: Related history — `ble-mic-on-reconnect-ghost` (Done 2026-05-13) fixed a different mic-start failure (ghost notification on single-leg reconnect); that fix introduced the flag-only `handleTransportLost()` teardown and is now stable. This item is a distinct failure mode: no reconnect event, in-session, triggered by consecutive asks. The `mic-right-side-only-spike` (Next, PR-C) may surface related mic routing behaviour — coordinate if that spike runs first.
+
 ### android-kotlin-kgp-upgrade: Android — upgrade Kotlin + migrate to Flutter Built-in Kotlin
 - **Status**: Backlog
 - **Priority**: Medium
