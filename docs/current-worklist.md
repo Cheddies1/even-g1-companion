@@ -148,19 +148,6 @@ Working, but still needs real-world observation:
   - [ ] All HUD output is ASCII-only, text-only via `0x4E`.
 - **Notes**: `MediaHandler` reuses existing notification state — the `now-playing-mediasession` Backlog item (Audible MediaSession metadata fix) is complementary: fixing that would improve what `MediaHandler` can render for Audible and similar apps. Cross-ref that item when implementing. Independent of Capture v2 stream. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Assistant / LLM integration" section.
 
-### router-v1-chat-logging: Router v1 — Chat history logging (single feed, origin tag)
-- **Status**: Next
-- **Priority**: Medium
-- **Context**: Log both question and response from Quick Ask invocations — both router-claimed and LLM-fallback — into Chat history. Keeps the history complete and searchable. Pair with `router-v1-glance-handlers`.
-- **UI model**: Single feed with origin tag — small `Chat` / `Ask` label per entry. Same copy mechanism, format, etc. as existing Chat entries. Decided against sub-tabs to keep unification simple.
-- **Acceptance**:
-  - [ ] All Quick Ask invocations (router-claimed and LLM-fallback) produce an entry in Chat history.
-  - [ ] Entry shows the question and the response.
-  - [ ] Origin tag (`Chat` / `Ask`) is visible per entry.
-  - [ ] Existing Chat entries unaffected.
-- **Notes**: Rationale for single-feed approach: avoids splitting history into sub-tabs while preserving the distinction between conversational Chat turns and intent-driven Ask turns. Pair with `router-v1-glance-handlers`.
-- **NEEDS DECISION (2026-05-27)**: `hermes-agent-v1` (Done, 2026-05-27) already delivered every acceptance criterion here: both Chat and Quick Ask sessions persist in the Chat Log, badged by `kind` column (`'chat'` / `'quick_ask'`), with question and response visible per entry, and existing Chat entries unaffected. All four checkboxes appear satisfied by the shipped implementation. **This item may be Done.** Please confirm so it can be moved to Recently Done — or identify any gap that remains open.
-
 ### time-weather-0x06-extend: Extend `0x06 0x01` payload with weather icon and temperature
 - **Status**: Next
 - **Priority**: Low
@@ -435,6 +422,15 @@ Working, but still needs real-world observation:
   - [x] STT unchanged. — `AssistantBackendConfig.resolve()` kept as the OpenAI profile; STT + note-tidy untouched.
   - [x] API key stored in Flutter secure storage (not `SharedPreferences` or hardcoded). — confirmed.
 - **Notes**: Diagnostic-logging enhancement (log request URL + Dio type + status on chat failures) was offered and parked — pick up if a 404 recurs after Hermes is healthy. V2 scope (session persistence via `/v1/responses`, Whisper-over-Tailscale STT) remains a future item. Cross-ref `docs/hermes-api-tailscale-bind-brief.md` for infrastructure context.
+
+### router-v1-chat-logging: Router v1 — Chat history logging (single feed, origin tag) (2026-05-27, merge 642f19b, main)
+- **Status**: Done
+- **Outcome**: All acceptance criteria delivered as part of `hermes-agent-v1`. Both Chat-mode and Quick Ask sessions persist in the Chat Log, distinguished by a `kind` column (`'chat'` / `'quick_ask'`) and badged in the Chat Log list on `home_page`. Eddie confirmed done 2026-05-27.
+- **Acceptance**:
+  - [x] All Quick Ask invocations (router-claimed and LLM-fallback) produce an entry in Chat history.
+  - [x] Entry shows the question and the response.
+  - [x] Origin tag (`Chat` / `Ask`) is visible per entry.
+  - [x] Existing Chat entries unaffected.
 
 ### emoji-notification-parsing: Emoji notification parsing — substitution map for G1 display (2026-05-25, commit 1019324, main)
 - **Status**: Done
@@ -741,7 +737,7 @@ Good first prompt pattern:
 - mention whether the issue is:
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
   - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
-  - Router v1 (`router-v1-glance-handlers`, `router-v1-chat-logging`) — **Next #2–3**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A
+  - Router v1 (`router-v1-glance-handlers`) — **Next #2**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A (`router-v1-chat-logging` done — delivered by hermes-agent-v1)
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
