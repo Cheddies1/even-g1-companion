@@ -5,8 +5,8 @@ import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/models/chat_message.dart';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/chat_backend.dart';
+import 'package:even_companion/services/chat_backend_router.dart';
 import 'package:even_companion/services/chat_history_store.dart';
-import 'package:even_companion/services/openai_chat_backend.dart';
 import 'package:even_companion/services/openai_transcription_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/streaming_render_queue.dart';
@@ -15,18 +15,21 @@ import 'package:even_companion/services/text_service.dart';
 class ChatService {
   static const _closeGestureGraceWindow = Duration(milliseconds: 1500);
   static const _maxGlassesResponseChars = 900;
+  // How long a routing notice (e.g. "Hermes unreachable. Using fallback.")
+  // stays on the glasses before the "Thinking..." card replaces it.
+  static const _routingNoticeDuration = Duration(milliseconds: 1500);
 
   static ChatService? _instance;
   static ChatService get get => _instance ??= ChatService._();
 
   ChatService._({
-    ChatBackend? backend,
+    ChatBackendRouter? router,
     OpenAiTranscriptionService? transcriptionService,
-  })  : _backend = backend ?? OpenAiChatBackend(),
+  })  : _router = router ?? ChatBackendRouter(),
         _transcriptionService =
             transcriptionService ?? OpenAiTranscriptionService();
 
-  final ChatBackend _backend;
+  final ChatBackendRouter _router;
   final OpenAiTranscriptionService _transcriptionService;
 
   String? _sessionId;
@@ -227,13 +230,30 @@ class ChatService {
         return 'Chat session changed';
       }
 
-      // Phase 2: show "Thinking..." while backend starts.
+      // Phase 2: pre-flight route selection. For Hermes this runs a short
+      // health probe; on a clean fallback it returns a one-time notice we
+      // surface here, before the 0x52 answer surface goes up.
+      final route = await _router.resolveRoute();
+      if (!_isCurrentRequest(requestVersion)) {
+        return 'Chat session changed';
+      }
+      final notice = route.notice;
+      if (notice != null) {
+        await _showText(notice);
+        await Future<void>.delayed(_routingNoticeDuration);
+        if (!_isCurrentRequest(requestVersion)) {
+          return 'Chat session changed';
+        }
+      }
+
+      // Phase 3: show "Thinking..." while the chosen backend starts.
       await _showText('Thinking...');
 
-      // Phase 3: stream assistant reply via fresh 0x52 surface.
+      // Phase 4: stream assistant reply via fresh 0x52 surface.
       // The method handles message persistence and display internally.
       await _streamAssistantReply(
         requestVersion,
+        backend: route.backend,
         messages: List<ChatMessage>.from(_messages),
       );
       return 'Assistant replied';
@@ -310,6 +330,7 @@ class ChatService {
   /// Returns when the queue has fully drained (all text displayed).
   Future<void> _streamAssistantReply(
     int requestVersion, {
+    required ChatBackend backend,
     required List<ChatMessage> messages,
   }) async {
     // Clear the 0x4E "Thinking..." and start a fresh 0x52 surface.
@@ -327,7 +348,7 @@ class ChatService {
 
     try {
       var sawVisibleStreamChunk = false;
-      await for (final chunk in _backend.stream(messages: messages)) {
+      await for (final chunk in backend.stream(messages: messages)) {
         if (!_isCurrentRequest(requestVersion)) {
           _cancelRenderQueue();
           return;
@@ -390,7 +411,7 @@ class ChatService {
 
       AppLog.info('${DateTime.now()} fallback to 0x4E', tag: 'Chat');
       await Proto.stopStreamingText(sendFinalFrame: false);
-      final answer = await _backend.send(messages: messages);
+      final answer = await backend.send(messages: messages);
       final cleanedAnswer = _capForGlasses(_cleanText(answer));
       _messages.add(
         ChatMessage(

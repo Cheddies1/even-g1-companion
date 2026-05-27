@@ -9,9 +9,15 @@ import 'package:dio/dio.dart';
 class OpenAiChatBackend implements ChatBackend {
   OpenAiChatBackend({
     Dio? dio,
-  }) : _dio = dio;
+    AssistantBackendConfig Function()? configResolver,
+  })  : _dio = dio,
+        _configResolver = configResolver ?? AssistantBackendConfig.resolve;
 
   final Dio? _dio;
+
+  /// Resolves the profile this backend talks to. Defaults to the OpenAI
+  /// profile; the Hermes instance injects [AssistantBackendConfig.resolveHermes].
+  final AssistantBackendConfig Function() _configResolver;
 
   @override
   Future<String> send({
@@ -139,9 +145,9 @@ class OpenAiChatBackend implements ChatBackend {
         Dio(
           BaseOptions(
             baseUrl: config.baseUrl,
-            connectTimeout: const Duration(seconds: 20),
-            receiveTimeout: const Duration(seconds: 45),
-            sendTimeout: const Duration(seconds: 45),
+            connectTimeout: Duration(seconds: config.connectTimeoutSeconds),
+            receiveTimeout: Duration(seconds: config.receiveTimeoutSeconds),
+            sendTimeout: Duration(seconds: config.receiveTimeoutSeconds),
             headers: {
               'Authorization': 'Bearer ${config.apiKey}',
               'Content-Type': 'application/json',
@@ -151,10 +157,10 @@ class OpenAiChatBackend implements ChatBackend {
   }
 
   AssistantBackendConfig _resolveConfig() {
-    final config = AssistantBackendConfig.resolve();
+    final config = _configResolver();
     if (!config.isConfigured) {
-      throw const ChatBackendException(
-        'Missing OPENAI_API_KEY for Chat mode',
+      throw ChatBackendException(
+        '${config.profileLabel} backend is not configured (missing key or URL)',
         kind: ChatBackendErrorKind.auth,
       );
     }
@@ -258,17 +264,4 @@ class OpenAiChatBackend implements ChatBackend {
       kind: ChatBackendErrorKind.generic,
     );
   }
-}
-
-class ChatBackendException implements Exception {
-  const ChatBackendException(
-    this.message, {
-    this.kind = ChatBackendErrorKind.generic,
-  });
-
-  final String message;
-  final ChatBackendErrorKind kind;
-
-  @override
-  String toString() => message;
 }

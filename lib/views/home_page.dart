@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/models/app_mode.dart';
 import 'package:even_companion/services/app_settings_store.dart';
+import 'package:even_companion/models/chat_session_record.dart';
 import 'package:even_companion/services/chat_history_store.dart';
 import 'package:even_companion/services/capture_service.dart';
 import 'package:even_companion/services/chat_service.dart';
@@ -468,12 +469,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          session.displayTitle,
-                          style:
-                              Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                session.displayTitle,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyLarge
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            _buildSessionKindBadge(session.kind),
+                          ],
                         ),
                         if (session.previewText != null &&
                             session.previewText!.trim().isNotEmpty) ...[
@@ -497,6 +506,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSessionKindBadge(ChatSessionKind kind) {
+    final isQuickAsk = kind == ChatSessionKind.quickAsk;
+    final color =
+        isQuickAsk ? const Color(0xFF6FC4B4) : const Color(0xFF9AB7C8);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.6)),
+      ),
+      child: Text(
+        kind.label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
       ),
     );
   }

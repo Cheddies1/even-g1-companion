@@ -15,6 +15,12 @@ class AppSettingsStore extends ChangeNotifier {
   static const _baseUrlPrefKey = 'assistant.base_url';
   static const _chatModelPrefKey = 'assistant.chat_model';
   static const _transcriptionModelPrefKey = 'assistant.transcription_model';
+  static const _assistantBackendPrefKey = 'assistant.backend';
+  static const _hermesFallbackPrefKey = 'assistant.hermes_fallback';
+  static const _hermesApiKeyStorageKey = 'assistant.hermes_api_key';
+  static const _hermesBaseUrlPrefKey = 'assistant.hermes_base_url';
+  static const _hermesChatModelPrefKey = 'assistant.hermes_chat_model';
+  static const _hermesTimeoutPrefKey = 'assistant.hermes_timeout_seconds';
   static const _headUpModePrefKey = 'firmware.head_up_mode';
   static const _doubleTapActionPrefKey = 'firmware.double_tap_action';
   static const _brightnessLevelPrefKey = 'firmware.brightness_level';
@@ -29,6 +35,12 @@ class AppSettingsStore extends ChangeNotifier {
   String _baseUrl = '';
   String _chatModel = '';
   String _transcriptionModel = '';
+  AssistantBackendKind _assistantBackend = AssistantBackendKind.openai;
+  bool _hermesFallbackEnabled = true;
+  String _hermesApiKey = '';
+  String _hermesBaseUrl = '';
+  String _hermesChatModel = '';
+  int? _hermesTimeoutSeconds;
   HeadUpMode _headUpMode = HeadUpMode.unknown;
   DoubleTapAction _doubleTapAction = DoubleTapAction.unknown;
   int? _brightnessLevel;
@@ -41,6 +53,29 @@ class AppSettingsStore extends ChangeNotifier {
   String get baseUrl => _baseUrl;
   String get chatModel => _chatModel;
   String get transcriptionModel => _transcriptionModel;
+
+  /// Which backend the Quick Ask / Chat reasoning call routes to. STT and
+  /// note-tidy always stay on the OpenAI profile regardless of this choice.
+  /// Defaults to [AssistantBackendKind.openai].
+  AssistantBackendKind get assistantBackend => _assistantBackend;
+
+  /// When [assistantBackend] is Hermes and Hermes is unreachable, fall back
+  /// to the OpenAI direct path. Defaults to true.
+  bool get hermesFallbackEnabled => _hermesFallbackEnabled;
+
+  /// Hermes bearer token. Stored in secure storage, never SharedPreferences.
+  String get hermesApiKey => _hermesApiKey;
+
+  /// Hermes OpenAI-compatible base URL, e.g. `http://deepthought:8642/v1`.
+  String get hermesBaseUrl => _hermesBaseUrl;
+
+  /// Hermes chat model id. Empty falls back to the build default.
+  String get hermesChatModel => _hermesChatModel;
+
+  /// Hermes chat receive timeout in seconds, or null to use the build
+  /// default. Hermes may run a tool loop, so this is typically higher than
+  /// the OpenAI path's 45 s.
+  int? get hermesTimeoutSeconds => _hermesTimeoutSeconds;
 
   /// Last head-up mode the user picked from the Settings screen, or
   /// [HeadUpMode.unknown] if they have never picked. Persisted across
@@ -84,6 +119,18 @@ class AppSettingsStore extends ChangeNotifier {
       _chatModel = (prefs.getString(_chatModelPrefKey) ?? '').trim();
       _transcriptionModel =
           (prefs.getString(_transcriptionModelPrefKey) ?? '').trim();
+      _assistantBackend = _readAssistantBackend(prefs);
+      _hermesFallbackEnabled =
+          prefs.getBool(_hermesFallbackPrefKey) ?? true;
+      _hermesApiKey =
+          (await _secureStorage.read(key: _hermesApiKeyStorageKey) ?? '')
+              .trim();
+      _hermesBaseUrl = (prefs.getString(_hermesBaseUrlPrefKey) ?? '').trim();
+      _hermesChatModel =
+          (prefs.getString(_hermesChatModelPrefKey) ?? '').trim();
+      _hermesTimeoutSeconds = prefs.containsKey(_hermesTimeoutPrefKey)
+          ? prefs.getInt(_hermesTimeoutPrefKey)
+          : null;
       _headUpMode = _readHeadUpMode(prefs);
       _doubleTapAction = _readDoubleTapAction(prefs);
       _brightnessLevel = prefs.containsKey(_brightnessLevelPrefKey)
@@ -97,6 +144,19 @@ class AppSettingsStore extends ChangeNotifier {
     } finally {
       _initializing = false;
     }
+  }
+
+  AssistantBackendKind _readAssistantBackend(SharedPreferences prefs) {
+    final raw = prefs.getString(_assistantBackendPrefKey);
+    if (raw == null || raw.isEmpty) {
+      return AssistantBackendKind.openai;
+    }
+    for (final kind in AssistantBackendKind.values) {
+      if (kind.name == raw) {
+        return kind;
+      }
+    }
+    return AssistantBackendKind.openai;
   }
 
   HeadUpMode _readHeadUpMode(SharedPreferences prefs) {
@@ -169,6 +229,76 @@ class AppSettingsStore extends ChangeNotifier {
     _chatModel = normalizedChatModel;
     _transcriptionModel = normalizedTranscriptionModel;
     notifyListeners();
+  }
+
+  /// Persist the Hermes profile. The API key lives in secure storage; URL,
+  /// model, and timeout live in SharedPreferences. Empty optional fields are
+  /// cleared so the build defaults apply.
+  Future<void> saveHermesSettings({
+    required String apiKey,
+    required String baseUrl,
+    required String chatModel,
+    int? timeoutSeconds,
+  }) async {
+    await init();
+    final normalizedApiKey = apiKey.trim();
+    final normalizedBaseUrl = baseUrl.trim();
+    final normalizedChatModel = chatModel.trim();
+
+    final prefs = await SharedPreferences.getInstance();
+
+    if (normalizedApiKey.isEmpty) {
+      await _secureStorage.delete(key: _hermesApiKeyStorageKey);
+    } else {
+      await _secureStorage.write(
+        key: _hermesApiKeyStorageKey,
+        value: normalizedApiKey,
+      );
+    }
+
+    await _writeOptionalPref(
+      prefs: prefs,
+      key: _hermesBaseUrlPrefKey,
+      value: normalizedBaseUrl,
+    );
+    await _writeOptionalPref(
+      prefs: prefs,
+      key: _hermesChatModelPrefKey,
+      value: normalizedChatModel,
+    );
+    if (timeoutSeconds == null) {
+      await prefs.remove(_hermesTimeoutPrefKey);
+    } else {
+      await prefs.setInt(_hermesTimeoutPrefKey, timeoutSeconds);
+    }
+
+    _hermesApiKey = normalizedApiKey;
+    _hermesBaseUrl = normalizedBaseUrl;
+    _hermesChatModel = normalizedChatModel;
+    _hermesTimeoutSeconds = timeoutSeconds;
+    notifyListeners();
+  }
+
+  /// Persist which backend the reasoning call routes to.
+  Future<void> setAssistantBackend(AssistantBackendKind kind) async {
+    await init();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_assistantBackendPrefKey, kind.name);
+    if (_assistantBackend != kind) {
+      _assistantBackend = kind;
+      notifyListeners();
+    }
+  }
+
+  /// Persist whether OpenAI fallback is allowed when Hermes is unreachable.
+  Future<void> setHermesFallbackEnabled(bool enabled) async {
+    await init();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_hermesFallbackPrefKey, enabled);
+    if (_hermesFallbackEnabled != enabled) {
+      _hermesFallbackEnabled = enabled;
+      notifyListeners();
+    }
   }
 
   /// Persist the user's head-up choice across app restarts.
@@ -278,3 +408,6 @@ class AppSettingsStore extends ChangeNotifier {
     await prefs.setString(key, value);
   }
 }
+
+/// Which backend the Quick Ask / Chat reasoning call routes to.
+enum AssistantBackendKind { openai, hermes }
