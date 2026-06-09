@@ -251,6 +251,18 @@ Working, but still needs real-world observation:
   - [ ] Existing unambiguous todo phrases ("remind me to", "I need to") still classified correctly.
 - **Notes**: Polish item — the feature works well overall. No protocol changes; purely a classifier adjustment in the categorisation logic. Needs more variety of note types tested before acting on this. Not ready yet.
 
+### honest-foreground-notification: Honest foreground service notification (companion-lifetime step 1)
+- **Status**: Next
+- **Priority**: Medium
+- **Context**: `CompanionForegroundService` currently shows "Companion mode active in background" at all times, including when the engine is dead (swipe-killed from recents). Confirmed field issue — notification persists and misleads the user after swipe-kill. This is step 1 of the `companion-lifetime-decision` two-step path (agreed 2026-06-09): a standalone quick fix that makes the notification honest about real engine/activity state, regardless of the longer-term service-hosted-BLE restructure.
+- **Scope**: Detect engine/activity death and update the persistent notification to reflect real state: "Companion mode active" when alive, "Tap to resume" (or equivalent) when dead. Notification action should route back to the app.
+- **Acceptance**:
+  - [ ] Persistent notification text reflects real engine state — no false "active in background" claim when the engine is dead.
+  - [ ] Swipe-killing the app from recents changes the notification to a "Tap to resume" state (or removes it entirely, if that is cleaner).
+  - [ ] Tapping the notification while dead launches the app cleanly.
+  - [ ] Notification continues to show correctly while the engine is genuinely alive.
+- **Notes**: Standalone fix — does not depend on the joint `BleManager.kt` design pass (`ble-native-write-queue` + `ble-pending-gatt-leak` + full service-hosted-BLE). Codex brief available from 2026-06-09 review session.
+
 ---
 
 ## Backlog — Unprioritised
@@ -379,7 +391,7 @@ Items 1–2 are the top transport priorities because they compound: dropped writ
   - [ ] Real write status returned across the method channel (not always `success(null)`).
   - [ ] Dart `_recordHeartbeatFailure` no longer fires on dropped radio writes that are actually a busy-stack transient.
   - [ ] Pacing constants in `proto.dart` reviewed and either grounded or removed once real backpressure exists.
-- **Notes**: Pairs tightly with `ble-pending-gatt-leak` (item 2) — fix these two together to break the dropped-write → reconnect churn → GATT exhaustion cycle. Cross-ref `ble-pending-gatt-leak` below.
+- **Notes**: Pairs tightly with `ble-pending-gatt-leak` (item 2) — fix these two together to break the dropped-write → reconnect churn → GATT exhaustion cycle. Cross-ref `ble-pending-gatt-leak` below. The full service-hosted-BLE restructure from `companion-lifetime-decision` is also in scope for this design pass — all three items restructure `BleManager.kt` ownership and must be treated as a single joint pass. Codex brief available from 2026-06-09 review session.
 
 ### ble-pending-gatt-leak: Pending GATT client leak on abandoned reconnect (Tier 1)
 - **Status**: Backlog
@@ -390,7 +402,7 @@ Items 1–2 are the top transport priorities because they compound: dropped writ
   - [ ] `close()` called on the stored instance before issuing a new `connectGatt`.
   - [ ] "Pending reconnect" modelled as owned, closeable state — not an anonymous callback.
   - [ ] Status 133 / GATT exhaustion no longer reproducible via sustained away-then-return scenarios.
-- **Notes**: Cross-ref `ble-native-write-queue` (item 1) — fix together to break the compound failure cycle.
+- **Notes**: Cross-ref `ble-native-write-queue` (item 1) — fix together to break the compound failure cycle. The full service-hosted-BLE restructure from `companion-lifetime-decision` is also in scope for this joint design pass — all three items restructure `BleManager.kt` ownership and the file should not be refactored twice. Codex brief available from 2026-06-09 review session.
 
 ### companion-lifetime-decision: Companion lifetime — design decision (Tier 1, decision gate)
 - **Status**: Backlog
@@ -399,11 +411,14 @@ Items 1–2 are the top transport priorities because they compound: dropped writ
 - **Options**:
   1. Move BLE ownership to application context with the engine hosted service-side (full background-capable companion).
   2. Accept Activity lifetime and make the notification honest ("Tap to resume" rather than false "active in background" claim).
+- **Decision (2026-06-09)**: Two-step path agreed.
+  - Step 1 (immediate): Option 2 ships now as a standalone quick fix — `honest-foreground-notification` (see Next). Detects engine/activity death and updates `CompanionForegroundService` notification to reflect real state instead of falsely claiming "Companion mode active in background". Promoted to Next.
+  - Step 2 (full): Option 1 (service-hosted BLE) is folded into a single design pass together with `ble-native-write-queue` and `ble-pending-gatt-leak`. All three restructure `BleManager.kt`'s ownership model and the file should not be refactored twice. The design pass covers all three items together; do not implement option 1 independently of that pass.
 - **Acceptance**:
-  - [ ] Decision made and recorded (option 1 or 2).
-  - [ ] If option 1: BLE + engine moved to service context; `connectGatt` no longer uses Activity context; `CompanionForegroundService` is no longer a placebo.
-  - [ ] If option 2: persistent notification text corrected; no false background-active claim; notification action routes back to the app.
-- **Notes**: This is a design decision first, then an implementation task. Do not implement until Eddie has chosen an option. The false notification is a confirmed field issue — option 2 is a cheap immediate fix regardless of which long-term path is chosen.
+  - [x] Decision made and recorded — two-step path (2026-06-09).
+  - [ ] Step 1 delivered via `honest-foreground-notification` (see Next).
+  - [ ] Step 2: BLE + engine moved to service context; `connectGatt` no longer uses Activity context; `CompanionForegroundService` is no longer a placebo. Gated on the joint design pass with `ble-native-write-queue` + `ble-pending-gatt-leak`.
+- **Notes**: The false notification is now being addressed immediately by `honest-foreground-notification`. The full service-hosted-BLE restructure is deferred to the joint `BleManager.kt` design pass. Do not implement option 1 before that pass is scoped and agreed.
 
 ### heartbeat-suspend-is-noop: `suspendHeartbeats`/`resumeHeartbeats` is a no-op — wire or delete (Tier 1, small)
 - **Status**: Backlog
@@ -892,7 +907,8 @@ Good first prompt pattern:
   - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
   - Router v1 (`router-v1-glance-handlers`) — **Next #2**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A (`router-v1-chat-logging` done — delivered by hermes-agent-v1)
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
-  - BLE transport robustness (2026-06-09 review): 12 items in Backlog under "BLE transport — robustness review findings"; Tier 1 high-priority items are `ble-native-write-queue`, `ble-pending-gatt-leak`, `companion-lifetime-decision` (decision gate first), `heartbeat-suspend-is-noop`, `mtu-failure-fallthrough`; Tier 2 items follow
+  - Honest foreground notification (`honest-foreground-notification`) — **Next (Medium)**; step 1 of the `companion-lifetime-decision` two-step path; standalone quick fix, no dependency on the joint BleManager.kt design pass; Codex brief available
+  - BLE transport robustness (2026-06-09 review): items in Backlog under "BLE transport — robustness review findings"; `companion-lifetime-decision` decided 2026-06-09 (two-step path); Tier 1 high-priority items now are `ble-native-write-queue` + `ble-pending-gatt-leak` (joint design pass with service-hosted-BLE from `companion-lifetime-decision`; Codex briefs available) + `heartbeat-suspend-is-noop` + `mtu-failure-fallthrough`; Tier 2 items follow
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
   - `AGENTS.md`
