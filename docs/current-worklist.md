@@ -348,6 +348,7 @@ Working, but still needs real-world observation:
   - [ ] Add equivalent `0x52` surface-exit guard to `GlanceAssistantService.startListening` if missing (mirroring `ChatService`).
   - [ ] Confirm second consecutive ask succeeds reliably on device after fix.
 - **Notes**: Related history — `ble-mic-on-reconnect-ghost` (Done 2026-05-13) fixed a different mic-start failure (ghost notification on single-leg reconnect); that fix introduced the flag-only `handleTransportLost()` teardown and is now stable. This item is a distinct failure mode: no reconnect event, in-session, triggered by consecutive asks. The `mic-right-side-only-spike` (Next, PR-C) may surface related mic routing behaviour — coordinate if that spike runs first.
+- **Cross-ref (transport review, 2026-06-09)**: `_syncUnknownNotes` in `lib/ble_manager.dart` paces with fixed 2 s/3 s sleeps and no completion signal — timing-coupled in the same way and likely related. Investigate alongside the consecutive-ask teardown path.
 
 ### android-kotlin-kgp-upgrade: Android — upgrade Kotlin + migrate to Flutter Built-in Kotlin
 - **Status**: Backlog
@@ -362,6 +363,144 @@ Working, but still needs real-world observation:
   - [ ] `flutter build apk --debug` and `flutter build apk --release` both succeed without KGP / Kotlin-version warnings.
   - [ ] No regression on existing Android features (BLE, notifications, capture, navigate, glance HUD).
 - **Notes**: Non-blocking today, but will become blocking when a future Flutter stable refuses these versions. If a plugin cannot be upgraded (e.g. `fluttertoast` has gone unmaintained), the fallback is to fork or replace — note the alternative in this item if that becomes the case.
+
+#### BLE transport — robustness review findings (2026-06-09)
+
+Source: production-robustness review of BLE transport and notification path, 2026-06-09. Files reviewed: `android/.../bluetooth/BleManager.kt`, `BleDevice.kt`, `BleChannelHelper.kt`, `QuickNoteAudioBuffer.kt`, `MainActivity.kt`, `CompanionForegroundService.kt`, `RecentNotificationsListenerService.kt`, `lib/ble_manager.dart`, `lib/services/proto.dart`, cross-checked against `docs/current-architecture.md`.
+
+Items 1–2 are the top transport priorities because they compound: dropped writes cause false leg degradation → reconnect churn → GATT client exhaustion.
+
+### ble-native-write-queue: Native per-leg serialised write queue (Tier 1)
+- **Status**: Backlog
+- **Priority**: High
+- **Context**: No native write queue exists. `BleDevice.sendData` (android `.../model/BleDevice.kt:32`) uses `WRITE_TYPE_NO_RESPONSE` with no serialisation against `onCharacteristicWrite`; busy-stack write failures return `false`, `requestData` (`BleManager.kt:585`) ignores it, and the method channel returns `success(null)` regardless. Dart cannot distinguish "dropped at radio" from "sent, no reply" — dropped writes surface as request timeouts, feed `_recordHeartbeatFailure`, mark healthy legs degraded, and trigger reconnects. The Dart pacing constants in `proto.dart` (10/20/30 ms inter-packet, 100 ms `secondDelay`) are guesses papering over the missing serialisation.
+- **Acceptance**:
+  - [ ] Per-leg serialised write queue in Kotlin, keyed off `onCharacteristicWrite` callback and write-busy return code.
+  - [ ] Real write status returned across the method channel (not always `success(null)`).
+  - [ ] Dart `_recordHeartbeatFailure` no longer fires on dropped radio writes that are actually a busy-stack transient.
+  - [ ] Pacing constants in `proto.dart` reviewed and either grounded or removed once real backpressure exists.
+- **Notes**: Pairs tightly with `ble-pending-gatt-leak` (item 2) — fix these two together to break the dropped-write → reconnect churn → GATT exhaustion cycle. Cross-ref `ble-pending-gatt-leak` below.
+
+### ble-pending-gatt-leak: Pending GATT client leak on abandoned reconnect (Tier 1)
+- **Status**: Backlog
+- **Priority**: High
+- **Context**: Abandoned reconnect attempts leak GATT clients. `reconnectLeg` (`BleManager.kt:263`) calls `connectGatt(autoConnect=true)`; the instance is held only by its callback and never closed if the device never returns. The Dart 30 s watchdog clears `reconnectInFlight`, the health monitor issues another `reconnectLeg` → another pending GATT to the same address. `forceReconnect`/`connectToGlass` can stack more. Rebuilds the GATT-client exhaustion (cap ~32 → status 133 until BT toggle) that the 2026-05-08 Tier-1 fix addressed only on the disconnect side.
+- **Acceptance**:
+  - [ ] Pending GATT instance stored per leg.
+  - [ ] `close()` called on the stored instance before issuing a new `connectGatt`.
+  - [ ] "Pending reconnect" modelled as owned, closeable state — not an anonymous callback.
+  - [ ] Status 133 / GATT exhaustion no longer reproducible via sustained away-then-return scenarios.
+- **Notes**: Cross-ref `ble-native-write-queue` (item 1) — fix together to break the compound failure cycle.
+
+### companion-lifetime-decision: Companion lifetime — design decision (Tier 1, decision gate)
+- **Status**: Backlog
+- **Priority**: High
+- **Context**: Companion lifetime is Activity-scoped; the foreground service is a placebo. `connectGatt` uses Activity context; `reconnectLeg`/`checkBluetoothStatus` bail when `weakActivity` is gone; `CompanionForegroundService` hosts no BLE and no engine. Swiping the app from recents kills the engine while the persistent notification still claims "Companion mode active in background". **Confirmed in the field by Eddie**: swipe-kill loses all functionality while the notification persists.
+- **Options**:
+  1. Move BLE ownership to application context with the engine hosted service-side (full background-capable companion).
+  2. Accept Activity lifetime and make the notification honest ("Tap to resume" rather than false "active in background" claim).
+- **Acceptance**:
+  - [ ] Decision made and recorded (option 1 or 2).
+  - [ ] If option 1: BLE + engine moved to service context; `connectGatt` no longer uses Activity context; `CompanionForegroundService` is no longer a placebo.
+  - [ ] If option 2: persistent notification text corrected; no false background-active claim; notification action routes back to the app.
+- **Notes**: This is a design decision first, then an implementation task. Do not implement until Eddie has chosen an option. The false notification is a confirmed field issue — option 2 is a cheap immediate fix regardless of which long-term path is chosen.
+
+### heartbeat-suspend-is-noop: `suspendHeartbeats`/`resumeHeartbeats` is a no-op — wire or delete (Tier 1, small)
+- **Status**: Backlog
+- **Priority**: Medium
+- **Effort**: ~1 h including doc fix.
+- **Context**: `suspendHeartbeats`/`resumeHeartbeats` (`lib/ble_manager.dart:1682`) increment a depth counter that nothing reads; there are zero call sites in `lib/`. Additionally, `docs/current-architecture.md` falsely states that Navigate uses it during the 108-packet bootstrap burst — this is doc/code drift. During bootstrap, `0x25` heartbeats with 1500 ms timeouts contend with the packet burst today with no suppression.
+- **Acceptance**:
+  - [ ] Either wire it (timer checks depth, Navigate wraps the burst with `suspend`/`resume` calls) OR delete the dead code and correct `docs/current-architecture.md` to remove the false claim.
+  - [ ] `docs/current-architecture.md` heartbeat-pause claim corrected either way.
+  - [ ] If wired: Navigate bootstrap burst wrapped and no `0x25` heartbeat contention confirmed in logcat during an actual bootstrap.
+- **Notes**: The false architecture doc claim is a guaranteed fix regardless of the wire-vs-delete decision. Small item — do not over-scope it.
+
+### mtu-failure-fallthrough: MTU negotiation failure falls through to bond/ready (Tier 1, small)
+- **Status**: Backlog
+- **Priority**: Medium
+- **Effort**: Small.
+- **Context**: `onMtuChanged` (`BleManager.kt:465`) proceeds to bond/ready regardless of status. A failed negotiation leaves MTU at 23 bytes while the app sends 176–202-byte frames and receives 42-byte `0x21` frames; the fixed-offset parsers would misread frames after truncation.
+- **Acceptance**:
+  - [ ] MTU negotiation failure treated as setup failure.
+  - [ ] Connection recycled (close + reconnect) when MTU negotiation fails.
+  - [ ] No regression on the happy path — successful MTU negotiation proceeds to bond/ready as before.
+- **Notes**: Straightforward defensive guard. No protocol changes.
+
+### reconnect-strategy-consolidation: Consolidate competing reconnect systems (Tier 2)
+- **Status**: Backlog
+- **Priority**: Medium
+- **Context**: Two competing reconnect systems exist with a coverage hole. Per-leg `autoConnect` reconnect vs full-session scan ladder (immediate/30/60/120 s, then gives up). Full disconnect with glasses away for more than ~4 minutes never recovers. The recovery scan is unfiltered + `SCAN_MODE_LOW_LATENCY`: Android 8.1+ suppresses unfiltered results screen-off, so the ladder cannot work from a pocket. `autoConnect` path never calls `stopScan` after connect (only the home-page UI does).
+- **Acceptance**:
+  - [ ] Persistent per-leg `autoConnect` pending connects used as the long-game recovery mechanism (depends on `ble-pending-gatt-leak` owned-state fix).
+  - [ ] Scan used only for cold-start discovery, with a `ScanFilter` on the NUS service UUID / name prefix.
+  - [ ] `stopScan` called on connect.
+  - [ ] Away-for->4-minutes scenario recovers without user interaction.
+- **Notes**: Depends on `ble-pending-gatt-leak` being resolved first — owned `autoConnect` state is the precondition for the long-game recovery model. Cross-ref `ble-stability-tier3` (reconnect tuning) which covers schedule widening.
+
+### bond-pending-leg-ready: `markLegReady` fires while bond is pending (Tier 2)
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: `markLegReady` fires while `BOND_PENDING`; initial heartbeat written before bond resolves; `bond_failed` legs still marked ready. Works only because G1 does not enforce encryption on those characteristics. A firmware update or stricter pairing policy could break this silently.
+- **Acceptance**:
+  - [ ] `markLegReady` gated on bond resolution — does not fire until `BOND_BONDED` (or `BOND_NONE` for unpaired operation).
+  - [ ] `bond_failed` legs not marked ready; failure logged and connection recycled.
+- **Notes**: Low-urgency hardening; current firmware tolerates it.
+
+### notification-listener-rebind: Notification listener — silent death and battery-string false drop (Tier 2, cheap)
+- **Status**: Backlog
+- **Priority**: Low
+- **Effort**: Cheap.
+- **Context**: `RecentNotificationsListenerService` has no `onListenerDisconnected → requestRebind`; the listener can silently die and Glance goes quiet until the user toggles notification access. Additionally, `shouldIgnoreNotification` drops any notification whose title/text contains the substrings `"charging"` or `"battery"` — this will eat real messages containing those words; it should be a package-based rule in `NotificationPolicy` instead.
+- **Acceptance**:
+  - [ ] `onListenerDisconnected` implemented with `requestRebind(componentName)` call.
+  - [ ] Battery/charging string filter moved to a package-based exclusion rule in `NotificationPolicy` (or removed if no longer needed).
+  - [ ] Glance does not silently go quiet after listener disconnect; recovers automatically.
+- **Notes**: Classic Glance-goes-quiet failure mode. The string-match filter is a latent correctness bug.
+
+### lc3-hot-path-crash: `!!` NPE on bad LC3 frame in live mic path (Tier 2, cheap)
+- **Status**: Backlog
+- **Priority**: Low
+- **Effort**: Cheap.
+- **Context**: `Cpp.decodeLC3(lc3)!!` in `onCharacteristicChanged` (`BleManager.kt:518`) NPEs the app on one bad mic frame mid-capture. The `decodeLc3Frames` channel method already does skip-and-log; the live-mic path should match.
+- **Acceptance**:
+  - [ ] `!!` removed; null result from `Cpp.decodeLC3` handled with skip-and-log, matching the `decodeLc3Frames` pattern.
+  - [ ] One bad mic frame does not crash the app or terminate the capture session.
+- **Notes**: One-liner fix; high crash-safety value for minimal effort.
+
+### rx-frame-guards: Unguarded RX frame indexing and double-subscribe risk (Tier 2, cheap)
+- **Status**: Backlog
+- **Priority**: Low
+- **Effort**: Cheap.
+- **Context**: Unguarded frame indexing: `_handleReceivedData` reads `res.data[0]`/`[1]` without length checks; `exit()` guards `isNotEmpty` then reads `[1]`; `_requestList` reads `resp.data[1]` bare. The RX stream subscription has no `onError` handler; double `startListening()` would double-subscribe.
+- **Acceptance**:
+  - [ ] A guarded frame-entry function (checks minimum length before indexing) used at all RX entry points.
+  - [ ] RX stream `onError` handled (log + recover).
+  - [ ] `startListening()` guarded against double-subscribe.
+- **Notes**: Defensive hardening batch; each sub-item is a few lines. Group together for a single small PR.
+
+### request-correlation-seq: Request correlation by (leg, opcode, seq) — fix collision risk (Tier 2)
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: `request()` correlation is `(leg, opcode)` only; two in-flight same-opcode requests to one leg collide. Protocol sequence bytes are unused for correlation. Interim mitigation: per-leg TX mutex. Proper fix: match on seq byte.
+- **Acceptance**:
+  - [ ] Either: per-leg TX mutex preventing concurrent same-leg requests (interim); or correlation keyed on `(leg, opcode, seq)` (proper).
+  - [ ] Two concurrent same-opcode requests to one leg do not corrupt each other's response.
+- **Notes**: Low-frequency bug in current usage patterns, but correctness gap. Interim mutex is a cheap short-term fix.
+
+### transport-honesty-smalls: Transport honesty — small correctness gaps batch (Tier 2)
+- **Status**: Backlog
+- **Priority**: Low
+- **Effort**: Small batch.
+- **Context**: Three small correctness gaps identified in the robustness review:
+  1. `disconnectFromGlasses` (`BleManager.kt:253`) is a stub that disconnects nothing.
+  2. `_recordLegAck` flips a leg back to connected/healthy on stray RX against native state.
+  3. Pre-Tiramisu write branch in `BleDevice.sendData` never sets the characteristic value (latent bug, not triggered on S24U).
+- **Acceptance**:
+  - [ ] `disconnectFromGlasses` calls `gatt.disconnect()` / `gatt.close()` on each connected leg.
+  - [ ] `_recordLegAck` cross-checks native GATT connection state before marking a leg healthy.
+  - [ ] Pre-Tiramisu write branch sets the characteristic value before writing (matches the Tiramisu path).
+- **Notes**: These can land as a single small PR. Item 3 is latent on the S24U but would bite on older devices.
 
 #### BLE stability — deferred tiers
 
@@ -753,6 +892,7 @@ Good first prompt pattern:
   - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
   - Router v1 (`router-v1-glance-handlers`) — **Next #2**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A (`router-v1-chat-logging` done — delivered by hermes-agent-v1)
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
+  - BLE transport robustness (2026-06-09 review): 12 items in Backlog under "BLE transport — robustness review findings"; Tier 1 high-priority items are `ble-native-write-queue`, `ble-pending-gatt-leak`, `companion-lifetime-decision` (decision gate first), `heartbeat-suspend-is-noop`, `mtu-failure-fallthrough`; Tier 2 items follow
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
   - `AGENTS.md`
