@@ -1329,11 +1329,21 @@ class BleManager {
       _handleFullDisconnect(source: 'ConnectionStateChanged');
       _maybeStartAutoReconnect();
     } else if (wasConnected && isConnected) {
-      // Single-leg disconnect: we HAD a full connection (wasConnected) and
-      // still have at least one leg up (isConnected). The gate on
-      // wasConnected prevents false positives during initial connection
-      // setup, when one leg is up but the other is still mid-GATT-discovery.
+      // Single-leg disconnect: a leg that WAS up has gone down while the other
+      // stays up. Gate on the connected->disconnected transition for THIS
+      // payload, not on bare !connected. The second leg always lags the first
+      // on a cold connect, so a leg still mid-GATT-discovery reads as
+      // !connected and would otherwise be mistaken for a drop — triggering a
+      // spurious reconnect that aborts the in-progress connection. A leg whose
+      // initial connect genuinely stalls is recovered by _monitorLegHealth,
+      // not here.
       for (final lr in ['L', 'R']) {
+        final dropped = lr == 'L'
+            ? (prevLeftConnected && !leftConnected)
+            : (prevRightConnected && !rightConnected);
+        if (!dropped) {
+          continue;
+        }
         final state = legState(lr);
         if (!state.connected &&
             state.deviceName.isNotEmpty &&
