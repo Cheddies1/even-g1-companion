@@ -7,6 +7,7 @@ import com.eddie.evencompanion.bluetooth.BleManager
 import com.eddie.evencompanion.bluetooth.BleMethodChannel
 import com.eddie.evencompanion.bluetooth.BlePermissionUtil
 import com.eddie.evencompanion.cpp.Cpp
+import com.eddie.evencompanion.service.CompanionForegroundService
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -21,6 +22,13 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
     }
 
     override fun onDestroy() {
+        // Config changes recreate the activity and engine immediately — only a
+        // real finish means the companion is actually gone.
+        if (!isChangingConfigurations) {
+            BleChannelHelper.engineStopped()
+            BleManager.instance.releaseConnections()
+            CompanionForegroundService.notifyEngineStopped(applicationContext)
+        }
         BleManager.instance.deinit()
         super.onDestroy()
     }

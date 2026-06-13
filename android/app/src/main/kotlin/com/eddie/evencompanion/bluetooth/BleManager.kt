@@ -36,7 +36,9 @@ import java.util.concurrent.ConcurrentHashMap
 class BleManager private constructor() {
 
     companion object {
-        val LOG_TAG = BleManager::class.simpleName
+        // Literal, not BleManager::class.simpleName — R8 obfuscates the class
+        // name in release builds, which would tag every native log line as "k".
+        const val LOG_TAG = "BleManager"
 
         private const val SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
         private const val WRITE_CHARACTERISTIC_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -148,6 +150,39 @@ class BleManager private constructor() {
     /// UI Thread
     private val mainScope: CoroutineScope = MainScope()
 
+    // Per-leg serialised write queues. Android allows one in-flight GATT write
+    // per connection; everything outbound goes through these. Declared after
+    // mainScope — the initialisers capture it.
+    private val writeQueues: Map<String, GattWriteQueue> = mapOf(
+        "L" to GattWriteQueue(
+            lr = "L",
+            scope = mainScope,
+            isReady = { deviceFor("L")?.let { it.gatt != null && it.writeCharacteristic != null } == true },
+            submit = { data -> deviceFor("L")?.writeRaw(data) ?: GattWriteQueue.SUBMIT_FAILED },
+        ),
+        "R" to GattWriteQueue(
+            lr = "R",
+            scope = mainScope,
+            isReady = { deviceFor("R")?.let { it.gatt != null && it.writeCharacteristic != null } == true },
+            submit = { data -> deviceFor("R")?.writeRaw(data) ?: GattWriteQueue.SUBMIT_FAILED },
+        ),
+    )
+
+    private fun deviceFor(lr: String): BleDevice? =
+        connectedDevice?.let { if (lr == "L") it.leftDevice else it.rightDevice }
+
+    private fun lrForGatt(gatt: BluetoothGatt?): String? {
+        val address = gatt?.device?.address ?: return null
+        return when (address) {
+            connectedDevice?.leftDevice?.address -> "L"
+            connectedDevice?.rightDevice?.address -> "R"
+            else -> null
+        }
+    }
+
+    private fun storedDeviceFor(gatt: BluetoothGatt?): BleDevice? =
+        lrForGatt(gatt)?.let { deviceFor(it) }
+
     // QuickNote audio buffer — accumulates the `0x1e c8 ...` stream that
     // follows a right-side `0x21` release.  Flushed on stream-end or timeout.
     private val quickNoteBuffer = QuickNoteAudioBuffer(
@@ -234,6 +269,12 @@ class BleManager private constructor() {
             result.error("PeripheralNotFound", "One or both peripherals are not found", null)
             return
         }
+        // If the pair objects are being replaced (e.g. fresh scan results), close
+        // any gatts the old objects still own — otherwise they leak.
+        connectedDevice?.let { old ->
+            if (old.leftDevice !== leftDevice) closeLegGatt(old.leftDevice, "replaced-by-new-pair")
+            if (old.rightDevice !== rightDevice) closeLegGatt(old.rightDevice, "replaced-by-new-pair")
+        }
         connectedDevice = BlePairDevice(leftDevice, rightDevice)
         Log.i(
             LOG_TAG,
@@ -241,8 +282,8 @@ class BleManager private constructor() {
         )
         weakActivity.get()?.let {
             // autoConnect=false: faster initial connect; the OS attempts once.
-            bluetoothAdapter.getRemoteDevice(leftDevice.address).connectGatt(it, false, bleGattCallBack())
-            bluetoothAdapter.getRemoteDevice(rightDevice.address).connectGatt(it, false, bleGattCallBack())
+            startLegConnect(leftDevice, it, autoConnect = false)
+            startLegConnect(rightDevice, it, autoConnect = false)
         }
         result.success("Connecting to G1_$deviceChannel ...")
     }
@@ -275,14 +316,9 @@ class BleManager private constructor() {
         mainScope.launch {
             try {
                 Log.i(LOG_TAG, "Reconnect requested for $side leg: ${device.name}")
-                // Disconnect triggers onConnectionStateChange(STATE_DISCONNECTED), which
-                // closes and nulls the gatt. We don't close here to avoid double-close.
-                device.gatt?.disconnect()
-                device.isConnect = false
                 notifyConnectionState("reconnecting")
                 // autoConnect=true: OS maintains a background scan and reconnects when in range.
-                bluetoothAdapter.getRemoteDevice(device.address)
-                    .connectGatt(activity, true, bleGattCallBack())
+                startLegConnect(device, activity, autoConnect = true)
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "Reconnect request failed for $side leg", e)
             } finally {
@@ -293,19 +329,69 @@ class BleManager private constructor() {
     }
 
     /**
-     *
+     * Closes and clears a leg's gatt, whether established or still pending-connect.
+     * `close()` is the only way to cancel an outstanding `connectGatt` — without
+     * it, repeated reconnect attempts each leak a GATT client until the per-app
+     * cap (~32) is exhausted and every connect fails with status 133.
      */
-    fun senData(params: Map<*, *>?) {
+    private fun closeLegGatt(device: BleDevice?, reason: String) {
+        val gatt = device?.gatt ?: return
+        Log.i(LOG_TAG, "Closing gatt for ${device.name} ($reason)")
+        try {
+            gatt.close()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "gatt.close failed for ${device.name}", e)
+        }
+        device.gatt = null
+        device.writeCharacteristic = null
+        device.isConnect = false
+    }
+
+    /**
+     * Issues a `connectGatt` for one leg, owning the returned instance from the
+     * moment of creation. Invariant: at most one outstanding BluetoothGatt per
+     * leg — any previous instance (pending or stale) is closed first.
+     */
+    private fun startLegConnect(device: BleDevice, activity: Activity, autoConnect: Boolean) {
+        if (device.isConnect && device.gatt != null) {
+            Log.i(LOG_TAG, "startLegConnect skipped — ${device.name} already connected")
+            return
+        }
+        closeLegGatt(device, "superseded-by-new-connect")
+        writeQueues[if (device.isLeft()) "L" else "R"]?.flush("new-connect")
+        device.gatt = bluetoothAdapter.getRemoteDevice(device.address)
+            .connectGatt(activity, autoConnect, bleGattCallBack())
+        Log.i(LOG_TAG, "connectGatt issued for ${device.name} autoConnect=$autoConnect")
+    }
+
+    /**
+     * Tears down both leg connections and fails all queued writes. Called when
+     * the Flutter engine goes away (MainActivity finishing) — a connection the
+     * engine can no longer drive is an orphan, not an asset.
+     */
+    fun releaseConnections() {
+        Log.i(LOG_TAG, "releaseConnections: engine stopping — closing leg gatts")
+        closeLegGatt(connectedDevice?.leftDevice, "engine-stopped")
+        closeLegGatt(connectedDevice?.rightDevice, "engine-stopped")
+        writeQueues.values.forEach { it.flush("engine-stopped") }
+    }
+
+    /**
+     * Entry point for Flutter-originated writes. [onComplete] fires exactly once
+     * with true only if every targeted leg's write completed.
+     */
+    fun senData(params: Map<*, *>?, onComplete: ((Boolean) -> Unit)? = null) {
         val data = params?.get("data") as ByteArray? ?: byteArrayOf()
         if (data.isEmpty()) {
             Log.e(LOG_TAG, "Send data is empty")
+            onComplete?.invoke(false)
             return
         }
-        val lr = params?.get("lr") as String?
-        when (lr) {
-            null -> requestData(data)
-            "L" -> requestData(data, sendLeft = true)
-            "R" -> requestData(data, sendRight = true)
+        when (params?.get("lr") as String?) {
+            null -> requestData(data, onComplete = onComplete)
+            "L" -> requestData(data, sendLeft = true, onComplete = onComplete)
+            "R" -> requestData(data, sendRight = true, onComplete = onComplete)
+            else -> onComplete?.invoke(false)
         }
     }
 
@@ -354,6 +440,14 @@ class BleManager private constructor() {
                 "Gatt connection state change: device=${gatt?.device?.name} address=${gatt?.device?.address} status=$status state=$stateLabel"
             )
             if (newState == BluetoothGatt.STATE_CONNECTED) {
+                // A superseded instance (replaced by a newer connectGatt for the same
+                // leg) connecting late must not enter setup — close it and move on.
+                val stored = storedDeviceFor(gatt)
+                if (stored != null && stored.gatt !== gatt) {
+                    Log.w(LOG_TAG, "Superseded gatt connected for ${gatt?.device?.name} — closing duplicate")
+                    gatt?.close()
+                    return
+                }
                 notifyConnectionState("connecting")
                 gatt?.discoverServices()
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
@@ -368,23 +462,25 @@ class BleManager private constructor() {
                 connectedDevice?.let { paired ->
                     val isLeft = gatt?.device?.address == paired.leftDevice?.address
                     val isRight = gatt?.device?.address == paired.rightDevice?.address
-                    if (isLeft) {
-                        // Null stored ref only if it still matches the disconnected instance.
-                        if (paired.leftDevice?.gatt == gatt) {
-                            paired.leftDevice?.gatt = null
-                            paired.leftDevice?.writeCharacteristic = null
-                        }
+                    // Only the current instance may mutate leg state — a stale
+                    // instance disconnecting must not mark the live leg down.
+                    if (isLeft && paired.leftDevice?.gatt === gatt) {
+                        paired.leftDevice?.gatt = null
+                        paired.leftDevice?.writeCharacteristic = null
                         paired.update(isLeftConnect = false)
+                        writeQueues["L"]?.flush("disconnect")
                         Log.i(LOG_TAG, "Left leg disconnected: ${gatt?.device?.name}")
-                    } else if (isRight) {
-                        if (paired.rightDevice?.gatt == gatt) {
-                            paired.rightDevice?.gatt = null
-                            paired.rightDevice?.writeCharacteristic = null
-                        }
+                        notifyConnectionState("disconnected")
+                    } else if (isRight && paired.rightDevice?.gatt === gatt) {
+                        paired.rightDevice?.gatt = null
+                        paired.rightDevice?.writeCharacteristic = null
                         paired.update(isRightConnected = false)
+                        writeQueues["R"]?.flush("disconnect")
                         Log.i(LOG_TAG, "Right leg disconnected: ${gatt?.device?.name}")
+                        notifyConnectionState("disconnected")
+                    } else if (isLeft || isRight) {
+                        Log.i(LOG_TAG, "Stale gatt disconnect for ${gatt?.device?.name} — state untouched")
                     }
-                    notifyConnectionState("disconnected")
                     Unit
                 }
             }
@@ -394,14 +490,21 @@ class BleManager private constructor() {
             super.onServicesDiscovered(gatt, status)
             Log.i(LOG_TAG, "onServicesDiscovered: device=${gatt?.device?.name} status=$status")
 
+            // The gatt is stored at connectGatt time, so identity is checkable
+            // from the very first callback — superseded instances stop here.
+            val stored = storedDeviceFor(gatt)
+            if (stored == null || stored.gatt !== gatt) {
+                Log.w(LOG_TAG, "onServicesDiscovered from superseded gatt (${gatt?.device?.name}) — closing")
+                gatt?.close()
+                return
+            }
+
             connectedDevice?.let { paired ->
                 var isLeft = false
                 var isRight = false
                 if (gatt?.device?.address == paired.leftDevice?.address) {
-                    paired.update(leftGatt = gatt)
                     isLeft = true
                 } else if (gatt?.device?.address == paired.rightDevice?.address) {
-                    paired.update(rightGatt = gatt)
                     isRight = true
                 }
 
@@ -488,9 +591,13 @@ class BleManager private constructor() {
             status: Int
         ) {
             super.onCharacteristicWrite(gatt, characteristic, status)
-            if (status != BluetoothGatt.GATT_SUCCESS) {
+            val ok = status == BluetoothGatt.GATT_SUCCESS
+            if (!ok) {
                 Log.e(LOG_TAG, "onCharacteristicWrite FAILED: device=${gatt.device?.name} char=${characteristic.uuid} status=$status")
             }
+            // Drive the per-leg write queue forward. Arrives on a binder thread;
+            // onWriteComplete hops onto the main dispatcher internally.
+            lrForGatt(gatt)?.let { writeQueues[it]?.onWriteComplete(ok) }
         }
 
         override fun onCharacteristicChanged(
@@ -567,8 +674,14 @@ class BleManager private constructor() {
             Log.i(LOG_TAG, "Right leg ready: ${paired.rightDevice?.name}")
         }
 
-        // Initial heartbeat — fires after notifications are wired and MTU is settled.
-        requestData(byteArrayOf(0xf4.toByte(), 0x01.toByte()))
+        // Initial heartbeat — fires after notifications are wired and MTU is
+        // settled. Targeted at the leg that just came up; the other leg gets
+        // its own when it reaches ready.
+        requestData(
+            byteArrayOf(0xf4.toByte(), 0x01.toByte()),
+            sendLeft = isLeft,
+            sendRight = isRight,
+        )
 
         if (paired.isBothConnected()) {
             Log.i(LOG_TAG, "Both legs connected: left=${paired.leftDevice?.name}, right=${paired.rightDevice?.name}")
@@ -580,16 +693,35 @@ class BleManager private constructor() {
     }
 
     /**
-     *
+     * Routes a write into the per-leg queues. When [onComplete] is supplied it
+     * fires once, after all targeted legs report, with the AND of their results.
+     * Completion counters are only ever touched on the main dispatcher (queue
+     * callbacks run there), so no synchronisation is needed.
      */
-    private fun requestData(data: ByteArray, sendLeft: Boolean = false, sendRight: Boolean = false) {
+    private fun requestData(
+        data: ByteArray,
+        sendLeft: Boolean = false,
+        sendRight: Boolean = false,
+        onComplete: ((Boolean) -> Unit)? = null,
+    ) {
         val isBothSend = !sendLeft && !sendRight
         Log.d(LOG_TAG, "Send ${if (isBothSend) "both" else if (sendLeft) "left" else "right"} data = ${ByteUtil.byteToHexArray(data)}")
-        if (sendLeft || isBothSend) {
-            connectedDevice?.leftDevice?.sendData(data)
+        val targets = mutableListOf<String>()
+        if (sendLeft || isBothSend) targets.add("L")
+        if (sendRight || isBothSend) targets.add("R")
+
+        if (onComplete == null) {
+            targets.forEach { lr -> writeQueues[lr]?.enqueue(data) }
+            return
         }
-        if (sendRight || isBothSend) {
-            connectedDevice?.rightDevice?.sendData(data)
+        var remaining = targets.size
+        var allOk = true
+        targets.forEach { lr ->
+            writeQueues.getValue(lr).enqueue(data) { ok ->
+                allOk = allOk && ok
+                remaining--
+                if (remaining == 0) onComplete(allOk)
+            }
         }
     }
 

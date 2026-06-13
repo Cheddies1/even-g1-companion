@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.os.Build
 import android.util.Log
 import com.eddie.evencompanion.bluetooth.BleManager
+import com.eddie.evencompanion.bluetooth.GattWriteQueue
 
 @SuppressLint("MissingPermission")
 data class BleDevice(
@@ -29,38 +30,39 @@ data class BleDevice(
 
     fun isRight() = name.contains("_R_")
 
-    fun sendData(data: ByteArray): Boolean {
-        if (gatt == null || writeCharacteristic == null) {
+    /**
+     * Submits one characteristic write to the stack. Returns the raw submit
+     * status: [GattWriteQueue.SUBMIT_OK], [GattWriteQueue.SUBMIT_BUSY]
+     * (stack already has a write in flight), or [GattWriteQueue.SUBMIT_FAILED].
+     *
+     * Callers must serialise through [GattWriteQueue] — this method performs
+     * no queuing of its own.
+     */
+    fun writeRaw(data: ByteArray): Int {
+        val gatt = this.gatt
+        val characteristic = this.writeCharacteristic
+        if (gatt == null || characteristic == null) {
             Log.e(BleManager.LOG_TAG, "$name: Gatt or WriteCharacteristic is null")
-            return false
+            return GattWriteQueue.SUBMIT_FAILED
         }
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val result = gatt!!.writeCharacteristic(
-                    writeCharacteristic!!,
+                gatt.writeCharacteristic(
+                    characteristic,
                     data,
                     BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                 )
-                if (data.isNotEmpty() && (data[0].toInt() == 0x15 || data[0].toInt() == 0x20 || data[0].toInt() == 0x16)) {
-                    Log.i(
-                        BleManager.LOG_TAG,
-                        "NavigateBmpTraceNative: device=$name cmd=0x${data[0].toInt().toString(16)} len=${data.size} writeResult=$result"
-                    )
-                }
-                result == BluetoothGatt.GATT_SUCCESS
             } else {
-                val result = gatt!!.writeCharacteristic(writeCharacteristic)
-                if (data.isNotEmpty() && (data[0].toInt() == 0x15 || data[0].toInt() == 0x20 || data[0].toInt() == 0x16)) {
-                    Log.i(
-                        BleManager.LOG_TAG,
-                        "NavigateBmpTraceNative: device=$name cmd=0x${data[0].toInt().toString(16)} len=${data.size} writeResult=$result"
-                    )
-                }
-                result
+                @Suppress("DEPRECATION")
+                characteristic.value = data
+                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                @Suppress("DEPRECATION")
+                val accepted = gatt.writeCharacteristic(characteristic)
+                if (accepted) GattWriteQueue.SUBMIT_OK else GattWriteQueue.SUBMIT_FAILED
             }
         } catch (e: Exception) {
-            Log.e(BleManager.LOG_TAG, "$name: send $data error = $e")
-            false
+            Log.e(BleManager.LOG_TAG, "$name: write error = $e")
+            GattWriteQueue.SUBMIT_FAILED
         }
     }
 }

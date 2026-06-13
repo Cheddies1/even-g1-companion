@@ -38,6 +38,20 @@ object BleChannelHelper {
     val bleMC: BleMethodChannel
         get() = bleMethodChannel
 
+    /**
+     * True while a live Flutter engine is attached. The foreground service
+     * consults this before claiming the companion is active: after a
+     * swipe-kill or process restart the service can outlive the engine, and
+     * the "active in background" notification must not lie.
+     */
+    @Volatile
+    var engineAlive: Boolean = false
+        private set
+
+    fun engineStopped() {
+        engineAlive = false
+    }
+
 
     //*================ Method - Public ================*//
 
@@ -45,6 +59,7 @@ object BleChannelHelper {
      *
      */
     fun initChannel(context: MainActivity, flutterEngine: FlutterEngine) {
+        engineAlive = true
         val binaryMessenger = flutterEngine.dartExecutor.binaryMessenger
         GlassesCaptureRecorder.init(context.applicationContext)
         //  Method
@@ -152,8 +167,13 @@ class BleMethodChannel(
     fun disconnectFromGlasses(call: MethodCall, result: MethodChannel.Result) = BleManager.instance.disconnectFromGlasses(result)
 
     fun send(call: MethodCall, result: MethodChannel.Result) {
-        BleManager.instance.senData(call.arguments as? Map<*, *>)
-        result.success(null)
+        // Resolves with the real write outcome (all targeted legs completed)
+        // instead of the old unconditional success(null). The completion
+        // callback runs on the main dispatcher, which is where MethodChannel
+        // results must be delivered.
+        BleManager.instance.senData(call.arguments as? Map<*, *>) { ok ->
+            result.success(ok)
+        }
     }
 
     fun startEvenAI(call: MethodCall, result: MethodChannel.Result) {
