@@ -251,18 +251,6 @@ Working, but still needs real-world observation:
   - [ ] Existing unambiguous todo phrases ("remind me to", "I need to") still classified correctly.
 - **Notes**: Polish item — the feature works well overall. No protocol changes; purely a classifier adjustment in the categorisation logic. Needs more variety of note types tested before acting on this. Not ready yet.
 
-### honest-foreground-notification: Honest foreground service notification (companion-lifetime step 1)
-- **Status**: Next
-- **Priority**: Medium
-- **Context**: `CompanionForegroundService` currently shows "Companion mode active in background" at all times, including when the engine is dead (swipe-killed from recents). Confirmed field issue — notification persists and misleads the user after swipe-kill. This is step 1 of the `companion-lifetime-decision` two-step path (agreed 2026-06-09): a standalone quick fix that makes the notification honest about real engine/activity state, regardless of the longer-term service-hosted-BLE restructure.
-- **Scope**: Detect engine/activity death and update the persistent notification to reflect real state: "Companion mode active" when alive, "Tap to resume" (or equivalent) when dead. Notification action should route back to the app.
-- **Acceptance**:
-  - [ ] Persistent notification text reflects real engine state — no false "active in background" claim when the engine is dead.
-  - [ ] Swipe-killing the app from recents changes the notification to a "Tap to resume" state (or removes it entirely, if that is cleaner).
-  - [ ] Tapping the notification while dead launches the app cleanly.
-  - [ ] Notification continues to show correctly while the engine is genuinely alive.
-- **Notes**: Standalone fix — does not depend on the joint `BleManager.kt` design pass (`ble-native-write-queue` + `ble-pending-gatt-leak` + full service-hosted-BLE). Codex brief available from 2026-06-09 review session.
-
 ---
 
 ## Backlog — Unprioritised
@@ -380,45 +368,23 @@ Working, but still needs real-world observation:
 
 Source: production-robustness review of BLE transport and notification path, 2026-06-09. Files reviewed: `android/.../bluetooth/BleManager.kt`, `BleDevice.kt`, `BleChannelHelper.kt`, `QuickNoteAudioBuffer.kt`, `MainActivity.kt`, `CompanionForegroundService.kt`, `RecentNotificationsListenerService.kt`, `lib/ble_manager.dart`, `lib/services/proto.dart`, cross-checked against `docs/current-architecture.md`.
 
-Items 1–2 are the top transport priorities because they compound: dropped writes cause false leg degradation → reconnect churn → GATT client exhaustion.
-
-### ble-native-write-queue: Native per-leg serialised write queue (Tier 1)
-- **Status**: Backlog
-- **Priority**: High
-- **Context**: No native write queue exists. `BleDevice.sendData` (android `.../model/BleDevice.kt:32`) uses `WRITE_TYPE_NO_RESPONSE` with no serialisation against `onCharacteristicWrite`; busy-stack write failures return `false`, `requestData` (`BleManager.kt:585`) ignores it, and the method channel returns `success(null)` regardless. Dart cannot distinguish "dropped at radio" from "sent, no reply" — dropped writes surface as request timeouts, feed `_recordHeartbeatFailure`, mark healthy legs degraded, and trigger reconnects. The Dart pacing constants in `proto.dart` (10/20/30 ms inter-packet, 100 ms `secondDelay`) are guesses papering over the missing serialisation.
-- **Acceptance**:
-  - [ ] Per-leg serialised write queue in Kotlin, keyed off `onCharacteristicWrite` callback and write-busy return code.
-  - [ ] Real write status returned across the method channel (not always `success(null)`).
-  - [ ] Dart `_recordHeartbeatFailure` no longer fires on dropped radio writes that are actually a busy-stack transient.
-  - [ ] Pacing constants in `proto.dart` reviewed and either grounded or removed once real backpressure exists.
-- **Notes**: Pairs tightly with `ble-pending-gatt-leak` (item 2) — fix these two together to break the dropped-write → reconnect churn → GATT exhaustion cycle. Cross-ref `ble-pending-gatt-leak` below. The full service-hosted-BLE restructure from `companion-lifetime-decision` is also in scope for this design pass — all three items restructure `BleManager.kt` ownership and must be treated as a single joint pass. Codex brief available from 2026-06-09 review session.
-
-### ble-pending-gatt-leak: Pending GATT client leak on abandoned reconnect (Tier 1)
-- **Status**: Backlog
-- **Priority**: High
-- **Context**: Abandoned reconnect attempts leak GATT clients. `reconnectLeg` (`BleManager.kt:263`) calls `connectGatt(autoConnect=true)`; the instance is held only by its callback and never closed if the device never returns. The Dart 30 s watchdog clears `reconnectInFlight`, the health monitor issues another `reconnectLeg` → another pending GATT to the same address. `forceReconnect`/`connectToGlass` can stack more. Rebuilds the GATT-client exhaustion (cap ~32 → status 133 until BT toggle) that the 2026-05-08 Tier-1 fix addressed only on the disconnect side.
-- **Acceptance**:
-  - [ ] Pending GATT instance stored per leg.
-  - [ ] `close()` called on the stored instance before issuing a new `connectGatt`.
-  - [ ] "Pending reconnect" modelled as owned, closeable state — not an anonymous callback.
-  - [ ] Status 133 / GATT exhaustion no longer reproducible via sustained away-then-return scenarios.
-- **Notes**: Cross-ref `ble-native-write-queue` (item 1) — fix together to break the compound failure cycle. The full service-hosted-BLE restructure from `companion-lifetime-decision` is also in scope for this joint design pass — all three items restructure `BleManager.kt` ownership and the file should not be refactored twice. Codex brief available from 2026-06-09 review session.
+Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 design pass (see Recently Done). Remaining open items follow.
 
 ### companion-lifetime-decision: Companion lifetime — design decision (Tier 1, decision gate)
 - **Status**: Backlog
-- **Priority**: High
+- **Priority**: Low (step 1 shipped; step 2 not yet prompted by field evidence)
 - **Context**: Companion lifetime is Activity-scoped; the foreground service is a placebo. `connectGatt` uses Activity context; `reconnectLeg`/`checkBluetoothStatus` bail when `weakActivity` is gone; `CompanionForegroundService` hosts no BLE and no engine. Swiping the app from recents kills the engine while the persistent notification still claims "Companion mode active in background". **Confirmed in the field by Eddie**: swipe-kill loses all functionality while the notification persists.
 - **Options**:
   1. Move BLE ownership to application context with the engine hosted service-side (full background-capable companion).
   2. Accept Activity lifetime and make the notification honest ("Tap to resume" rather than false "active in background" claim).
 - **Decision (2026-06-09)**: Two-step path agreed.
-  - Step 1 (immediate): Option 2 ships now as a standalone quick fix — `honest-foreground-notification` (see Next). Detects engine/activity death and updates `CompanionForegroundService` notification to reflect real state instead of falsely claiming "Companion mode active in background". Promoted to Next.
+  - Step 1 (immediate): Option 2 ships now as a standalone quick fix — `honest-foreground-notification`. Detects engine/activity death and updates `CompanionForegroundService` notification to reflect real state instead of falsely claiming "Companion mode active in background".
   - Step 2 (full): Option 1 (service-hosted BLE) is folded into a single design pass together with `ble-native-write-queue` and `ble-pending-gatt-leak`. All three restructure `BleManager.kt`'s ownership model and the file should not be refactored twice. The design pass covers all three items together; do not implement option 1 independently of that pass.
 - **Acceptance**:
   - [x] Decision made and recorded — two-step path (2026-06-09).
-  - [ ] Step 1 delivered via `honest-foreground-notification` (see Next).
-  - [ ] Step 2: BLE + engine moved to service context; `connectGatt` no longer uses Activity context; `CompanionForegroundService` is no longer a placebo. Gated on the joint design pass with `ble-native-write-queue` + `ble-pending-gatt-leak`.
-- **Notes**: The false notification is now being addressed immediately by `honest-foreground-notification`. The full service-hosted-BLE restructure is deferred to the joint `BleManager.kt` design pass. Do not implement option 1 before that pass is scoped and agreed.
+  - [x] Step 1 delivered via `honest-foreground-notification` (Done 2026-06-13).
+  - [ ] Step 2: BLE + engine moved to service context; `connectGatt` no longer uses Activity context; `CompanionForegroundService` is no longer a placebo. Gated on a future joint design pass.
+- **Notes**: Step 1 is done. 4-hour field test on 2026-06-13 under the swipe-kill scenario revealed no new requirement to escalate to step 2 — the honest notification covers the UX problem adequately for now. Step 2 remains available if a genuine background-connectivity use case emerges (e.g. BLE must stay alive with the app backgrounded). Do not implement option 1 until that case is clear.
 
 ### heartbeat-suspend-is-noop: `suspendHeartbeats`/`resumeHeartbeats` is a no-op — wire or delete (Tier 1, small)
 - **Status**: Backlog
@@ -451,7 +417,7 @@ Items 1–2 are the top transport priorities because they compound: dropped writ
   - [ ] Scan used only for cold-start discovery, with a `ScanFilter` on the NUS service UUID / name prefix.
   - [ ] `stopScan` called on connect.
   - [ ] Away-for->4-minutes scenario recovers without user interaction.
-- **Notes**: Depends on `ble-pending-gatt-leak` being resolved first — owned `autoConnect` state is the precondition for the long-game recovery model. Cross-ref `ble-stability-tier3` (reconnect tuning) which covers schedule widening.
+- **Notes**: `ble-pending-gatt-leak` (the owned-state precondition) is now Done (2026-06-13) — this item is unblocked. Cross-ref `ble-stability-tier3` (reconnect tuning) which covers schedule widening.
 
 ### bond-pending-leg-ready: `markLegReady` fires while bond is pending (Tier 2)
 - **Status**: Backlog
@@ -577,6 +543,22 @@ Items 1–2 are the top transport priorities because they compound: dropped writ
 ---
 
 ## Recently Done
+
+### BLE ownership design pass: `ble-native-write-queue` + `ble-pending-gatt-leak` + `honest-foreground-notification` + `cold-connect-false-positive-reconnect` (2026-06-13, commits 7808f39 + c8d45e1, main)
+- **Status**: Done
+- **Outcome**: Four related fixes landed as a single BleManager.kt ownership design pass, field validated 2026-06-13 in ~4 hours of continuous use.
+
+**`ble-native-write-queue`** — `GattWriteQueue.kt` (new file) implements a per-leg serialised write queue drained on `onCharacteristicWrite`, with a 500 ms watchdog fallback, bounded depth, busy-retries, and flush on disconnect. Method-channel `send` now resolves with the real write outcome rather than always `success(null)`. `BleDevice.writeRaw` replaces `sendData`, returning raw submit status; pre-Tiramisu branch now sets the characteristic value before writing (latent bug fixed, would have bitten on older devices). `BleManager.kt` `LOG_TAG` changed from `::class.simpleName` to a const string literal — R8 was tagging every native log line as `"k"` in release builds; this directly improves weekend debuggability for all three fixes above.
+
+**`ble-pending-gatt-leak`** — At most one outstanding `BluetoothGatt` is held per leg. Pending reconnects are `close()`-d before issuing a new `connectGatt`; superseded instances are rejected at first callback; stale disconnects can no longer mutate live-leg state. Breaks the dropped-write → reconnect churn → GATT exhaustion cycle. Status 133 / GATT exhaustion provisionally resolved; multi-day cradle cycling is the remaining confirmation stress.
+
+**`honest-foreground-notification`** — `engineAlive` flag in `BleChannelHelper`; `onTaskRemoved` (swipe-from-recents) swaps the notification to "Even Companion stopped — Tap to resume" (dismissible, no mode buttons), calls `stopForeground`+detach+`stopSelf`. Any service start without a live engine renders the stopped state. Confirmed by field test: swipe-from-recents shows "Tap to resume" rather than the "Companion mode active in background" placebo. Step 1 of `companion-lifetime-decision` is complete.
+
+**`cold-connect-false-positive-reconnect`** (surfaced during device validation, commit c8d45e1 — not a pre-existing backlog item) — `_applyConnectionPayload`'s single-leg-disconnect branch was gating on bare `!state.connected`, which mistook a leg still mid-GATT-discovery for a dropped leg. Every cold connect was firing a spurious reconnect for the lagging leg. Fixed by gating on the connected→disconnected transition for the current payload. Confirmed by post-fix logcat: no `single-leg disconnect detected` line during cold connect.
+
+**Field validation summary (2026-06-13, ~4 h continuous)**: no reconnect flash card observed, no silent death event, honest notification confirmed on swipe-kill. GATT leak fix provisionally working; strongest stress (multi-day cradle cycling) is the remaining gate.
+
+---
 
 ### hermes-agent-v1: Hermes Agent — replace OpenAI direct with Hermes over Tailscale (2026-05-27, merge 642f19b, main)
 - **Status**: Done
