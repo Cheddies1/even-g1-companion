@@ -42,7 +42,16 @@
       "Bash(powershell *)",
       "WebFetch(domain:happy.engineering)",
       "Bash(gh api *)",
-      "Bash(grep -n '^#\\\\{2,3\\\\} ' docs/current-worklist.md)"
+      "Bash(grep -n '^#\\\\{2,3\\\\} ' docs/current-worklist.md)",
+      "Read(//home/eddie/hermes/**)",
+      "Bash(scripts/build-and-serve.sh build *)",
+      "Bash(scripts/build-and-serve.sh serve *)",
+      "Bash(curl -s -o /dev/null -w 'localhost:8421 -> %{http_code}\\\\n' --max-time 4 \"http://127.0.0.1:8421/app-release.apk\" --range 0-0)",
+      "Bash(pkill -f \"http.server 8421\")",
+      "Bash(pkill -f \"until grep -q .Serving\")",
+      "Bash(curl -s -o /dev/null -w '8421 now -> %{http_code}\\\\n' --max-time 3 \"http://127.0.0.1:8421/app-release.apk\" --range 0-0)",
+      "Bash(ps -eo pid,args)",
+      "Bash(claude update *)"
     ]
   }
 }
