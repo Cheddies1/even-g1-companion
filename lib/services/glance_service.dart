@@ -101,15 +101,55 @@ class GlanceService {
     }
   }
 
+  /// Primary call-HUD driver. The telephony [handleTelephonyState] path is
+  /// unreliable on some devices (Samsung One UI never delivers
+  /// `onCallStateChanged`), so the CallStyle notification — which carries
+  /// `callType` and the connect time — drives the HUD directly. The HUD is
+  /// forced onto the display immediately on call start, not deferred to the
+  /// next idle-surface takeover.
   void updateCall(CompanionNotification notification) {
+    final phase = _callPhaseFromNotification(notification);
+    final name =
+        notification.title.isNotEmpty ? notification.title : notification.source;
+    // Only re-render when something the user can see has changed, or when the
+    // HUD is not currently asserted — the per-second timer covers active-call
+    // duration ticks, so identical refreshes must not flood the transport.
+    final changed = _callPhase != phase ||
+        _callDisplayName != name ||
+        _currentCall == null ||
+        !_isIdleSurfaceActive;
+
     _currentCall = notification;
-    // Only re-render if the idle surface is already showing — the HUD appears
-    // via showIdleSurfaceIfAvailable (post-close / post-timeout), not on call start.
-    if (_isIdleSurfaceActive) {
+    _callPhase = phase;
+    _callDisplayName = name;
+    _callNumber = null;
+    _callIsOutgoing = false;
+
+    if (phase == CallPhase.active) {
+      // Lock in the answer time on the first transition to active and don't
+      // overwrite it on later updates — Samsung's incallui rewrites
+      // `notification.when` from ring-start to answer-time when the user picks
+      // up, which would otherwise yank the timer back to 0.
+      _callAnsweredAt ??= notification.connectedAt ?? DateTime.now();
+      _startCallTimerIfNeeded();
+    } else {
+      _callAnsweredAt = null;
+      _callTimer?.cancel();
+      _callTimer = null;
+    }
+
+    if (changed) {
+      // A call takes over the surface — drop any pending auto-dismiss so the
+      // HUD is not torn down underneath us.
+      _clearTimer?.cancel();
+      _clearTimer = null;
+      _isIdleSurfaceActive = true;
       _enqueueRender(autoHide: false, markInteracted: false);
     }
     AppLog.info(
-      '${DateTime.now()} call updated -> ${notification.title}',
+      '${DateTime.now()} call updated -> $name phase=${phase.name} '
+      'callType=${notification.callType} text="${notification.text}" '
+      'connectedAt=${notification.connectedAt}',
       tag: 'Glance',
     );
   }
@@ -117,17 +157,38 @@ class GlanceService {
   void clearCall(String key) {
     if (_currentCall?.key != key) return;
     _currentCall = null;
+    _callPhase = null;
+    _callDisplayName = null;
+    _callNumber = null;
+    _callAnsweredAt = null;
+    _callIsOutgoing = false;
     _callTimer?.cancel();
     _callTimer = null;
     if (_isIdleSurfaceActive) {
       _isIdleSurfaceActive = false;
       // Was showing the call HUD; close properly now that the call has ended.
+      // _hasActiveCall is now false, so close() tears the surface down rather
+      // than re-asserting it.
       close();
     }
     AppLog.info(
       '${DateTime.now()} call cleared -> $key',
       tag: 'Glance',
     );
+  }
+
+  /// Maps a CallStyle notification to a [CallPhase]. Android call types:
+  /// 1 = INCOMING, 2 = ONGOING, 3 = SCREENING. The two signals are combined
+  /// because Samsung's incallui has been observed to report `callType=2` even
+  /// during the ring — so `callType` alone cannot be trusted to mean ongoing.
+  CallPhase _callPhaseFromNotification(CompanionNotification notification) {
+    final ringingByType =
+        notification.callType == 1 || notification.callType == 3;
+    final ringingByText =
+        notification.text.toLowerCase().contains('incoming');
+    return ringingByType || ringingByText
+        ? CallPhase.ringing
+        : CallPhase.active;
   }
 
   void handleTelephonyState(String state, {bool isOutgoing = false, String? number}) {
@@ -393,9 +454,6 @@ class GlanceService {
     if (_isIdleSurfaceActive && _callPhase != null) {
       return _buildTelephonyCallText(now);
     }
-    if (_isIdleSurfaceActive && _currentCall != null) {
-      return _buildCallHudText(now);
-    }
     final hour = now.hour.toString().padLeft(2, '0');
     final minute = now.minute.toString().padLeft(2, '0');
     final batteryLabel = DeviceStatusService.get.glassesBatteryLabel;
@@ -411,16 +469,6 @@ class GlanceService {
     final postedHour = current.postedAt.hour.toString().padLeft(2, '0');
     final postedMinute = current.postedAt.minute.toString().padLeft(2, '0');
     return '$line1\n${current.source}  ·  $postedHour:$postedMinute\n${current.message}';
-  }
-
-  String _buildCallHudText(DateTime now) {
-    final call = _currentCall!;
-    final name = call.title.isNotEmpty ? call.title : call.source;
-    final connected = call.connectedAt;
-    final durationLine = (connected == null || connected.isAfter(now))
-        ? 'Call time: --:--'
-        : 'Call time: ${_formatCallDuration(now.difference(connected))}';
-    return 'Ongoing call: $name\n$durationLine';
   }
 
   String _buildTelephonyCallText(DateTime now) {

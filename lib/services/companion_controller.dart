@@ -116,6 +116,7 @@ class CompanionController extends ChangeNotifier {
   Future<void> disposeController() async {
     _cancelPendingTiltUpIntent(reason: 'dispose');
     await _notificationSubscription?.cancel();
+    await _telephonySubscription?.cancel();
   }
 
   Future<void> refreshCompanionState() async {
@@ -751,18 +752,14 @@ class CompanionController extends ChangeNotifier {
     }
 
     if (classification == NotificationDisposition.callAbsorbed) {
-      if (_telephonyActive) {
-        GlanceService.get.updateCallIdentity(
-          name: notification.title,
-          number: notification.text,
-        );
-      } else {
-        GlanceService.get.updateCall(notification);
-      }
+      // The notification listener is the authoritative call-HUD driver: the
+      // telephony CallStateListener is silent on some devices (Samsung One UI),
+      // and the CallStyle notification reliably carries callType + connect time.
+      GlanceService.get.updateCall(notification);
       _logNotificationPolicy(
         notification,
         classification: classification,
-        routing: _telephonyActive ? 'call-identity-update' : 'call-absorbed',
+        routing: _telephonyActive ? 'call-absorbed (telephony live)' : 'call-absorbed',
       );
       notifyListeners();
       return;
@@ -915,9 +912,7 @@ class CompanionController extends ChangeNotifier {
     final packageName = (rawEvent['packageName'] as String?) ?? '';
     await GlanceService.get.removeNotificationByKey(key);
     GlanceService.get.clearMedia(key);
-    if (!_telephonyActive) {
-      GlanceService.get.clearCall(key);
-    }
+    GlanceService.get.clearCall(key);
     final cleared = await NavigateService.get.clearIfMatches(
       key: key,
       packageName: packageName,
