@@ -16,8 +16,8 @@ Four-pillar product model (agreed 2026-05-18):
 
 - **Glance** — ambient awareness. Includes QuickNote. QuickNote is a Glance-mode feature, not its own pillar.
 - **QuickAsk / Router** — instant intent execution via the left-hold gesture.
-- **Capture** — ambient audio memory (long-form recording).
-- **Terminal Mode** — ambient engineering supervision (deferred; see Backlog).
+- **Capture** — ambient audio memory (long-form recording). Primarily glasses-triggered (tilt-up gesture), but since 2026-09-07 also available as a phone-only recording button on the home screen (no glasses required) - same pipeline, same storage, phone's own mic only for now; Bluetooth headsets and external mics are a later question.
+- **Terminal Mode** — ambient engineering supervision (removed from active consideration; direction killed 2026-06-20).
 
 Distinction: QuickNote is "remember something fast" (single note, right-hold). Capture is "record a whole meeting" (long-form, tilt-up). They are separate features with separate gestures and separate storage.
 
@@ -46,6 +46,8 @@ Working, but still needs real-world observation:
 - Navigate mode post-bootstrap update behaviour on longer real walks
 - Capture mode stop/save reliability on device — Capture v2 now shipped (v1.2.0+10): live HUD, safer stop gesture (double-tap only), recordings list. A `useStaticRecFallback` feature flag is available if continuous HUD updates prove problematic on-device.
 - Protected notification handling for special ongoing items on Samsung/Android variants
+- Direct-OpenAI Chat/Quick Ask device pass - `hermes-dewire-chat` (Done 2026-09-07) removed the Hermes backend and its plumbing entirely. `flutter analyze`, `flutter test` and the debug APK build are clean, but a device pass confirming Chat and left-hold Quick Ask still work end-to-end over the direct OpenAI route, including a clean network failure, has not yet been run.
+- Phone-local recording on device - `phone-local-capture` (Done 2026-09-07) shipped a home-screen Record/Stop button using the phone's own mic, with a dedicated `microphone`-typed foreground service. Analyze-clean and debug APK builds, but NOT yet device-verified: a real record/stop/save cycle, the locked-screen and app-backgrounded case (the main risk - this is exactly what the foreground service type is for), the first-run `RECORD_AUDIO` permission prompt, the notification's "Stop and save" action, and both directions of the glasses/phone mutual exclusion all still need a real device pass.
 
 ---
 
@@ -63,9 +65,116 @@ Working, but still needs real-world observation:
   - [x] **PANORAMIC_MAP placeholder** — replace the misleading static map capture (488x136) with the smallest viable neutral placeholder image. This is option 2 from the Parked PANORAMIC_MAP decision item. The placeholder should be honest about not being a real map — single-colour fill or minimal grid.
 - **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
+### navigate-osm-research: Navigate mode — architecture decision and spike plan
+- **Status**: Now
+- **Research** — decision reached 2026-06-20; now gating child spikes
+- **Context**: The dashboard layout and HUD structure work well. The problem is data quality. The current approach — pulling turn instructions from Google Maps notifications — does not surface the next turn instruction reliably, breaks with the screen off, and provides no map geometry for the panoramic-map or mini-map regions.
+- **Hard constraints** (any viable approach must satisfy all four):
+  1. **Next turn displayed reliably** — the current Google Maps notification approach does not surface the next instruction dependably; the replacement must.
+  2. **Map line-drawing** — renders a line-drawing of the map into the panoramic-map region (488×136) of the HUD; mini-map (136×136) shows the derived maneuver direction icon.
+  3. **Walking / pedestrian directions** — this is a walking use case; routing quality for pedestrians is a first-class criterion.
+  4. **Screen-off operation** — the current notification approach degrades or breaks when the phone screen is off; the replacement must work reliably with the screen off.
+- **Architecture decision (2026-06-20, revised 2026-06-20 after Codex peer review): thin phone + thick Deepthought — vector scene graph**
+  - **`cartographer` (Deepthought) — route compiler:** Tailscale-reachable, *not part of Hermes* (Hermes owns agent/assistant concerns; cartographer owns GIS/route/raster — clean separation). At trip start, receives origin + destination and returns:
+    ```
+    { polyline, maneuvers, scene_graph }
+    ```
+    `scene_graph` is a tiny simplified vector description — route line + ~2–3 cross streets + junction markers. Everything else suppressed via brutal cartographic generalisation appropriate for a 488×136 monochrome HUD. Stack: PostGIS + `osm2pgsql` (OSM extract), Valhalla or GraphHopper (walking-profile routing, TBD by Spike 2).
+  - **Phone — live navigator with on-device renderer:** receives the scene graph once per trip (one network round-trip; cache locally). During the walk, the phone has real responsibilities:
+    - **Map-matching:** projects GPS onto the route polyline to compute `routeProgressMeters` (distance-along-route), not "nearest tape frame by GPS".
+    - **Renderer:** primitive line-segment + dot rasteriser into 488×136 monochrome. Heading-up / route-forward centring; dynamic zoom (zoom in near turns). No antialiasing.
+    - **Off-route detection:** conservative — distance from polyline + heading disagreement + sustained duration. A single bad fix must not trigger a reroute.
+    - **Reroute call:** only when genuinely off-route; hits `cartographer` once per trip start plus occasional reroutes.
+  - **Mini-map (136×136):** keeps the existing direction icon, derived from the maneuver list rather than extracted from Maps notifications.
+  - **Panoramic strip (488×136):** rendered on-device from the scene graph by the phone's primitive rasteriser.
+  - **Google Maps notification path:** stays as a fallback for users without location grant; not built upon further.
+  - **Philosophy:** this is a personal hobbyist project — owning a dedicated server module on Deepthought is fine, even encouraged. Optimise for "coolest possible for one user", not "deployable to many".
+  - **Why vector scene graph over pre-rasterised bitmap tape:** heading-up rotation, route-forward centring, and drift-aware zoom all come for free without storing opaque frames. A tiny line-segment rasteriser on the phone is also likely less work than building a frame-tape index pipeline.
+- **How the architecture satisfies the four constraints**:
+  1. Turn instructions come from the routing engine's maneuver list (Valhalla/GraphHopper), not Maps notifications — reliable.
+  2. Line-drawn map is rendered on-device from the scene graph; no large pre-rasterised tape required.
+  3. Walking profile is a first-class routing-engine configuration.
+  4. Screen-off is handled by the foreground service with `FOREGROUND_SERVICE_TYPE_LOCATION`; no notification-listening dependency.
+- **Known design questions to resolve before/during implementation:**
+  - **BLE bandwidth budget:** 488×136 raw = 8,296 bytes pre-RLE. Need to size bytes per panoramic update, packets per leg, update frequency, and whether both lenses must receive each update. Favour clean 1-bit geometry; no antialiasing.
+  - **Orientation model:** heading-up / route-forward, not north-up. North-up is cognitively expensive on a 136 px-tall HUD.
+  - **Destination entry:** architecture currently ignores how the user starts navigation. Options: share-destination intent from Google Maps, voice destination via existing assistant/quick-ask path, recent/favourites. Worth a follow-on sub-spike once core nav works.
+  - **Map-match corridor width and off-route hysteresis:** tunables to be set during the routing-engine spike; default to generous (>15 m corridor, >10 s sustained off-route) until walking data says otherwise.
+- **Child spikes** (cross-ref entries in Next):
+  - `cartographer-frame-prototype` — Spike 1: visual feasibility — render pathological scenes, ship to glasses (parallel feasibility gate)
+  - `navigate-foreground-service` — Spike 3: phone-side GPS endurance (parallel feasibility gate — either can kill the project)
+  - `cartographer-routing-engine` — Spike 2: routing + scene-graph emission (gated on Spike 1 passing)
+- **Resolution of `PANORAMIC_MAP decision` Parked item**: this architecture implements option 3 from that item ("build real local-surroundings line-drawing"), with the rendering lift offloaded to Deepthought. See updated Parked item.
+- **Notes**: Google Maps notification path stays as fallback only. `cartographer` is a new Deepthought service, separate from Hermes. Keep separate from `navigate-cleanup` (tactical protocol cleanup, also in Now) — they remain deliberately parallel.
+
 ---
 
 ## Next — Prioritised
+
+### cartographer-frame-prototype: Spike 1 — rendering feasibility: three pathological scenes
+- **Status**: Next
+- **Priority**: High — parallel feasibility gate; either this or `navigate-foreground-service` can kill the project
+- **Effort**: ~1 day
+- **Cross-ref**: `navigate-osm-research` (Now) — this is child spike 1; runs in parallel with `navigate-foreground-service`
+- **Context**: Before building a routing engine, prove that the on-device primitive renderer can produce 488×136 monochrome frames that a human eye can parse in ~400 ms while walking — in real outdoor brightness conditions. The killer risk is not "can a rasteriser draw a line"; it is "can a stripped-back scene graph remain legible at this resolution, bit depth, and viewing angle". If it cannot, the vector scene-graph architecture is dead.
+- **Spike scope**:
+  - Author three small **vector scene-graph JSON files by hand** (dogfooding the cartographer output format before building the cartographer). Each represents a pathological scene:
+    1. **Simple suburban turn** — one route line, one side-street, one junction dot.
+    2. **Dense city junction** — route line, 4–6 cross streets, multiple junction markers; brutal suppression of everything else required.
+    3. **Awkward walking path / alley / cut-through** — non-grid geometry, tight bend, possibly no named cross-streets.
+  - Implement a primitive on-device line-segment + dot rasteriser (can be a standalone script or a throwaway Flutter widget) that reads the scene-graph JSON and emits a 488×136 monochrome bitmap. Heading-up / route-forward layout; no antialiasing.
+  - Send all three frames to the glasses via the existing `PANORAMIC_MAP` (`0x0a`) opcode.
+  - View **outdoors, in motion, in real brightness conditions.** The test is eye-parsing speed while walking, not pixel-perfect inspection on a monitor.
+- **Acceptance**:
+  - [ ] Three scene-graph JSON files authored for the three pathological scenes.
+  - [ ] Primitive rasteriser converts each scene graph to a 488×136 monochrome PNG.
+  - [ ] All three frames sent to glasses and viewed outdoors in real conditions.
+  - [ ] Qualitative verdict per scene: legible / marginal / dead (with notes — what breaks, what reads well).
+  - [ ] Overall verdict recorded: proceed to `cartographer-routing-engine` (Spike 2) if at least the simple scene reads; park the architecture if dense scenes are unreadable even with aggressive suppression.
+- **Notes**: No OSM extract, PostGIS, or routing engine needed for this spike. The scene-graph JSON is hand-authored. This dogfoods the cartographer output format — the schema agreed here becomes the contract for Spike 2's scene-graph emission work. Rasteriser can be Cairo, Pillow, or a trivial custom implementation; the requirement is monochrome 1-bit output, no antialiasing.
+
+### navigate-foreground-service: Spike 3 — phone-side GPS foreground service endurance
+- **Status**: Next
+- **Priority**: High — parallel feasibility gate; runs alongside `cartographer-frame-prototype`; either can kill the project
+- **Effort**: ~1 day
+- **Parallel with**: `cartographer-frame-prototype` (Spike 1) — both are feasibility gates; start this as early as Spike 1. `cartographer-routing-engine` (Spike 2) is separately gated on Spike 1.
+- **Cross-ref**: `navigate-osm-research` (Now) — this is child spike 3
+- **Context**: If Android won't give 1Hz-ish GPS for 30–60 minutes screen-off on real hardware, the whole navigate architecture is dead — and we want to know that as early as the rendering question. This is a structural platform constraint, not a nice-to-have. No routing, no glasses, no rendering — just prove the OS constraint is solvable.
+- **Spike scope**:
+  - Implement a foreground service with `FOREGROUND_SERVICE_TYPE_LOCATION` and a persistent notification.
+  - Poll GPS at 1 Hz and log positions to disk (timestamp, lat, lon, accuracy).
+  - Walk for 30+ minutes with the phone screen off and pocketed on real hardware (S24 Ultra).
+  - Inspect the log for gaps, freezes, or service death.
+- **Acceptance**:
+  - [ ] Foreground service with `FOREGROUND_SERVICE_TYPE_LOCATION` implemented and declared in `AndroidManifest.xml`.
+  - [ ] 1 Hz GPS polling active and writing to a local log file (timestamp, lat, lon, accuracy).
+  - [ ] 30+ minute screen-off walk on S24 Ultra completed, phone pocketed throughout.
+  - [ ] Log inspected; verdict recorded: continuous / intermittent / killed (with OS version, One UI version, and gap details).
+  - [ ] If killed or severely intermittent: alternative mitigations noted (e.g. `WorkManager`, wakelock, partial wakelock, different service type declaration).
+- **Notes**: No BLE, no glasses, no routing in this spike — the question is purely "can we hold ~1 Hz GPS for 30–60 min screen-off?" Android 12+ tightened `FOREGROUND_SERVICE_TYPE_LOCATION` constraints; Samsung One UI adds its own battery optimisation layer. Both must be satisfied. Do not bundle any other spike's work here.
+
+### cartographer-routing-engine: Spike 2 — routing engine + scene-graph emission on Deepthought
+- **Status**: Next
+- **Priority**: High — gated on `cartographer-frame-prototype` (Spike 1) passing
+- **Effort**: ~1–2 days
+- **Blocked on**: `cartographer-frame-prototype` (Spike 1) passing — do not start until visual feasibility is confirmed
+- **Cross-ref**: `navigate-osm-research` (Now) — this is child spike 2
+- **Context**: Stand up a walking-profile routing engine on Deepthought, prove the maneuver data is good enough to replace Google Maps notifications, and add scene-graph emission — turning route + nearby PostGIS query into the simplified vector description the phone renderer consumes.
+- **Spike scope**:
+  - Install **both** Valhalla and GraphHopper on Deepthought as Docker images (cheap; both at once). Spike a real walk on each. Compare: maneuver quality (instruction text, advance distance), polyline shape, walking-specific weirdness (pedestrian-only paths, alley routing, stairways), and response payload size. Lean is Valhalla first (stronger narrative model for maneuvers), but **decide from your own routes, not docs**.
+  - Expose an HTTP endpoint that accepts origin + destination and returns `{ polyline, maneuvers, scene_graph }` — the full cartographer response contract established by Spike 1.
+  - **Scene-graph emission:** whichever engine wins, add the PostGIS step: query nearby OSM ways along the route corridor, apply brutal cartographic generalisation (keep route line + ~2–3 cross streets + junction markers, suppress everything else), and emit the simplified scene graph matching the Spike 1 schema.
+  - Wire the phone app to call this endpoint at trip start: bind maneuver list to existing `0x0a` TRIP_STATUS fields; hand the scene graph to the on-device renderer (from Spike 1) to produce live panoramic frames.
+- **Acceptance**:
+  - [ ] Valhalla and GraphHopper both running on Deepthought via Docker.
+  - [ ] Both engines spiked on the same real walk; comparison written up (maneuver quality, polyline, walking weirdness, payload size).
+  - [ ] Engine choice recorded with rationale.
+  - [ ] HTTP endpoint returning `{ polyline, maneuvers, scene_graph }` for a walking origin/destination pair.
+  - [ ] Scene graph matches the schema agreed in Spike 1.
+  - [ ] Phone binds maneuver list to `0x0a` TRIP_STATUS and advances through list during a short test walk.
+  - [ ] Turn instruction visible and accurate on the glasses during the test walk.
+  - [ ] Scene graph fed to Spike 1 renderer; panoramic frame visible in HUD during walk.
+- **Notes**: `cartographer` is a Tailscale-reachable service, not part of Hermes. The HTTP endpoint from this spike becomes the backbone of the full `cartographer` service. Map-match corridor width and off-route hysteresis tunables (see `navigate-osm-research` design questions) are set during this spike — start generous.
 
 ### dashboard-widgets-v1: Dashboard widgets v1 — calendar events and system status
 - **Status**: Next
@@ -268,53 +377,6 @@ Working, but still needs real-world observation:
 - **Context**: Live audio fingerprinting to identify songs playing in the environment. Acoustically separate from the notification-mirror `MediaHandler` in `router-v1-glance-handlers` — this requires capturing audio from the mic, calling a fingerprinting API (ShazamKit / ACRCloud / AudD), and handling a longer wait + possible failure mode. Different scope, cost, and UX from the rest of Router v1. Deliberately decoupled.
 - **Acceptance**: `glance what song is this` (or similar) captures ambient audio, calls fingerprinting API, and renders track name + artist on the glasses.
 - **Notes**: API budget and latency considerations need evaluating before implementation. Do not bundle with `router-v1-glance-handlers`.
-
-### terminal-mode-crypto-spike: Terminal Mode — Happy crypto spike (gating spike, deferred)
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: Gating spike for Terminal Mode v1. Deferred — Happy integration is larger than initially scoped. Eddie has decided not to undertake Terminal Mode immediately. Keep on the backlog so it is not lost.
-- **Timebox**: 1 day.
-- **Spike tasks**:
-  - Implement libsodium NaCl `secretbox` + AES-256-GCM decryption in Dart using `cryptography` or `flutter_sodium`.
-  - Verify against known test vectors from Happy's reference implementation at `packages/happy-cli/src/api/encryption.ts`.
-  - Confirm Socket.IO Dart client connects to `wss://api.happy.engineering/v1/updates` with bearer-token auth.
-- **Acceptance**: Dart crypto path verified against reference test vectors. Socket.IO connection to Happy's endpoint established.
-- **Notes**: If spike succeeds → proceed to `terminal-mode-v1`. If not → re-evaluate Terminal Mode viability. Protocol reference: https://happy.engineering/docs/ and the `slopus/happy` GitHub repo `docs/` folder (`protocol.md`, `session-protocol.md`, `encryption.md`, `api.md`). The marketing site does not document the protocol — GitHub is canonical.
-- **Reassessment (2026-05-27)**: `hermes-agent-v1` has shipped: the glasses now talk to Hermes directly over Tailscale, Hermes has full tool access, and it reached `/vibe` meeting notes in a live session. This substantially overlaps what Terminal Mode via Happy was trying to achieve — an AI session visible on the glasses with real tool access. The Hermes path avoids Happy's E2E encryption complexity entirely. **Open question for Eddie**: does Hermes-over-Tailscale supersede this spike, or does the Happy/away-from-desk use case (mobile network, encrypted relay, no Tailscale dependency) still justify keeping it? No action taken; flagged for decision.
-
-### terminal-mode-v1: Terminal Mode v1 (deferred — depends on terminal-mode-crypto-spike)
-- **Status**: Backlog
-- **Priority**: Low
-- **Context**: Replace the underused Chat mode with an ambient engineering supervision surface. Slot 4 becomes a settings toggle between "Chat" and "Code" — Chat is preserved, not removed. Deferred behind Capture v2 and Router v1. Estimated scope: 1–2 weeks for the protocol layer alone, before any rendering work.
-- **Integration**: Happy direct subscription — companion app pairs as a first-class Happy client (own keypair, QR-pair with mobile app), subscribes to Socket.IO `/v1/updates` (session-scoped or user-scoped).
-- **Event mapping to glasses display**:
-  - `text` (non-thinking) → streamed update via existing `0x52` paced queue.
-  - `tool-call-start` → short progress line (e.g. "Running tests…", "Edited 3 files").
-  - `turn-end` with `status=completed` and no follow-up → "Claude waiting".
-  - `ephemeral activity { thinking: true }` → thinking indicator.
-- **Reply path** (v1.1, explicitly deferred): tilt-up while "waiting" → STT → emit `message` event back via the same socket.
-- **Acceptance**: Not defined until crypto spike is complete and Terminal Mode is promoted out of Backlog.
-- **Notes**: Constraints — short bursts only; do NOT stream raw token output continuously; surface transitions, not raw stream. Reuse existing `0x52` streaming renderer + paced queue infrastructure. Depends on `terminal-mode-crypto-spike` passing. Protocol refs above also apply here.
-- **Reassessment (2026-05-27)**: With Hermes now reachable from the glasses over Tailscale with live tool access (see `hermes-agent-v1`), the value proposition of a full Happy integration is significantly reduced for the primary use case (coding-session status on the glasses at home/desk). The remaining distinct value of Terminal Mode v1 via Happy is the away-from-desk / mobile-network scenario — encrypted relay, no Tailscale dependency. **Open question for Eddie**: is that residual use case sufficient to justify 1–2 weeks of protocol work? Flagged for decision; not deprioritised unilaterally.
-
-### terminal-mode-v0-local-ipc-spike: Investigate Claude Code's local-IPC surface for laptop-tethered Terminal Mode v0
-- **Status**: Backlog
-- **Priority**: Low
-- **Effort**: Half-day spike. Standalone item (no PR group).
-- **Context**: openclaw-glasses showed that AI-session-to-glasses bridges become dramatically simpler when the data plane is local (avoiding the E2E-encryption requirement that drives Happy's heavyweight implementation). If Claude Code exposes a local IPC endpoint (UNIX socket, named pipe, `--port` flag, file tail, SDK local server), we could prototype a Terminal Mode v0 that ships ahead of the full Happy integration — read-only display first, reply path later.
-- **Spike scope**:
-  - Investigate `claude --help`, Claude Code SDK docs, and any documented local endpoint.
-  - Check whether the Claude Code agent runtime can be observed from outside the process (event API, log tail, session-state file, etc.).
-  - Verify whether the laptop-tethered shape is viable: laptop → local socket → small adapter → LAN → Flutter app → existing BLE render path.
-  - Reach a clear verdict: viable / not viable / partial.
-- **Decision gate**: if spike succeeds, propose a `terminal-mode-v0` Next item with the discovered shape. If not, the local-tether idea collapses and `terminal-mode-crypto-spike` + `terminal-mode-v1` remain the only path.
-- **Acceptance**:
-  - [ ] Investigation report documented (memory file or `docs/investigations/`).
-  - [ ] Verdict reached on whether Claude Code exposes a local IPC surface.
-  - [ ] If verdict is "yes": shape of a v0 bridge sketched (architecture, scope, dependencies).
-  - [ ] If verdict is "no": this item closed; `terminal-mode-crypto-spike` is the only path forward.
-- **Notes**: What v0 would NOT replace: Happy's away-from-desk use case, mobile-network Terminal Mode, encrypted relay, multi-device. These remain the eventual reason for full Happy integration and are covered by `terminal-mode-v1`. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "openclaw-glasses / The genuinely transferable idea" section.
-- **Reassessment (2026-05-27)**: The motivating premise of this spike — that a local-IPC bridge could sidestep Happy's complexity — is now partly obsolete. Hermes-over-Tailscale provides a working AI-on-glasses path with genuine tool access, without requiring any local IPC investigation. The specific question of whether Claude Code exposes a local socket is less load-bearing than it was. **Open question for Eddie**: is the local-IPC angle still worth the half-day spike given that Hermes already fills the desk use case, or can this be closed/parked in favour of evaluating what (if anything) the Happy path adds? Flagged for decision.
 
 ### quicknote-dashboard-push: QuickNote v2 — push transcribed note to glasses dashboard via 0x1e TX
 - **Status**: Backlog
@@ -524,25 +586,106 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
 - **Acceptance**: Protocol-level truth, observed behaviour, firmware hypotheses, and app implementation choices cleanly separated across the doc set. Docs are suitable as: a public reverse-engineering reference, a future SDK basis, and contributor onboarding material.
 - **Notes**: Documentation meta-task, not a code task. Likely involves `docs/protocol-reference.md`, `docs/even-g1-event-mapping.md`, `docs/current-architecture.md`, `docs/current-behaviour.md`, and the FINDINGS files.
 
+#### App features — new captures (2026-06-20)
+
+### hermes-quicknote-sync: Hermes bidirectional to-do list sync
+- **Status**: Superseded by `hermes-dewire-chat`
+- **Priority**: None
+- **Context**: Superseded because Hermes is being removed as the app assistant backend. Keep this record only so the prior QuickNote integration idea is not rediscovered as active work.
+- **Acceptance**:
+  - [ ] Hermes can read the current to-do list from the app's local store.
+  - [ ] To-do items created or checked off in Hermes are reflected back in the app's `NotesStore`.
+  - [ ] Push cadence defined (on-change, on-interval, or both).
+- **Notes**: If a future assistant needs QuickNote access, design a separate, explicit app-data contract. Do not revive the Hermes push/poll/socket proposal by default.
+
+### battery-variance-spike: Battery status wild swings — spike
+- **Status**: Backlog
+- **Spike**
+- **Priority**: Unprioritised
+- **Effort**: Short investigation.
+- **Context**: Battery percentage shows wild swings in practice — Eddie observed 95% → 55% → 95% in a single session (2026-06-20). Hypothesis: the G1 reports per-leg battery independently and the two legs can diverge substantially, causing apparent swings when the display alternates between or picks one leg's value.
+- **Spike scope**:
+  - Confirm whether the app is displaying left-leg, right-leg, or an alternating value.
+  - Check whether left and right leg battery readings differ significantly in practice (log both values side-by-side).
+  - Evaluate two display options: (a) show an average of the two legs; (b) show both values separately (e.g. "L: 95% R: 55%").
+  - Recommend the better UX and implement it.
+- **Acceptance**:
+  - [ ] Root cause confirmed (per-leg divergence vs. firmware reporting artefact vs. other).
+  - [ ] Display approach decided (average or dual).
+  - [ ] Implemented and validated — no more wild swings visible in normal use.
+- **Notes**: The dashboard `system-status` widget planned in `dashboard-widgets-v1` will also show battery; coordinate so both surfaces use the same resolved value.
+
+### auto-brightness-spike: Auto brightness unreliable — spike
+- **Status**: Backlog
+- **Spike**
+- **Priority**: Unprioritised
+- **Effort**: Short investigation.
+- **Context**: Auto brightness does not behave as expected. Eddie suspects you need to explicitly set brightness to 0 (or some low value) *and* set the auto-on flag together — having auto-on active while the app's manual brightness value is high seems to let the higher manual number win and override auto. Symptom: auto brightness appears to be ignored when a non-zero manual brightness is set.
+- **Spike scope**:
+  - Review the current auto brightness command sequence — what opcodes are sent, in what order, with what values.
+  - Test whether sending brightness = 0 before setting auto-on changes behaviour.
+  - Identify whether the firmware treats manual brightness as an override that must be cleared before auto takes effect.
+  - Confirm working sequence on device.
+- **Acceptance**:
+  - [ ] Correct command sequence identified (auto-on + brightness interaction fully understood).
+  - [ ] Auto brightness behaves reliably after fix — manual brightness does not silently override it.
+  - [ ] Finding documented in `docs/protocol-reference.md` or `docs/current-behaviour.md`.
+- **Notes**: If the firmware requires a specific ordering or a brightness = 0 pre-condition, that should be captured in the protocol reference so it does not have to be re-discovered.
+
+#### App features - new captures (2026-09-07)
+
+### recording-filename-seconds-resolution: Recording filenames collide within the same minute
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Both recorders (`GlassesCaptureRecorder`, via the shared `WavRecordingStore`, and the new `PhoneCaptureRecorder`) stamp filenames only to the minute (`Capture-yyyy-MM-dd-HH-mm.wav`), so two recordings started inside the same minute collide. MediaStore resolves the collision itself by appending a suffix such as `Capture-2026-09-07-14-32 (1).wav`, which then matches neither regex in `lib/models/recording.dart` - `prefix` falls back to the whole stem, `timestampSuffix` returns null, and the rename UI degrades to editing the entire filename instead of just the trailing timestamp. The risk pre-dates this session for back-to-back glasses captures, but adding a second mic source (`phone-local-capture`, Done 2026-09-07) makes the same-minute collision materially more likely.
+- **Acceptance**:
+  - [ ] Filename stamp widened to include seconds (e.g. `Capture-yyyy-MM-dd-HH-mm-ss.wav`) in `WavRecordingStore` and any remaining glasses-only formatting path.
+  - [ ] `lib/models/recording.dart` parser extended to accept both the new seconds-resolution stamp and the existing minute-resolution stamp, so older files still parse correctly.
+  - [ ] Two recordings started within the same minute no longer collide, and the rename UI correctly isolates the timestamp suffix for both old and new filename widths.
+- **Notes**: Surfaced during `phone-local-capture` (Done 2026-09-07) and deliberately not bundled into that item, to keep it tight. Low priority - MediaStore's own de-dupe suffix means no data loss today, just a rename-UI degradation.
+
 ---
 
 ## Parked
 
 ### PANORAMIC_MAP decision
-- **Status**: Parked — decision pending
-- **Context**: The 488×136 PANORAMIC_MAP region is shown in the glasses' "look up" mode and is a large piece of screen real estate. Currently the app sends a static capture taken from the official app during a previous route — meaning it looks like a map and feels like a map but is NOT active to the user's actual location. Eddie considers this misleading.
-- **Why parked**: Eddie cannot currently think of anything genuinely useful to do with it. The ideal would be a real-time map of the user's current surroundings (a few hundred metres around current location, NOT tied to the active route) rendered as a line drawing — but that requires maps-service integration, current-location handling, and an image pipeline to render the map as 488×136 monochrome. Eddie's words: "feels like a big lift for a nice-to-have".
-- **Three options on the table**:
-  1. Keep static forever (current behaviour — but misleading)
-  2. Generate a neutral placeholder (decorative, honest about not being a map)
-  3. Build the real local-surroundings line-drawing path (significant lift, maps-service dependency)
-- **Constraint**: Do NOT attempt to render the user's actual route geometry — Google Maps notifications do not expose the geometry, and that path is described as "tiny cartography hell".
-- **Cross-ref**: Option 2 (neutral placeholder) is being actioned as part of the Navigate cleanup composite (Now #4). This item remains Parked for option 3 only — the "real map" path. If the placeholder lands cleanly in the Navigate cleanup session, this item can be narrowed to option 3 exclusively.
-- **Revival trigger**: Revisit option 3 if a clear use case emerges, or if the placeholder proves insufficient.
+- **Status**: Parked — option 3 being resolved by `navigate-osm-research`
+- **Context**: The 488×136 PANORAMIC_MAP region is shown in the glasses' "look up" mode and is a large piece of screen real estate. Previously the app sent a static capture taken from the official app during a previous route — misleading (not active to the user's actual location).
+- **Three options (historical)**:
+  1. Keep static forever (current behaviour — misleading) — rejected
+  2. Generate a neutral placeholder (decorative, honest about not being a map) — **done** as part of Navigate cleanup composite (Now #4)
+  3. Build the real local-surroundings line-drawing path — **in progress via `navigate-osm-research`**
+- **Resolution (2026-06-20)**: Option 3 is being implemented via the thin phone + thick Deepthought architecture decided in `navigate-osm-research`. The `cartographer` service on Deepthought will render 488×136 monochrome frames from OSM data using Cairo, pre-rasterise them into a "map tape" keyed by position along the route, and serve the tape to the phone at trip start. The rendering lift (which made option 3 feel like a "big lift" previously) is offloaded entirely to Deepthought — the phone only indexes the cached tape. Route geometry is owned by the Valhalla/GraphHopper routing engine, not by Google Maps notifications (bypassing the "tiny cartography hell" constraint).
+- **Remaining gate**: visual feasibility must be confirmed by `cartographer-frame-prototype` (Spike 1, Next) before the full implementation proceeds. If the HUD renders the frame as mush at 488×136 monochrome, this item will be re-parked at option 2 (placeholder remains as the permanent answer).
+- **Constraint (updated)**: the "do not use Google Maps for route geometry" constraint still holds — `cartographer` derives geometry from OSM + routing engine, not from Maps notifications.
 
 ---
 
 ## Recently Done
+
+### hermes-dewire-chat: Remove Hermes as the Even assistant backend (2026-09-07, working tree, uncommitted)
+- **Status**: Done
+- **Outcome**: Hermes fully retired as an app backend - the second-backend plumbing was deleted outright rather than repointed at a local model (see Decision below). `ChatBackendRouter` and `ChatRoute` existed only to make the Hermes-vs-OpenAI routing decision, so with Hermes gone there was nothing left for them to decide: `lib/services/chat_backend_router.dart` and `test/services/chat_backend_router_test.dart` were deleted outright, taking the health probe, fallback logic and routing-notice mechanism with them. `chat_service.dart` and `glance_assistant_service.dart` now hold a `ChatBackend` directly (defaulting to `OpenAiChatBackend`) instead of a router; constructor injection changed from `ChatBackendRouter? router` to `ChatBackend? backend`; the pre-flight routing phase and one-time notice display were removed from both, so Chat's numbered phase comments renumbered from 4 phases to 3. `assistant_backend_config.dart` lost `resolveHermes()` and the four `HERMES_*` dart-define constants; `profileLabel` was kept (it names the backend in error messages) but now only ever resolves to 'OpenAI'. `app_settings_store.dart` lost the `AssistantBackendKind` enum entirely, all five Hermes fields/getters, `saveHermesSettings`, `setAssistantBackend` and `setHermesFallbackEnabled`. Credential and settings cleanup shipped as a migration, not just a deletion: `_purgeRetiredHermesSettings` runs on every `AppSettingsStore.init()` and deletes the five retired SharedPreferences keys (`assistant.backend`, `assistant.hermes_fallback`, `assistant.hermes_base_url`, `assistant.hermes_chat_model`, `assistant.hermes_timeout_seconds`) plus the `assistant.hermes_api_key` secure-storage entry, idempotently - a device upgrading from a Hermes build does not keep a bearer token in its keystore for a service that no longer exists. `settings_page.dart` lost the whole Hermes section - backend segmented selector, fallback switch, URL/key/model/timeout fields, "Save Hermes", "Test connection" chip and the reachability chip widget - plus the four controllers and the `_parseTimeout` helper that only served it. `docs/hermes-api-tailscale-bind-brief.md` moved to `docs/archive/` with its retirement header updated; its worklist cross-reference (in the `hermes-agent-v1` Done entry, above) was repointed to the archive path. No `HERMES_*` dart-defines needed removing from README.md or scripts - they were never documented there.
+- **Acceptance**:
+  - [x] Remove `AssistantBackendKind.hermes`, the Hermes `OpenAiChatBackend` instance and Hermes fallback logic from `ChatBackendRouter` - done via outright deletion of the router and its test rather than a partial strip.
+  - [x] Remove Hermes URL, API-key, model, timeout, selector, fallback and connection-test settings from the app UI and `AppSettingsStore`, including secure-storage cleanup/migration for `assistant.hermes_api_key` - `_purgeRetiredHermesSettings` runs idempotently on every `init()`.
+  - [x] Remove Hermes-specific tests, build defaults and documentation that describe it as an active app dependency; retain the completed `hermes-agent-v1` record as historical context - `docs/hermes-api-tailscale-bind-brief.md` archived, not deleted.
+  - [ ] Confirm both Chat and left-hold Quick Ask work over the direct OpenAI route on device, including a clean network failure - **outstanding, deliberately left unticked**. `flutter analyze` reports 0 errors (two pre-existing warnings, unrelated: `chat_service.dart` unused catch clause, `evenai.dart` unused field) and `flutter test` passes 7/8 (the one failure, `widget_test.dart` "app renders companion home screen", fails identically at HEAD and is unrelated); the debug APK builds. None of that is a device pass. Do not treat this criterion as met until Chat and Quick Ask have actually been exercised on the glasses over the direct OpenAI route, including a clean network-failure case.
+  - [x] Mark `hermes-quicknote-sync` superseded - it has no valid backend once Hermes is retired. (Ticked previously.)
+- **Decision recorded**: keeping the second-backend plumbing and repointing it at Ollama on Deepthought (`http://deepthought:11434/v1`, already tailnet-reachable and unauthenticated - no infrastructure work needed) was explicitly considered and rejected in favour of the full strip. Rationale unchanged from the item's original framing: a glasses assistant has different latency, reliability and credentials requirements than a coding assistant, and local-model access belongs in T3/OpenCode first. If a local backend earns its way in later it should be re-added deliberately behind a real wearable use case - re-adding is cheap since the router was a clean generic abstraction, so deleting it cost little optionality.
+- **Notes**: Hermes the *service* is retired; the `deepthought` box is not - it now runs Ollama, T3 Code and a local OpenCode provider. Do not read this entry as deepthought having been decommissioned. Working tree, uncommitted.
+
+### phone-local-capture: Phone-mic recording - capture without the glasses (2026-09-07, working tree, uncommitted)
+- **Status**: Done
+- **Context**: Eddie wants the recording feature available when he is not wearing the glasses - a button in the app that records through the same pipeline and stores to the same place. Explicitly scoped to the phone's own mic for now; Bluetooth headsets and external mics (e.g. something like a Pebble Index 01) are a later question, not in this pass.
+- **Outcome**: `WavRecordingStore.kt` (new) extracts the WAV framing and MediaStore publishing out of `GlassesCaptureRecorder` so both mic sources emit byte-identical WAVs into the same folder; holds the fixed 16 kHz mono 16-bit format constants and `saveWaveToPublicRecordings`, with `GlassesCaptureRecorder` now delegating to it and keeping only its own 200 ms LC3 startup trim. `PhoneCaptureRecorder.kt` (new) is an AudioRecord-based recorder on the `VOICE_RECOGNITION` audio source, buffered at 4x the platform minimum, with a dedicated `phone-capture-read` thread at `THREAD_PRIORITY_URGENT_AUDIO`, writing PCM to a cache temp file and publishing through `WavRecordingStore`; teardown order is deliberate and shared between stop and cancel via one `teardownCapture()` (clear flag, `stop()` to unblock the pending read, join the thread, release, then close the stream); it passes no `skipBytes` since the glasses' LC3 trim artefact doesn't apply to AudioRecord. `PhoneCaptureService.kt` (new) is a foreground service typed `microphone`, live only for the duration of a recording - this is what keeps the mic working when the app is backgrounded or the screen locks. It is deliberately separate from `CompanionForegroundService` (typed `specialUse`, runs for the whole app lifetime) - folding the mic type in would hold a mic grant permanently and mean combining service types. Its notification carries a "Stop and save" action that routes back into Dart so the save path is shared with the in-app button, and uses Android's own chronometer (`setWhen` + `setUsesChronometer`) so the elapsed timer advances with no per-second work from the app. `AndroidManifest.xml` gained `RECORD_AUDIO` and `FOREGROUND_SERVICE_MICROPHONE`, and registered the new service. `lib/services/phone_capture_service.dart` (new) holds the Dart-side session state, runtime permission check/request, a 1 Hz in-app tick, and a typed `PhoneCaptureStartResult` so the UI can explain a refusal instead of showing a generic failure. New channel methods: `startPhoneCapture`, `stopPhoneCapture`, `cancelPhoneCapture`, `hasRecordAudioPermission`, `requestRecordAudioPermission`, plus the `phoneCaptureStopRequested` Kotlin-to-Dart callback. The home screen gained a "Phone recording" card with Record/Stop and a live timer, above the Recordings card; the Recordings card subtitle changed from "Captured audio from glasses mic" to "Captured audio from glasses and phone". Mutual exclusion runs both ways: `PhoneCaptureService.startRecording` refuses if a glasses capture is running, and `CaptureService.startRecording` refuses if a phone recording is running - the phone has one microphone, and the glasses paths (Capture, Chat, QuickNote, Quick Ask) all assume they own the audio session. Glasses HUD mirroring is gated on Capture mode being the active mode: in Glance, Chat or Navigate the active feature owns the `0x4E` surface, so pushing a REC line would fight the Glance carousel or a nav card - this respects the existing "mode ownership stays in CompanionController" guardrail.
+- **Design decisions**:
+  - Filenames are identical to glasses captures (`Capture-yyyy-MM-dd-HH-mm.wav`, same folder, same parser) - Eddie's explicit choice, on the basis that a recording is a recording and the source is not meant to be visible in the list. The considered alternative was a distinct prefix such as `Memo-`.
+  - Phone audio format deliberately matches the glasses at 16 kHz mono 16-bit rather than using a higher phone-mic rate, because `Recording.duration` in Dart computes a fallback duration from file size at 32,000 bytes/second - a second sample rate would silently mis-report durations for any file MediaStore has not yet indexed.
+  - Phone recording is not an `AppMode`: it has no gesture and no BLE dependency, and starts whether or not the glasses are connected - that is the whole point of it.
+- **Verification state**: `flutter analyze` 0 errors, debug APK builds (so all the new Kotlin compiles). **NOT device-verified.** Outstanding: a real recording start/stop/save on device, the locked-screen and app-backgrounded case (the main risk - exactly what the microphone foreground service type is for), the first-run `RECORD_AUDIO` permission prompt, the notification's "Stop and save" action, and both directions of the glasses/phone mutual exclusion.
+- **Attribution**: `PhoneCaptureRecorder.kt` was generated by the local `qwen3-coder:30b` model via the local-dev agent against a specified interface, then reviewed and corrected. Two real bugs were caught in that review loop - release-before-join on the `AudioRecord` (a native use-after-free) and an ignored nullable `Uri` return that would have reported success with a path of "null". A further pass removed a spurious read-error log that fired on every stop, deduplicated ~40 lines between the stop and cancel teardown paths, and wrapped the unguarded `AudioRecord` constructor and stream close.
+- **Notes**: Working tree, uncommitted. Cross-ref `recording-filename-seconds-resolution` (Backlog) - surfaced during this work and deliberately not bundled in, to keep this item tight.
 
 ### BLE ownership design pass: `ble-native-write-queue` + `ble-pending-gatt-leak` + `honest-foreground-notification` + `cold-connect-false-positive-reconnect` (2026-06-13, commits 7808f39 + c8d45e1, main)
 - **Status**: Done
@@ -571,7 +714,7 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
   - [x] Network failure handled cleanly with user-visible fallback message. — "Hermes unreachable. Using fallback." notice confirmed.
   - [x] STT unchanged. — `AssistantBackendConfig.resolve()` kept as the OpenAI profile; STT + note-tidy untouched.
   - [x] API key stored in Flutter secure storage (not `SharedPreferences` or hardcoded). — confirmed.
-- **Notes**: Diagnostic-logging enhancement (log request URL + Dio type + status on chat failures) was offered and parked — pick up if a 404 recurs after Hermes is healthy. V2 scope (session persistence via `/v1/responses`, Whisper-over-Tailscale STT) remains a future item. Cross-ref `docs/hermes-api-tailscale-bind-brief.md` for infrastructure context.
+- **Notes**: Diagnostic-logging enhancement (log request URL + Dio type + status on chat failures) was offered and parked — pick up if a 404 recurs after Hermes is healthy. V2 scope (session persistence via `/v1/responses`, Whisper-over-Tailscale STT) remains a future item. Cross-ref `docs/archive/hermes-api-tailscale-bind-brief.md` for infrastructure context (archived 2026-09-07 when the app-side route was removed).
 
 ### router-v1-chat-logging: Router v1 — Chat history logging (single feed, origin tag) (2026-05-27, merge 642f19b, main)
 - **Status**: Done
@@ -885,6 +1028,8 @@ Prefer narrow changes in:
 Good first prompt pattern:
 - say which single area is being worked on now
 - mention whether the issue is:
+  - Hermes dewire (`hermes-dewire-chat`) - **Done 2026-09-07, working tree uncommitted**; Hermes fully stripped (not repointed at a local model - see the Decision in Recently Done); analyze/test/build clean; on-device confirmation of Chat + left-hold Quick Ask over the direct OpenAI route, including a clean network failure, is still outstanding
+  - Phone-local capture (`phone-local-capture`) - **Done 2026-09-07, working tree uncommitted**; new home-screen Record/Stop button using the phone's own mic, same pipeline and storage as glasses Capture; analyze/build clean but NOT device-verified (locked-screen/backgrounded case is the main risk); `recording-filename-seconds-resolution` (Backlog, Low) was surfaced by this work
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
   - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
   - Router v1 (`router-v1-glance-handlers`) — **Next #2**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A (`router-v1-chat-logging` done — delivered by hermes-agent-v1)

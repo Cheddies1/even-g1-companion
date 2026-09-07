@@ -16,13 +16,50 @@ This is not a generic SDK or polished cross-device release.
 ## Product direction
 Active app modes:
 - `glance` — notification display + assistant shortcut
-- `capture` — glasses-mic WAV recording
+- `capture` — glasses-mic WAV recording. Phone-mic recording ships alongside it as a non-mode feature (a home-screen button), sharing the same WAV format, folder and recordings list.
 - `navigate` — Google Maps turn-by-turn via firmware navigation card
 - `chat` — voice loop with OpenAI-compatible backend
 
-## Current implementation status (2026-05-18)
+## Current implementation status (2026-09-07)
 
 Recently implemented:
+- **Phone-mic recording** (2026-09-07) - recording without the glasses, from
+  a home-screen button rather than a mode. `PhoneCaptureRecorder.kt` reads
+  the phone mic via `AudioRecord` (`VOICE_RECOGNITION` source, 16 kHz mono
+  16-bit to match the glasses exactly) and publishes through the new shared
+  `WavRecordingStore.kt`, so phone and glasses recordings are byte-identical
+  WAVs in the same folder with the same `Capture-YYYY-MM-DD-HH-mm.wav`
+  pattern - indistinguishable by design. `PhoneCaptureService.kt` is a
+  `microphone`-typed foreground service held only for the length of a
+  recording; without it Android 14+ feeds a backgrounded process silence and
+  a locked-screen recording saves a silent file while reporting success.
+  Glasses HUD mirroring happens only when Capture is the active mode, so it
+  cannot fight the Glance carousel or a nav card for the `0x4E` surface.
+  Phone and glasses mic sessions are mutually exclusive in both directions.
+  New files: `lib/services/phone_capture_service.dart`,
+  `WavRecordingStore.kt`, `PhoneCaptureRecorder.kt`, `PhoneCaptureService.kt`.
+  Device-verified 2026-09-07: 13 minutes recorded with the app backgrounded
+  and the screen locked came back 99.7% non-zero samples with no 30-second
+  window below -55 dBFS, so the mic really is live rather than being fed
+  silence. Still unverified: the phone/glasses mutual exclusion (needs a
+  physical tilt-up) and the glasses HUD mirror in Capture mode.
+- **Hermes removed as the assistant backend** (2026-09-07) - Hermes was
+  decommissioned on the `deepthought` box, so the app-side route went with
+  it. `ChatBackendRouter` and its test are deleted outright: they existed
+  only to choose between Hermes and OpenAI, which also removed the health
+  probe, the fallback path and the routing-notice display. `chat_service` and
+  `glance_assistant_service` now hold an `OpenAiChatBackend` directly. The
+  `AssistantBackendKind` enum, `resolveHermes()`, the `HERMES_*` dart-defines
+  and the whole Settings section are gone. `AppSettingsStore.init` now runs
+  an idempotent purge of the five retired preference keys and the
+  `assistant.hermes_api_key` secure-storage entry, so an upgraded device does
+  not keep a bearer token for a service that no longer exists. The purge runs
+  only inside `init()`, so it fires once per process - a warm resume does not
+  re-run it. Device-verified 2026-09-07 by re-injecting all five keys plus a
+  stand-in bearer token and cold-starting: all six went, and the real
+  `assistant.api_key` was left byte-identical. Note `deepthought` itself is
+  very much alive - it runs Ollama, T3 Code and a local OpenCode provider;
+  only Hermes died.
 - **Battery + wear state** on home screen and Glance HUD (pushed by firmware, no polling)
 - **Brightness slider + auto toggle** on home screen
 - **Firmware settings dropdowns** (tilt-up behaviour + double-tap action) on Settings page
@@ -187,6 +224,7 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - [lib/services/device_status_service.dart](lib/services/device_status_service.dart) — battery, wear, brightness, settings state
 - [lib/services/glance_service.dart](lib/services/glance_service.dart)
 - [lib/services/capture_service.dart](lib/services/capture_service.dart) — Capture session, live HUD, start/stop/save
+- [lib/services/phone_capture_service.dart](lib/services/phone_capture_service.dart) — phone-mic recording session, RECORD_AUDIO permission, mutual exclusion with the glasses mic
 - [lib/services/recordings_service.dart](lib/services/recordings_service.dart) — MediaStore platform-channel wrapper for recordings list
 - [lib/models/recording.dart](lib/models/recording.dart) — Recording model, dual-format filename parser, duration computation
 - [lib/views/recordings_page.dart](lib/views/recordings_page.dart) — recordings list UI (browse, rename, share, delete)
@@ -204,7 +242,10 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt](android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleManager.kt)
 - [android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt](android/app/src/main/kotlin/com/eddie/evencompanion/bluetooth/BleChannelHelper.kt) — also contains listRecordings / renameRecording / deleteRecording / shareRecording platform-channel methods
 - [android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt)
-- [android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt) — native WAV recorder + MediaStore publishing; recordings management methods
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt) — PCM sink fed by the BLE LC3 stream; recordings management methods
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/WavRecordingStore.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/WavRecordingStore.kt) — shared WAV framing + MediaStore publishing, and the 16 kHz mono 16-bit format constants both recorders use
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/PhoneCaptureRecorder.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/PhoneCaptureRecorder.kt) — AudioRecord-based phone-mic recorder
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/PhoneCaptureService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/PhoneCaptureService.kt) — microphone-typed foreground service; what keeps the mic live when the screen locks
 - [android/app/src/main/cpp/liblc3.cpp](android/app/src/main/cpp/liblc3.cpp) — LC3 audio decode (used by Capture, Chat, QuickNote)
 
 ## Architectural guardrails
@@ -218,6 +259,9 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - use only relative paths in markdown docs — never commit absolute local filesystem paths
 
 ## Constraints
+- the phone has one microphone: phone-mic recording and the glasses mic paths (Capture, Chat, QuickNote, Quick Ask) are mutually exclusive, enforced in both `PhoneCaptureService.startRecording` and `CaptureService.startRecording`. Do not add a third audio consumer without extending that check
+- phone-mic recording needs its `microphone`-typed foreground service to be running. Android 14+ feeds a backgrounded process silence rather than an error, so dropping the service produces a silent WAV that still reports success
+- the assistant has one backend. Hermes was removed on 2026-09-07 (`hermes-dewire-chat`) along with `ChatBackendRouter`, the health probe and the fallback path. Do not reintroduce a selectable backend without a use case that needs one
 - preserve working BLE scan/connect/pairing and protocol framing
 - prefer narrow changes over broad rewrites
 - treat the Android notification listener and foreground service as core app foundations
