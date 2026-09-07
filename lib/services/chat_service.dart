@@ -515,7 +515,11 @@ class ChatService {
       case ChatTranscriptionErrorKind.timeout:
         return 'Transcription timed out';
       case ChatTranscriptionErrorKind.network:
-        return 'Network problem';
+        // Transcription runs on the self-hosted whisper-server, so a
+        // transport failure here usually means that box is unreachable
+        // rather than the phone being offline. "Network problem" sent
+        // people looking at the wrong thing.
+        return 'Whisper unreachable';
       case ChatTranscriptionErrorKind.generic:
         return 'Transcription failed';
     }

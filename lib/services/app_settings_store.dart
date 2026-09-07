@@ -15,6 +15,8 @@ class AppSettingsStore extends ChangeNotifier {
   static const _baseUrlPrefKey = 'assistant.base_url';
   static const _chatModelPrefKey = 'assistant.chat_model';
   static const _transcriptionModelPrefKey = 'assistant.transcription_model';
+  static const _transcriptionBaseUrlPrefKey =
+      'assistant.transcription_base_url';
   /// SharedPreferences keys written by the retired Hermes backend. Deleted
   /// on every [init] so a device upgraded from a Hermes build does not keep
   /// dead settings. See `hermes-dewire-chat` in docs/current-worklist.md.
@@ -44,6 +46,7 @@ class AppSettingsStore extends ChangeNotifier {
   String _baseUrl = '';
   String _chatModel = '';
   String _transcriptionModel = '';
+  String _transcriptionBaseUrl = '';
   HeadUpMode _headUpMode = HeadUpMode.unknown;
   DoubleTapAction _doubleTapAction = DoubleTapAction.unknown;
   int? _brightnessLevel;
@@ -56,6 +59,12 @@ class AppSettingsStore extends ChangeNotifier {
   String get baseUrl => _baseUrl;
   String get chatModel => _chatModel;
   String get transcriptionModel => _transcriptionModel;
+
+  /// Base URL of the speech-to-text endpoint, e.g.
+  /// `http://deepthought:56478/v1`. Separate from [baseUrl] because
+  /// transcription runs on the local whisper-server while chat stays on
+  /// OpenAI. Empty falls back to the build default.
+  String get transcriptionBaseUrl => _transcriptionBaseUrl;
 
   /// Last head-up mode the user picked from the Settings screen, or
   /// [HeadUpMode.unknown] if they have never picked. Persisted across
@@ -99,6 +108,8 @@ class AppSettingsStore extends ChangeNotifier {
       _chatModel = (prefs.getString(_chatModelPrefKey) ?? '').trim();
       _transcriptionModel =
           (prefs.getString(_transcriptionModelPrefKey) ?? '').trim();
+      _transcriptionBaseUrl =
+          (prefs.getString(_transcriptionBaseUrlPrefKey) ?? '').trim();
       await _purgeRetiredHermesSettings(prefs);
       _headUpMode = _readHeadUpMode(prefs);
       _doubleTapAction = _readDoubleTapAction(prefs);
@@ -162,12 +173,14 @@ class AppSettingsStore extends ChangeNotifier {
     required String baseUrl,
     required String chatModel,
     required String transcriptionModel,
+    required String transcriptionBaseUrl,
   }) async {
     await init();
     final normalizedApiKey = apiKey.trim();
     final normalizedBaseUrl = baseUrl.trim();
     final normalizedChatModel = chatModel.trim();
     final normalizedTranscriptionModel = transcriptionModel.trim();
+    final normalizedTranscriptionBaseUrl = transcriptionBaseUrl.trim();
 
     final prefs = await SharedPreferences.getInstance();
 
@@ -195,11 +208,17 @@ class AppSettingsStore extends ChangeNotifier {
       key: _transcriptionModelPrefKey,
       value: normalizedTranscriptionModel,
     );
+    await _writeOptionalPref(
+      prefs: prefs,
+      key: _transcriptionBaseUrlPrefKey,
+      value: normalizedTranscriptionBaseUrl,
+    );
 
     _apiKey = normalizedApiKey;
     _baseUrl = normalizedBaseUrl;
     _chatModel = normalizedChatModel;
     _transcriptionModel = normalizedTranscriptionModel;
+    _transcriptionBaseUrl = normalizedTranscriptionBaseUrl;
     notifyListeners();
   }
 

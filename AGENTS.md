@@ -20,6 +20,13 @@ Active app modes:
 - `navigate` — Google Maps turn-by-turn via firmware navigation card
 - `chat` — voice loop with OpenAI-compatible backend
 
+Speech-to-text is **not** OpenAI. Quick Ask, Chat and QuickNote all post to
+the self-hosted Speaches `whisper-server` on `deepthought`
+(`http://deepthought:56478/v1`, `deepdml/faster-whisper-large-v3-turbo-ct2`)
+over Tailscale - unmetered, and 0.34 s for 9.7 s of audio. Tailnet-only and
+unauthenticated, so no bearer is sent; there is no fallback to OpenAI, by
+choice. The reasoning call still goes to OpenAI.
+
 ## Current implementation status (2026-09-07)
 
 Recently implemented:

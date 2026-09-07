@@ -19,6 +19,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _chatModelController;
   late final TextEditingController _transcriptionModelController;
+  late final TextEditingController _transcriptionBaseUrlController;
 
   bool _initialized = false;
   bool _saving = false;
@@ -31,6 +32,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController = TextEditingController();
     _chatModelController = TextEditingController();
     _transcriptionModelController = TextEditingController();
+    _transcriptionBaseUrlController = TextEditingController();
     AppSettingsStore.get.addListener(_handleStoreChanged);
     NotificationSettingsStore.get.addListener(_handleStoreChanged);
     CompanionController.get.addListener(_handleStoreChanged);
@@ -64,6 +66,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController.text = settings.baseUrl;
     _chatModelController.text = settings.chatModel;
     _transcriptionModelController.text = settings.transcriptionModel;
+    _transcriptionBaseUrlController.text = settings.transcriptionBaseUrl;
   }
 
   Future<void> _save() async {
@@ -77,6 +80,7 @@ class _SettingsPageState extends State<SettingsPage> {
         baseUrl: _baseUrlController.text,
         chatModel: _chatModelController.text,
         transcriptionModel: _transcriptionModelController.text,
+        transcriptionBaseUrl: _transcriptionBaseUrlController.text,
       );
       if (!mounted) {
         return;
@@ -166,10 +170,18 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 12),
           TextField(
+            controller: _transcriptionBaseUrlController,
+            decoration: const InputDecoration(
+              labelText: 'Transcription base URL override',
+              hintText: 'http://deepthought:56478/v1',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
             controller: _transcriptionModelController,
             decoration: const InputDecoration(
               labelText: 'Transcription model override',
-              hintText: 'gpt-4o-mini-transcribe',
+              hintText: 'deepdml/faster-whisper-large-v3-turbo-ct2',
             ),
           ),
           const SizedBox(height: 14),
@@ -564,6 +576,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController.dispose();
     _chatModelController.dispose();
     _transcriptionModelController.dispose();
+    _transcriptionBaseUrlController.dispose();
     super.dispose();
   }
 }

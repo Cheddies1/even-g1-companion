@@ -11,10 +11,10 @@ class OpenAiTranscriptionService {
   final Dio? _dio;
 
   Future<String> transcribe(String filePath) async {
-    final config = AssistantBackendConfig.resolve();
+    final config = AssistantBackendConfig.resolveTranscription();
     if (!config.isConfigured) {
       throw const ChatTranscriptionException(
-        'Missing OPENAI_API_KEY for speech transcription',
+        'No transcription endpoint configured',
         kind: ChatTranscriptionErrorKind.auth,
       );
     }
@@ -68,7 +68,9 @@ class OpenAiTranscriptionService {
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.unknown) {
         throw ChatTranscriptionException(
-          'Transcription network error: $statusMessage',
+          // Name the host: the usual cause is the tailnet being down or the
+          // box asleep, and the log is the only place that detail survives.
+          'Transcription unreachable at ${config.baseUrl}: $statusMessage',
           kind: ChatTranscriptionErrorKind.network,
         );
       }
@@ -86,11 +88,15 @@ class OpenAiTranscriptionService {
         Dio(
           BaseOptions(
             baseUrl: config.baseUrl,
-            connectTimeout: const Duration(seconds: 20),
-            receiveTimeout: const Duration(seconds: 45),
-            sendTimeout: const Duration(seconds: 45),
+            connectTimeout: Duration(seconds: config.connectTimeoutSeconds),
+            receiveTimeout: Duration(seconds: config.receiveTimeoutSeconds),
+            sendTimeout: Duration(seconds: config.receiveTimeoutSeconds),
             headers: {
-              'Authorization': 'Bearer ${config.apiKey}',
+              // Omitted entirely for the local whisper-server: it is
+              // unauthenticated, and a bearer has no business on a cleartext
+              // request to a host that ignores it.
+              if (config.shouldSendApiKey)
+                'Authorization': 'Bearer ${config.apiKey}',
             },
           ),
         );

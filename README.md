@@ -315,7 +315,8 @@ flutter run --dart-define="OPENAI_API_KEY=sk-..."
 ```powershell
 --dart-define="CHAT_API_BASE_URL=https://api.openai.com/v1"
 --dart-define="CHAT_MODEL=gpt-4.1-mini"
---dart-define="CHAT_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe"
+--dart-define="TRANSCRIPTION_API_BASE_URL=http://deepthought:56478/v1"
+--dart-define="CHAT_TRANSCRIPTION_MODEL=deepdml/faster-whisper-large-v3-turbo-ct2"
 --dart-define="CHAT_TRANSCRIPTION_LANGUAGE=en"
 --dart-define="CHAT_MAX_OUTPUT_TOKENS=220"
 --dart-define="CHAT_MAX_RESPONSE_CHARS=900"
@@ -323,6 +324,29 @@ flutter run --dart-define="OPENAI_API_KEY=sk-..."
 ```
 
 Pass the raw key value — do not wrap it in square brackets.
+
+### Speech-to-text runs on the local whisper-server
+
+Transcription does not go to OpenAI. Quick Ask, Chat mode and QuickNote all
+post to the self-hosted Speaches `whisper-server` on `deepthought`
+(`http://deepthought:56478/v1`, model
+`deepdml/faster-whisper-large-v3-turbo-ct2`), reached over Tailscale. It is
+unmetered and measured at 0.34 s for 9.7 s of glasses audio, roughly 28x
+realtime on the RTX 3090 — faster than the OpenAI round trip, not slower.
+
+Consequences worth knowing:
+
+- The endpoint is **tailnet-only and unauthenticated**, so no API key is sent.
+  A bearer is attached only when the transcription base URL is `https://`,
+  which keeps a token off a cleartext request to a host that ignores it.
+- There is **no fallback to OpenAI**. If the box is asleep or the tailnet is
+  down, transcription fails and the glasses show `Whisper unreachable`. That
+  is deliberate: a silent fallback would spend OpenAI credit without saying so.
+- The **reasoning call still goes to OpenAI** (`CHAT_API_BASE_URL`). Only
+  speech-to-text moved. Quick Ask therefore needs the local box for the
+  transcript and OpenAI for the answer.
+- Override both the URL and the model at runtime under Settings → API, so
+  repointing at a different endpoint needs no rebuild.
 
 ### Debug logging
 

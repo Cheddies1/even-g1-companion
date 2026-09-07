@@ -14,6 +14,7 @@ class AssistantBackendConfig {
     required this.connectTimeoutSeconds,
     required this.receiveTimeoutSeconds,
     required this.profileLabel,
+    required this.requiresApiKey,
     required this.usingRuntimeApiKey,
     required this.usingRuntimeBaseUrl,
     required this.usingRuntimeChatModel,
@@ -29,10 +30,24 @@ class AssistantBackendConfig {
     'CHAT_MODEL',
     defaultValue: 'gpt-4.1-mini',
   );
+  // Transcription runs on the self-hosted Speaches whisper-server on
+  // deepthought rather than OpenAI: unmetered, and measured at 0.34 s for
+  // 9.7 s of glasses audio (~28x realtime on the RTX 3090), which beats the
+  // OpenAI round trip. Tailnet-only and unauthenticated by design.
+  static const _fallbackTranscriptionBaseUrl = String.fromEnvironment(
+    'TRANSCRIPTION_API_BASE_URL',
+    defaultValue: 'http://deepthought:56478/v1',
+  );
   static const _fallbackTranscriptionModel = String.fromEnvironment(
     'CHAT_TRANSCRIPTION_MODEL',
-    defaultValue: 'gpt-4o-mini-transcribe',
+    defaultValue: 'deepdml/faster-whisper-large-v3-turbo-ct2',
   );
+  // Local Whisper answers in well under a second for utterance-length audio,
+  // so a short connect timeout is what makes an asleep or off-tailnet box
+  // fail fast instead of stalling the user mid-gesture. The receive budget
+  // stays generous for the occasional long clip.
+  static const _transcriptionConnectTimeoutSeconds = 8;
+  static const _transcriptionReceiveTimeoutSeconds = 60;
   static const _language = String.fromEnvironment(
     'CHAT_TRANSCRIPTION_LANGUAGE',
     defaultValue: 'en',
@@ -107,14 +122,29 @@ class AssistantBackendConfig {
   /// Human-readable profile name used in error messages so a misconfigured
   /// key names the backend that rejected it.
   final String profileLabel;
+
+  /// Whether this profile needs a bearer token to be usable. False for the
+  /// self-hosted transcription profile - Speaches on the tailnet is
+  /// unauthenticated, so demanding a key would make a working setup look
+  /// unconfigured.
+  final bool requiresApiKey;
   final bool usingRuntimeApiKey;
   final bool usingRuntimeBaseUrl;
   final bool usingRuntimeChatModel;
   final bool usingRuntimeTranscriptionModel;
 
-  /// A profile is usable for a chat call only with both a key and a base URL.
-  /// The base URL always defaults, so in practice this is a key check.
-  bool get isConfigured => apiKey.isNotEmpty && baseUrl.isNotEmpty;
+  /// A profile is usable when it has a base URL and, if it needs one, a key.
+  bool get isConfigured =>
+      baseUrl.isNotEmpty && (!requiresApiKey || apiKey.isNotEmpty);
+
+  /// Whether to attach `Authorization` on requests to this profile.
+  ///
+  /// Only over TLS. The local transcription endpoint is plain HTTP inside the
+  /// WireGuard tailnet, which needs no token - and putting an OpenAI bearer
+  /// on a cleartext request to a host that ignores it is how credentials end
+  /// up somewhere they were never needed.
+  bool get shouldSendApiKey =>
+      apiKey.isNotEmpty && baseUrl.toLowerCase().startsWith('https://');
 
   static AssistantBackendConfig resolve() {
     final settings = AppSettingsStore.get;
@@ -139,10 +169,50 @@ class AssistantBackendConfig {
       connectTimeoutSeconds: _openAiConnectTimeoutSeconds,
       receiveTimeoutSeconds: _openAiReceiveTimeoutSeconds,
       profileLabel: 'OpenAI',
+      requiresApiKey: true,
       usingRuntimeApiKey: runtimeApiKey.isNotEmpty,
       usingRuntimeBaseUrl: runtimeBaseUrl.isNotEmpty,
       usingRuntimeChatModel: runtimeChatModel.isNotEmpty,
       usingRuntimeTranscriptionModel: runtimeTranscriptionModel.isNotEmpty,
+    );
+  }
+
+  /// The speech-to-text profile, used by Quick Ask, Chat mode and QuickNote.
+  ///
+  /// Separate from [resolve] because STT and the reasoning call no longer
+  /// share a host: transcription goes to the local whisper-server while chat
+  /// stays on OpenAI. Needs no API key, and deliberately has no fallback -
+  /// an unreachable box reports that plainly rather than silently spending
+  /// OpenAI credit.
+  static AssistantBackendConfig resolveTranscription() {
+    final settings = AppSettingsStore.get;
+    final runtimeBaseUrl = settings.transcriptionBaseUrl.trim();
+    final runtimeModel = settings.transcriptionModel.trim();
+
+    return AssistantBackendConfig(
+      // Carried so a self-hosted endpoint that does want a token can use the
+      // configured key, but only over TLS - see [shouldSendApiKey].
+      apiKey: settings.apiKey.trim(),
+      baseUrl: runtimeBaseUrl.isNotEmpty
+          ? runtimeBaseUrl
+          : _fallbackTranscriptionBaseUrl,
+      // Not used on this profile; the chat model belongs to [resolve].
+      chatModel: _fallbackChatModel,
+      transcriptionModel:
+          runtimeModel.isNotEmpty ? runtimeModel : _fallbackTranscriptionModel,
+      language: _language,
+      maxOutputTokens: _maxOutputTokens,
+      maxResponseChars: _maxResponseChars,
+      maxHistoryMessages: _maxHistoryMessages,
+      systemPrompt: _systemPrompt,
+      connectTimeoutSeconds: _transcriptionConnectTimeoutSeconds,
+      receiveTimeoutSeconds: _transcriptionReceiveTimeoutSeconds,
+      profileLabel: 'Whisper',
+      requiresApiKey: false,
+      usingRuntimeApiKey: false,
+      usingRuntimeBaseUrl: runtimeBaseUrl.isNotEmpty,
+      usingRuntimeChatModel: false,
+      usingRuntimeTranscriptionModel: runtimeModel.isNotEmpty,
     );
   }
 }
