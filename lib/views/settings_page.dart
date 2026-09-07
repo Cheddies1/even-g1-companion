@@ -2,7 +2,6 @@ import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/models/notification_package_preference.dart';
 import 'package:even_companion/services/app_settings_store.dart';
 import 'package:even_companion/services/assistant_backend_config.dart';
-import 'package:even_companion/services/chat_backend_router.dart';
 import 'package:even_companion/services/companion_controller.dart';
 import 'package:even_companion/services/device_status_service.dart';
 import 'package:even_companion/services/notification_settings_store.dart';
@@ -20,19 +19,10 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _chatModelController;
   late final TextEditingController _transcriptionModelController;
-  late final TextEditingController _hermesApiKeyController;
-  late final TextEditingController _hermesBaseUrlController;
-  late final TextEditingController _hermesChatModelController;
-  late final TextEditingController _hermesTimeoutController;
 
   bool _initialized = false;
   bool _saving = false;
   bool _obscureApiKey = true;
-  bool _savingHermes = false;
-  bool _obscureHermesKey = true;
-  bool _testingHermes = false;
-  // null = not yet tested this session; true/false = last probe result.
-  bool? _hermesReachable;
 
   @override
   void initState() {
@@ -41,10 +31,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController = TextEditingController();
     _chatModelController = TextEditingController();
     _transcriptionModelController = TextEditingController();
-    _hermesApiKeyController = TextEditingController();
-    _hermesBaseUrlController = TextEditingController();
-    _hermesChatModelController = TextEditingController();
-    _hermesTimeoutController = TextEditingController();
     AppSettingsStore.get.addListener(_handleStoreChanged);
     NotificationSettingsStore.get.addListener(_handleStoreChanged);
     CompanionController.get.addListener(_handleStoreChanged);
@@ -78,11 +64,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController.text = settings.baseUrl;
     _chatModelController.text = settings.chatModel;
     _transcriptionModelController.text = settings.transcriptionModel;
-    _hermesApiKeyController.text = settings.hermesApiKey;
-    _hermesBaseUrlController.text = settings.hermesBaseUrl;
-    _hermesChatModelController.text = settings.hermesChatModel;
-    _hermesTimeoutController.text =
-        settings.hermesTimeoutSeconds?.toString() ?? '';
   }
 
   Future<void> _save() async {
@@ -110,65 +91,6 @@ class _SettingsPageState extends State<SettingsPage> {
         });
       }
     }
-  }
-
-  Future<void> _saveHermes() async {
-    FocusScope.of(context).unfocus();
-    setState(() {
-      _savingHermes = true;
-    });
-    try {
-      await AppSettingsStore.get.saveHermesSettings(
-        apiKey: _hermesApiKeyController.text,
-        baseUrl: _hermesBaseUrlController.text,
-        chatModel: _hermesChatModelController.text,
-        timeoutSeconds: _parseTimeout(_hermesTimeoutController.text),
-      );
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Hermes settings saved')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _savingHermes = false;
-        });
-      }
-    }
-  }
-
-  int? _parseTimeout(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-    final value = int.tryParse(trimmed);
-    if (value == null || value <= 0) {
-      return null;
-    }
-    return value;
-  }
-
-  Future<void> _testHermesConnection() async {
-    FocusScope.of(context).unfocus();
-    setState(() {
-      _testingHermes = true;
-      _hermesReachable = null;
-    });
-    // Probe the URL currently typed in the field, not only the saved value,
-    // so the user can verify before saving. Reuses the router's probe so the
-    // two can never drift.
-    final reachable =
-        await probeHermesHealth(_hermesBaseUrlController.text.trim());
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _testingHermes = false;
-      _hermesReachable = reachable;
-    });
   }
 
   Widget _buildSectionCard({
@@ -312,155 +234,6 @@ class _SettingsPageState extends State<SettingsPage> {
         border: Border.all(color: const Color(0xFF28313A)),
       ),
       child: Text(label),
-    );
-  }
-
-  Widget _buildHermesSection() {
-    final settings = AppSettingsStore.get;
-    final backend = settings.assistantBackend;
-    final theme = Theme.of(context);
-    return _buildSectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Reasoning Backend',
-            style: theme.textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Quick Ask / Chat can route the reasoning call to a self-hosted '
-            'Hermes Agent over Tailscale instead of OpenAI direct. Speech-to-'
-            'text always stays on OpenAI, so keep an OpenAI key configured '
-            'above.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: const Color(0xFF9AB7C8),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SegmentedButton<AssistantBackendKind>(
-            segments: const [
-              ButtonSegment(
-                value: AssistantBackendKind.openai,
-                label: Text('OpenAI'),
-                icon: Icon(Icons.cloud_outlined),
-              ),
-              ButtonSegment(
-                value: AssistantBackendKind.hermes,
-                label: Text('Hermes'),
-                icon: Icon(Icons.dns_outlined),
-              ),
-            ],
-            selected: {backend},
-            onSelectionChanged: (selection) {
-              if (selection.isEmpty) {
-                return;
-              }
-              AppSettingsStore.get.setAssistantBackend(selection.first);
-            },
-          ),
-          const SizedBox(height: 8),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Fall back to OpenAI'),
-            subtitle: const Text(
-              'When Hermes is unreachable, use the OpenAI direct path and show '
-              'a one-time notice on the glasses.',
-            ),
-            value: settings.hermesFallbackEnabled,
-            onChanged: (value) {
-              AppSettingsStore.get.setHermesFallbackEnabled(value);
-            },
-          ),
-          const SizedBox(height: 4),
-          TextField(
-            controller: _hermesBaseUrlController,
-            decoration: const InputDecoration(
-              labelText: 'Hermes base URL',
-              hintText: 'http://deepthought:8642/v1',
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _hermesApiKeyController,
-            obscureText: _obscureHermesKey,
-            decoration: InputDecoration(
-              labelText: 'Hermes API key',
-              hintText: 'bearer token',
-              suffixIcon: IconButton(
-                onPressed: () {
-                  setState(() {
-                    _obscureHermesKey = !_obscureHermesKey;
-                  });
-                },
-                icon: Icon(
-                  _obscureHermesKey ? Icons.visibility : Icons.visibility_off,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _hermesChatModelController,
-            decoration: const InputDecoration(
-              labelText: 'Hermes model',
-              hintText: 'hermes-agent',
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _hermesTimeoutController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Hermes timeout (seconds)',
-              hintText: '120',
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              FilledButton(
-                onPressed: _savingHermes ? null : _saveHermes,
-                child: Text(_savingHermes ? 'Saving...' : 'Save Hermes'),
-              ),
-              const SizedBox(width: 10),
-              OutlinedButton(
-                onPressed: _testingHermes ? null : _testHermesConnection,
-                child: Text(
-                  _testingHermes ? 'Testing...' : 'Test connection',
-                ),
-              ),
-              const SizedBox(width: 10),
-              if (_hermesReachable != null) _buildReachabilityChip(),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReachabilityChip() {
-    final reachable = _hermesReachable == true;
-    final color = reachable ? const Color(0xFF2E7D32) : const Color(0xFFB3261E);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            reachable ? Icons.check_circle : Icons.error_outline,
-            size: 16,
-            color: color,
-          ),
-          const SizedBox(width: 6),
-          Text(reachable ? 'Reachable' : 'Unreachable'),
-        ],
-      ),
     );
   }
 
@@ -771,8 +544,6 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 _buildApiSection(),
                 const SizedBox(height: 16),
-                _buildHermesSection(),
-                const SizedBox(height: 16),
                 _buildNotificationFiltersSection(),
                 const SizedBox(height: 16),
                 _buildFirmwareSettingsSection(),
@@ -793,10 +564,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController.dispose();
     _chatModelController.dispose();
     _transcriptionModelController.dispose();
-    _hermesApiKeyController.dispose();
-    _hermesBaseUrlController.dispose();
-    _hermesChatModelController.dispose();
-    _hermesTimeoutController.dispose();
     super.dispose();
   }
 }

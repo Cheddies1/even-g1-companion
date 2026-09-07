@@ -6,17 +6,17 @@ import 'package:even_companion/models/chat_message.dart';
 import 'package:even_companion/models/chat_session_record.dart';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/chat_backend.dart';
-import 'package:even_companion/services/chat_backend_router.dart';
 import 'package:even_companion/services/chat_history_store.dart';
+import 'package:even_companion/services/openai_chat_backend.dart';
 import 'package:even_companion/services/openai_transcription_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 
 class GlanceAssistantService {
   GlanceAssistantService._({
-    ChatBackendRouter? router,
+    ChatBackend? backend,
     OpenAiTranscriptionService? transcriptionService,
-  })  : _router = router ?? ChatBackendRouter(),
+  })  : _backend = backend ?? OpenAiChatBackend(),
         _transcriptionService =
             transcriptionService ?? OpenAiTranscriptionService();
 
@@ -28,7 +28,7 @@ class GlanceAssistantService {
   static GlanceAssistantService? _instance;
   static GlanceAssistantService get get => _instance ??= GlanceAssistantService._();
 
-  final ChatBackendRouter _router;
+  final ChatBackend _backend;
   final OpenAiTranscriptionService _transcriptionService;
 
   final List<ChatMessage> _messages = <ChatMessage>[];
@@ -172,25 +172,9 @@ class GlanceAssistantService {
         return 'Glance assistant request changed';
       }
 
-      // Pre-flight route selection (shared with Chat mode): for Hermes this
-      // runs a short health probe; on a clean fallback it returns a one-time
-      // notice surfaced here before the answer.
-      final route = await _router.resolveRoute();
-      if (!_isCurrentRequest(requestVersion)) {
-        return 'Glance assistant request changed';
-      }
-      final notice = route.notice;
-      if (notice != null) {
-        await _showText(notice);
-        await Future<void>.delayed(_previewDelay);
-        if (!_isCurrentRequest(requestVersion)) {
-          return 'Glance assistant request changed';
-        }
-      }
-
       await _showText('Thinking...');
       final answer =
-          await route.backend.send(messages: List<ChatMessage>.from(_messages));
+          await _backend.send(messages: List<ChatMessage>.from(_messages));
 
       if (!_isCurrentRequest(requestVersion)) {
         return 'Glance assistant request changed';

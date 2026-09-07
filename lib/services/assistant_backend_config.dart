@@ -52,19 +52,6 @@ class AssistantBackendConfig {
   // OpenAI-path timeouts (seconds). Match the prior hardcoded Dio values.
   static const _openAiConnectTimeoutSeconds = 20;
   static const _openAiReceiveTimeoutSeconds = 45;
-  // Hermes-path defaults. Hermes is an agent that may run a tool loop, so its
-  // receive timeout is generous by default and configurable in Settings.
-  static const _fallbackHermesBaseUrl =
-      String.fromEnvironment('HERMES_API_BASE_URL');
-  static const _fallbackHermesChatModel = String.fromEnvironment(
-    'HERMES_CHAT_MODEL',
-    defaultValue: 'hermes-agent',
-  );
-  static const _hermesConnectTimeoutSeconds = 20;
-  static const _hermesDefaultReceiveTimeoutSeconds = int.fromEnvironment(
-    'HERMES_RECEIVE_TIMEOUT_SECONDS',
-    defaultValue: 120,
-  );
   static const _systemPrompt = String.fromEnvironment(
     'CHAT_SYSTEM_PROMPT',
     defaultValue:
@@ -117,8 +104,8 @@ class AssistantBackendConfig {
   final int connectTimeoutSeconds;
   final int receiveTimeoutSeconds;
 
-  /// Human-readable profile name ("OpenAI" / "Hermes") used in error
-  /// messages so a misconfigured key reports the right backend.
+  /// Human-readable profile name used in error messages so a misconfigured
+  /// key names the backend that rejected it.
   final String profileLabel;
   final bool usingRuntimeApiKey;
   final bool usingRuntimeBaseUrl;
@@ -126,8 +113,7 @@ class AssistantBackendConfig {
   final bool usingRuntimeTranscriptionModel;
 
   /// A profile is usable for a chat call only with both a key and a base URL.
-  /// The OpenAI base URL always defaults, so this matches the prior
-  /// key-only check there; for Hermes it also requires a configured URL.
+  /// The base URL always defaults, so in practice this is a key check.
   bool get isConfigured => apiKey.isNotEmpty && baseUrl.isNotEmpty;
 
   static AssistantBackendConfig resolve() {
@@ -157,42 +143,6 @@ class AssistantBackendConfig {
       usingRuntimeBaseUrl: runtimeBaseUrl.isNotEmpty,
       usingRuntimeChatModel: runtimeChatModel.isNotEmpty,
       usingRuntimeTranscriptionModel: runtimeTranscriptionModel.isNotEmpty,
-    );
-  }
-
-  /// The Hermes chat profile. Reuses the glasses-native system prompt and the
-  /// shared length caps; only the endpoint, key, model, and timeout differ.
-  /// Never used for STT or note-tidy — those keep calling [resolve].
-  static AssistantBackendConfig resolveHermes() {
-    final settings = AppSettingsStore.get;
-    final runtimeApiKey = settings.hermesApiKey.trim();
-    final runtimeBaseUrl = settings.hermesBaseUrl.trim();
-    final runtimeChatModel = settings.hermesChatModel.trim();
-    final runtimeTimeout = settings.hermesTimeoutSeconds;
-
-    return AssistantBackendConfig(
-      apiKey: runtimeApiKey,
-      baseUrl:
-          runtimeBaseUrl.isNotEmpty ? runtimeBaseUrl : _fallbackHermesBaseUrl,
-      chatModel: runtimeChatModel.isNotEmpty
-          ? runtimeChatModel
-          : _fallbackHermesChatModel,
-      // Hermes does not serve transcription; carry the OpenAI default so the
-      // field is populated but it is never exercised on this profile.
-      transcriptionModel: _fallbackTranscriptionModel,
-      language: _language,
-      maxOutputTokens: _maxOutputTokens,
-      maxResponseChars: _maxResponseChars,
-      maxHistoryMessages: _maxHistoryMessages,
-      systemPrompt: _systemPrompt,
-      connectTimeoutSeconds: _hermesConnectTimeoutSeconds,
-      receiveTimeoutSeconds:
-          runtimeTimeout ?? _hermesDefaultReceiveTimeoutSeconds,
-      profileLabel: 'Hermes',
-      usingRuntimeApiKey: runtimeApiKey.isNotEmpty,
-      usingRuntimeBaseUrl: runtimeBaseUrl.isNotEmpty,
-      usingRuntimeChatModel: runtimeChatModel.isNotEmpty,
-      usingRuntimeTranscriptionModel: false,
     );
   }
 }

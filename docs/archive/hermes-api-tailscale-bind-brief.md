@@ -1,4 +1,6 @@
-# Ticket: `hermes-api-tailscale-bind` — expose Hermes API to the tailnet
+# Historical ticket: `hermes-api-tailscale-bind` — expose Hermes API to the tailnet
+
+> **Retired 2026-09-02, archived 2026-09-07.** Hermes, OpenWebUI and their local state were permanently deleted from `deepthought` (the box itself is very much alive - it now runs Ollama, T3 Code and the local OpenCode provider). The app-side route was removed by `hermes-dewire-chat` on 2026-09-07. This is a dated implementation record only: do not follow its commands, and do not treat the endpoint or the `AssistantBackendKind` enum it describes as existing.
 
 **Goal:** Make the Hermes OpenAI-compatible API reachable from Eddie's phone over Tailscale, so the Even Companion app can route Quick Ask reasoning to `http://deepthought:8642/v1`. **Blocks** the app-side `hermes-agent-v1` item (already code-complete, pending this).
 

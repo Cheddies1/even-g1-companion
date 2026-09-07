@@ -16,7 +16,7 @@ class OpenAiChatBackend implements ChatBackend {
   final Dio? _dio;
 
   /// Resolves the profile this backend talks to. Defaults to the OpenAI
-  /// profile; the Hermes instance injects [AssistantBackendConfig.resolveHermes].
+  /// profile. Injectable so tests can supply a stub config.
   final AssistantBackendConfig Function() _configResolver;
 
   @override
