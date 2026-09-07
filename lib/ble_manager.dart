@@ -12,6 +12,7 @@ import 'package:even_companion/services/glance_assistant_service.dart';
 import 'package:even_companion/services/glance_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/notes_store.dart';
+import 'package:even_companion/services/phone_capture_service.dart';
 import 'package:even_companion/services/quick_note_capture_service.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -216,6 +217,12 @@ class BleManager {
         final modeLabel =
             (call.arguments as Map?)?['modeLabel'] as String? ?? 'Glance';
         await CompanionController.get.handleNotificationModeSwitch(modeLabel);
+        break;
+      case 'phoneCaptureStopRequested':
+        // "Stop and save" tapped on the phone-capture notification. Routed
+        // through the same Dart path as the in-app button so the save, the
+        // glasses HUD teardown and the UI refresh cannot diverge.
+        unawaited(PhoneCaptureService.get.stopAndSave());
         break;
       case 'quickNoteAudioReady':
         final args = call.arguments as Map?;

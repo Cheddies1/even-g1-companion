@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/phone_capture_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 
@@ -55,6 +56,19 @@ class CaptureService {
   Future<bool> startRecording() async {
     if (_isRecording) {
       return true;
+    }
+
+    // The phone has one microphone. A phone-mic recording already owns the
+    // audio session, and starting the glasses recorder over the top would
+    // leave two sessions writing separate PCM files with two disagreeing
+    // HUDs. Refuse instead. Mirrors the same check in
+    // PhoneCaptureService.startRecording.
+    if (PhoneCaptureService.get.isRecording) {
+      AppLog.info(
+        '${DateTime.now()} start refused - phone recording active',
+        tag: 'Capture',
+      );
+      return false;
     }
 
     final started = await BleManager.invokeMethod<bool>('startGlassesCapture');

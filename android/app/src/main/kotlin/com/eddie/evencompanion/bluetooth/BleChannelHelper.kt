@@ -10,6 +10,8 @@ import com.eddie.evencompanion.cpp.Cpp
 import com.eddie.evencompanion.notifications.RecentNotificationsListenerService
 import com.eddie.evencompanion.service.CompanionForegroundService
 import com.eddie.evencompanion.service.GlassesCaptureRecorder
+import com.eddie.evencompanion.service.PhoneCaptureRecorder
+import com.eddie.evencompanion.service.PhoneCaptureService
 import com.eddie.evencompanion.model.BlePairDevice
 import com.eddie.evencompanion.notifications.NotificationFeedStore
 import com.eddie.evencompanion.telephony.TelephonyEventService
@@ -62,6 +64,7 @@ object BleChannelHelper {
         engineAlive = true
         val binaryMessenger = flutterEngine.dartExecutor.binaryMessenger
         GlassesCaptureRecorder.init(context.applicationContext)
+        PhoneCaptureRecorder.init(context.applicationContext)
         //  Method
         bleMethodChannel = BleMethodChannel(
             context,
@@ -138,6 +141,11 @@ class BleMethodChannel(
             "stopGlassesCapture" -> stopGlassesCapture(call, result)
             "stopGlassesCaptureToTemp" -> stopGlassesCaptureToTemp(call, result)
             "cancelGlassesCapture" -> cancelGlassesCapture(call, result)
+            "startPhoneCapture" -> startPhoneCapture(call, result)
+            "stopPhoneCapture" -> stopPhoneCapture(call, result)
+            "cancelPhoneCapture" -> cancelPhoneCapture(call, result)
+            "hasRecordAudioPermission" -> hasRecordAudioPermission(call, result)
+            "requestRecordAudioPermission" -> requestRecordAudioPermission(call, result)
             "listRecordings" -> listRecordings(call, result)
             "renameRecording" -> renameRecording(call, result)
             "deleteRecording" -> deleteRecording(call, result)
@@ -238,6 +246,84 @@ class BleMethodChannel(
     fun cancelGlassesCapture(call: MethodCall, result: MethodChannel.Result) {
         GlassesCaptureRecorder.cancel()
         result.success(true)
+    }
+
+    //* =================== Phone-mic capture =================== *//
+
+    /**
+     * Starts a phone-microphone recording. The microphone foreground service
+     * goes up first so the mic grant is held before AudioRecord opens - on
+     * Android 14+ the reverse order can hand back a silent stream. If the
+     * recorder fails to start the service is torn back down so no
+     * "Recording" notification is left behind.
+     */
+    fun startPhoneCapture(call: MethodCall, result: MethodChannel.Result) {
+        val startedAtMs = call.argument<Number>("startedAtMs")?.toLong() ?: 0L
+        PhoneCaptureService.start(context.applicationContext, startedAtMs)
+        val started = PhoneCaptureRecorder.start()
+        if (!started) {
+            PhoneCaptureService.stop(context.applicationContext)
+        }
+        result.success(started)
+    }
+
+    fun stopPhoneCapture(call: MethodCall, result: MethodChannel.Result) {
+        val outcome = PhoneCaptureRecorder.stopAndSave()
+        PhoneCaptureService.stop(context.applicationContext)
+        result.success(outcome)
+    }
+
+    fun cancelPhoneCapture(call: MethodCall, result: MethodChannel.Result) {
+        PhoneCaptureRecorder.cancel()
+        PhoneCaptureService.stop(context.applicationContext)
+        result.success(true)
+    }
+
+    private var pendingRecordAudioResult: MethodChannel.Result? = null
+
+    fun hasRecordAudioPermission(call: MethodCall, result: MethodChannel.Result) {
+        result.success(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    /**
+     * Fires the runtime RECORD_AUDIO prompt and does not answer Dart until
+     * the user has actually dismissed the dialog, via
+     * [onRecordAudioPermissionResult]. Mirrors
+     * [requestTelephonyPermissions].
+     *
+     * Holding the result open is the point: `requestPermissions` returns
+     * immediately, so answering from here would report the pre-prompt state
+     * and the caller would treat a grant-in-progress as a denial - making
+     * the user tap Record twice on first run.
+     */
+    fun requestRecordAudioPermission(call: MethodCall, result: MethodChannel.Result) {
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        // A second request while one is outstanding would orphan the first
+        // result and leave that Dart future hanging forever.
+        pendingRecordAudioResult?.success(false)
+        pendingRecordAudioResult = result
+        ActivityCompat.requestPermissions(
+            context,
+            arrayOf(Manifest.permission.RECORD_AUDIO),
+            RECORD_AUDIO_REQUEST_CODE,
+        )
+    }
+
+    fun onRecordAudioPermissionResult(granted: Boolean) {
+        pendingRecordAudioResult?.success(granted)
+        pendingRecordAudioResult = null
     }
 
     fun listRecordings(call: MethodCall, result: MethodChannel.Result) {
@@ -385,6 +471,20 @@ class BleMethodChannel(
      * Dart handler: `lib/ble_manager.dart` `_methodCallHandler` `case 'quickNoteAudioReady':`,
      * dispatches to `QuickNoteCaptureService`.
      */
+    /**
+     * Notifies Dart that the user tapped "Stop and save" on the phone-capture
+     * notification. Carries no arguments - the recorder holds all the state.
+     *
+     * Method channel name: `method.bluetooth`
+     * Method name: `phoneCaptureStopRequested`
+     *
+     * Dart handler: `lib/ble_manager.dart` `_methodCallHandler`
+     * `case 'phoneCaptureStopRequested':`, dispatches to
+     * `PhoneCaptureService.stopAndSave`.
+     */
+    fun flutterPhoneCaptureStopRequested() =
+        methodChannel.invokeMethod("phoneCaptureStopRequested", null)
+
     fun flutterQuickNoteAudioReady(noteUid: ByteArray, audio: ByteArray) =
         methodChannel.invokeMethod(
             "quickNoteAudioReady",
@@ -421,6 +521,7 @@ class BleMethodChannel(
 
     companion object {
         const val REQUEST_CODE_TELEPHONY = 3
+        const val RECORD_AUDIO_REQUEST_CODE = 4
     }
 
 }

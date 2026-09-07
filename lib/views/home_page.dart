@@ -11,6 +11,7 @@ import 'package:even_companion/services/companion_controller.dart';
 import 'package:even_companion/services/device_status_service.dart';
 import 'package:even_companion/services/glance_service.dart';
 import 'package:even_companion/services/notes_store.dart';
+import 'package:even_companion/services/phone_capture_service.dart';
 import 'package:even_companion/views/chat_transcript_page.dart';
 import 'package:even_companion/views/features_page.dart';
 import 'package:even_companion/views/notes_page.dart';
@@ -89,6 +90,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     DeviceStatusService.get.addListener(_refreshPage);
     ChatHistoryStore.get.addListener(_refreshPage);
     NotesStore.get.addListener(_refreshPage);
+    PhoneCaptureService.get.addListener(_refreshPage);
     ChatHistoryStore.get.init();
     _initBrightnessFromStore();
   }
@@ -669,6 +671,100 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  /// Record from the phone's own microphone, no glasses required. Same WAV
+  /// format, same folder, same recordings list as glasses capture - this is
+  /// the "capture, but local" path for when the glasses are not being worn.
+  Widget _buildPhoneCaptureCard() {
+    final phone = PhoneCaptureService.get;
+    final recording = phone.isRecording;
+    final glassesBusy = CaptureService.get.isRecording;
+
+    final subtitle = recording
+        ? 'Recording  ${PhoneCaptureService.formatElapsed(phone.elapsed)}'
+        : glassesBusy
+            ? 'Glasses capture is running'
+            : 'Record with the phone mic';
+
+    return _buildSectionCard(
+      child: Row(
+        children: [
+          Icon(
+            recording ? Icons.fiber_manual_record : Icons.mic_none,
+            color: recording
+                ? const Color(0xFFB3261E)
+                : const Color(0xFF7C8C99),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Phone recording',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: const Color(0xFF9AB7C8),
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          recording
+              ? FilledButton(
+                  onPressed: _stopPhoneRecording,
+                  child: const Text('Stop'),
+                )
+              : FilledButton.tonal(
+                  // Disabled rather than hidden while a glasses capture runs,
+                  // so the reason is visible in the subtitle instead of the
+                  // control silently disappearing.
+                  onPressed: glassesBusy ? null : _startPhoneRecording,
+                  child: const Text('Record'),
+                ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startPhoneRecording() async {
+    final result = await PhoneCaptureService.get.startRecording();
+    if (!mounted || result == PhoneCaptureStartResult.started) {
+      return;
+    }
+    final message = switch (result) {
+      PhoneCaptureStartResult.permissionDenied =>
+        'Microphone permission is needed to record.',
+      PhoneCaptureStartResult.glassesCaptureActive =>
+        'Stop the glasses capture first.',
+      PhoneCaptureStartResult.recorderFailed =>
+        'Could not start the recorder.',
+      PhoneCaptureStartResult.alreadyRecording => 'Already recording.',
+      PhoneCaptureStartResult.started => '',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _stopPhoneRecording() async {
+    final fileName = await PhoneCaptureService.get.stopAndSave();
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          fileName == null ? 'Recording failed to save.' : 'Saved $fileName',
+        ),
+      ),
+    );
+  }
+
   Widget _buildRecordingsCard() {
     return InkWell(
       borderRadius: BorderRadius.circular(18),
@@ -691,7 +787,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Captured audio from glasses mic',
+                    'Captured audio from glasses and phone',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: const Color(0xFF9AB7C8),
                         ),
@@ -789,6 +885,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           const SizedBox(height: 16),
           _buildNotesCard(),
           const SizedBox(height: 16),
+          _buildPhoneCaptureCard(),
+          const SizedBox(height: 16),
           _buildRecordingsCard(),
           const SizedBox(height: 16),
           _buildChatLogSection(),
@@ -807,6 +905,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     DeviceStatusService.get.removeListener(_refreshPage);
     ChatHistoryStore.get.removeListener(_refreshPage);
     NotesStore.get.removeListener(_refreshPage);
+    PhoneCaptureService.get.removeListener(_refreshPage);
     super.dispose();
   }
 }

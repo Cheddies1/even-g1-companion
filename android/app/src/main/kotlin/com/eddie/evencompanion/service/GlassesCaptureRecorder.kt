@@ -6,27 +6,25 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.IOException
-import java.io.OutputStream
 import java.text.SimpleDateFormat
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.Date
 import java.util.Locale
 
 object GlassesCaptureRecorder {
-    private const val SAMPLE_RATE = 16000
-    private const val CHANNEL_COUNT = 1
-    private const val BITS_PER_SAMPLE = 16
+    /**
+     * The first 200 ms of the glasses LC3 stream carries a startup artefact,
+     * so it is trimmed off before framing. Specific to this transport -
+     * [PhoneCaptureRecorder] passes no trim because AudioRecord has no
+     * equivalent and dropping 200 ms there would lose real audio.
+     */
     private const val CAPTURE_STARTUP_TRIM_MS = 200
-    private const val BYTES_PER_SAMPLE_FRAME = CHANNEL_COUNT * BITS_PER_SAMPLE / 8
     private const val CAPTURE_STARTUP_TRIM_BYTES =
-        SAMPLE_RATE * BYTES_PER_SAMPLE_FRAME * CAPTURE_STARTUP_TRIM_MS / 1000
+        WavRecordingStore.SAMPLE_RATE *
+            WavRecordingStore.BYTES_PER_SAMPLE_FRAME *
+            CAPTURE_STARTUP_TRIM_MS / 1000
 
     private lateinit var appContext: Context
     private var pcmTempFile: File? = null
@@ -91,9 +89,11 @@ object GlassesCaptureRecorder {
             SimpleDateFormat("yyyy-MM-dd-HH-mm", Locale.UK).format(Date())
         }.wav"
 
-        val savedLocation = saveWaveToPublicRecordings(
+        val savedLocation = WavRecordingStore.saveWaveToPublicRecordings(
+            context = appContext,
             pcmFile = pcmTempFile ?: return mapOf("success" to false),
             fileName = fileName,
+            skipBytes = CAPTURE_STARTUP_TRIM_BYTES.toLong(),
         ) ?: run {
             pcmTempFile?.delete()
             pcmTempFile = null
@@ -133,7 +133,7 @@ object GlassesCaptureRecorder {
 
         return try {
             FileOutputStream(wavFile, false).use { output ->
-                writeWaveFile(pcmFile, output)
+                WavRecordingStore.writeWaveFile(pcmFile, output)
             }
             pcmFile.delete()
             pcmTempFile = null
@@ -198,10 +198,10 @@ object GlassesCaptureRecorder {
             MediaStore.MediaColumns.SIZE,
             MediaStore.Audio.Media.DURATION,
         )
-        // Filter to files under our subfolder of the public Recordings directory.
-        // RELATIVE_PATH stores values with a trailing slash, e.g.
-        // "Recordings/Even Companion/".
-        val expectedPath = "${Environment.DIRECTORY_RECORDINGS}/Even Companion/"
+        // Filter to files under our subfolder of the public Recordings
+        // directory. Derived from WavRecordingStore rather than rebuilt here,
+        // so the query can never look somewhere the save path does not write.
+        val expectedPath = WavRecordingStore.relativePathForQuery
         val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         val selection: String?
         val selectionArgs: Array<String>?
@@ -312,86 +312,5 @@ object GlassesCaptureRecorder {
             android.util.Log.w("GlanceAssistant", "shareRecording failed: ${e.message}")
             false
         }
-    }
-
-    private fun saveWaveToPublicRecordings(pcmFile: File, fileName: String): Uri? {
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-            put(MediaStore.MediaColumns.MIME_TYPE, "audio/wav")
-            put(
-                MediaStore.MediaColumns.RELATIVE_PATH,
-                "${Environment.DIRECTORY_RECORDINGS}/Even Companion",
-            )
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
-
-        val resolver = appContext.contentResolver
-        val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val uri = resolver.insert(collection, values) ?: return null
-
-        return try {
-            resolver.openOutputStream(uri)?.use { output ->
-                writeWaveFile(
-                    pcmFile = pcmFile,
-                    output = output,
-                    skipBytes = CAPTURE_STARTUP_TRIM_BYTES.toLong(),
-                )
-            } ?: throw IOException("Failed to open MediaStore output stream")
-
-            values.clear()
-            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            uri
-        } catch (e: Exception) {
-            resolver.delete(uri, null, null)
-            null
-        }
-    }
-
-    private fun writeWaveFile(
-        pcmFile: File,
-        output: OutputStream,
-        skipBytes: Long = 0L,
-    ) {
-        val availableAudioLen = pcmFile.length()
-        val safeSkipBytes = skipBytes
-            .coerceAtLeast(0L)
-            .coerceAtMost(availableAudioLen)
-            .let { it - (it % BYTES_PER_SAMPLE_FRAME) }
-        val totalAudioLen = availableAudioLen - safeSkipBytes
-
-        output.write(buildWaveHeader(totalAudioLen))
-        FileInputStream(pcmFile).use { input ->
-            if (safeSkipBytes > 0L) {
-                input.skipNBytes(safeSkipBytes)
-            }
-            input.copyTo(output)
-        }
-
-        if (output is FileOutputStream) {
-            output.fd.sync()
-        }
-    }
-
-    private fun buildWaveHeader(totalAudioLen: Long): ByteArray {
-        val totalDataLen = totalAudioLen + 36
-        val byteRate = SAMPLE_RATE * CHANNEL_COUNT * BITS_PER_SAMPLE / 8
-        val blockAlign = CHANNEL_COUNT * BITS_PER_SAMPLE / 8
-
-        return ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
-            put("RIFF".toByteArray(Charsets.US_ASCII))
-            putInt(totalDataLen.toInt())
-            put("WAVE".toByteArray(Charsets.US_ASCII))
-            put("fmt ".toByteArray(Charsets.US_ASCII))
-            putInt(16)
-            putShort(1)
-            putShort(CHANNEL_COUNT.toShort())
-            putInt(SAMPLE_RATE)
-            putInt(byteRate)
-            putShort(blockAlign.toShort())
-            putShort(BITS_PER_SAMPLE.toShort())
-            put("data".toByteArray(Charsets.US_ASCII))
-            putInt(totalAudioLen.toInt())
-        }.array()
     }
 }

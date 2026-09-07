@@ -40,9 +40,12 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val granted = grantResults.isNotEmpty() && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }
         if (requestCode == BleMethodChannel.REQUEST_CODE_TELEPHONY) {
-            val granted = grantResults.isNotEmpty() && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }
             BleChannelHelper.bleMC.onTelephonyPermissionResult(granted)
+        }
+        if (requestCode == BleMethodChannel.RECORD_AUDIO_REQUEST_CODE) {
+            BleChannelHelper.bleMC.onRecordAudioPermissionResult(granted)
         }
     }
 

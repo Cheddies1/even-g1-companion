@@ -12,6 +12,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- Phone-mic capture. RECORD_AUDIO is requested at runtime; the
+         microphone foreground-service type is what keeps the mic live once
+         the app is backgrounded or the screen locks. Without it Android 14+
+         feeds AudioRecord silence instead of failing, so a locked-screen
+         recording would produce a silent WAV with no error. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
    
     <application
         android:label="Even Companion"
@@ -26,6 +34,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Persistent companion notification and mode status while the Even companion app remains active in the background." />
         </service>
+        <!-- Separate from CompanionForegroundService on purpose. That one is
+             typed specialUse and runs for the whole app lifetime; this one is
+             typed microphone and lives only for the duration of a phone
+             recording, so the mic grant is held no longer than it is used and
+             the two service types never have to be combined. -->
+        <service
+            android:name=".service.PhoneCaptureService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
         <service
             android:name=".notifications.RecentNotificationsListenerService"
             android:exported="true"
