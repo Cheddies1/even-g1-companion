@@ -195,18 +195,38 @@ class GlanceAssistantService {
       _scheduleClear();
       return 'Assistant replied';
     } on ChatTranscriptionException catch (e) {
+      // The glasses only get a four-word summary, so the status code and
+      // provider message have to land in the log or a Quick Ask failure is
+      // undiagnosable on a normal build. Matches ChatService's handling.
+      AppLog.error(
+        '${DateTime.now()} transcription error -> ${e.kind} | ${e.message}',
+        tag: 'GlanceAssistant',
+      );
       await _showText(_transcriptionErrorMessage(e));
       _scheduleClear();
       return 'Speech error';
     } on ChatBackendException catch (e) {
+      AppLog.error(
+        '${DateTime.now()} backend error -> ${e.kind} | ${e.message}',
+        tag: 'GlanceAssistant',
+      );
       await _showText(_backendErrorMessage(e));
       _scheduleClear();
       return 'Assistant backend error';
     } on GlanceAssistantFlowException catch (e) {
+      AppLog.error(
+        '${DateTime.now()} flow error -> ${e.message}',
+        tag: 'GlanceAssistant',
+      );
       await _showText(_flowErrorMessage(e));
       _scheduleClear();
       return e.message;
-    } catch (_) {
+    } catch (error, stack) {
+      AppLog.error(
+        '${DateTime.now()} unexpected assistant failure -> $error',
+        tag: 'GlanceAssistant',
+      );
+      AppLog.debug('assistant failure stack: $stack', tag: 'GlanceAssistant');
       await _showText('Something went wrong');
       _scheduleClear();
       return 'Assistant failed';
