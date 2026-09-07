@@ -45,8 +45,16 @@ Recently implemented:
   mic exclusion were confirmed on 2026-09-07 too: with a phone recording live
   and the glasses in Capture mode, the HUD showed the REC state and two
   tilt-ups were both refused (`Capture: start refused - phone recording
-  active`) while the phone file saved intact. Still unverified: the reverse
-  direction, a glasses capture running when phone Record is pressed.
+  active`) while the phone file saved intact. The reverse direction was
+  confirmed the same day: starting a glasses capture by tilt-up greys out the
+  phone Record button immediately, and it re-enables only once the glasses
+  recording is ended. Both directions of the mic exclusion therefore hold.
+  Note the phone card's enabled state reads `CaptureService.isRecording`, and
+  `CaptureService` is not a `ChangeNotifier` - the refresh works because every
+  path that changes its recording flag runs inside a `CompanionController`
+  method that calls `notifyListeners()`, or alongside a `DeviceStatusService`
+  reset on transport loss. A new entry point that starts or stops a glasses
+  capture outside those paths would leave the button stale.
 - **Hermes removed as the assistant backend** (2026-09-07) - Hermes was
   decommissioned on the `deepthought` box, so the app-side route went with
   it. `ChatBackendRouter` and its test are deleted outright: they existed
