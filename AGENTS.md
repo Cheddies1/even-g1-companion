@@ -41,8 +41,12 @@ Recently implemented:
   Device-verified 2026-09-07: 13 minutes recorded with the app backgrounded
   and the screen locked came back 99.7% non-zero samples with no 30-second
   window below -55 dBFS, so the mic really is live rather than being fed
-  silence. Still unverified: the phone/glasses mutual exclusion (needs a
-  physical tilt-up) and the glasses HUD mirror in Capture mode.
+  silence. The glasses HUD mirror and the phone-then-glasses direction of the
+  mic exclusion were confirmed on 2026-09-07 too: with a phone recording live
+  and the glasses in Capture mode, the HUD showed the REC state and two
+  tilt-ups were both refused (`Capture: start refused - phone recording
+  active`) while the phone file saved intact. Still unverified: the reverse
+  direction, a glasses capture running when phone Record is pressed.
 - **Hermes removed as the assistant backend** (2026-09-07) - Hermes was
   decommissioned on the `deepthought` box, so the app-side route went with
   it. `ChatBackendRouter` and its test are deleted outright: they existed
