@@ -211,6 +211,13 @@ The BLE protocol is extensively documented from four HCI snoop capture sessions.
   rather than another sender, so it outranks every other external reference
   on packet structure. It says nothing about behaviour — live testing still
   wins there. Check it before deriving any new field layout from scratch.
+- [docs/firmware-decomp-display-relay.md](docs/firmware-decomp-display-relay.md)
+  — inter-leg forwarding subset, the `0x4E` ack structure, the per-lens `0x39`
+  display-state query, and lens roles. **Read before touching leg-targeting or
+  display-ack handling.** Three load-bearing facts: display content is not
+  relayed between temples (so the host must write both legs); `0x4E` acks
+  `0xCB` on intermediate chunks and only `0xC9` on the last; right lens is
+  master, left is slave.
 
 Key protocol families already mapped:
 - `0x01` brightness set, `F5 12` brightness echo
@@ -326,5 +333,7 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
   cross-references to Gadgetbridge constants + ayroblu Swift implementation
 - [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md) — firmware
   decompilation; what it confirmed, what it corrected, and what it opened up
+- [docs/firmware-decomp-display-relay.md](docs/firmware-decomp-display-relay.md)
+  — inter-leg relay, `0x4E` acks, per-lens display state, lens roles
 - [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md) — the rendering
   protocol findings including the nav card debugging results

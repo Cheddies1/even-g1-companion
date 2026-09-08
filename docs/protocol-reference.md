@@ -29,6 +29,7 @@ Use this file as a command-family reference, not a definitive semantic truth sou
 - [even-g1-event-mapping.md](even-g1-event-mapping.md)
 - [investigation-notes.md](investigation-notes.md)
 - [firmware-decomp-notes.md](firmware-decomp-notes.md)
+- [firmware-decomp-display-relay.md](firmware-decomp-display-relay.md)
 - [python-sdk-comparison-notes.md](python-sdk-comparison-notes.md)
 
 ## Two structural rules from the firmware parser
@@ -42,6 +43,16 @@ renders nothing:
 2. **`0xC9` is the firmware's generic success code**, not specific to the
    `0x0E` mic-enable family. `deal_event_to_phone.c` emits
    `<opcode> C9 <state>` acks for at least `0x0D`, `0x0F` and `0x4E`.
+3. **Display content is not relayed between the temples.** The inter-leg
+   forwarding subset covers `0x01 02 03 05 07 08 09 0B 0D 0F 11 14 26`,
+   `0x29 2A 2B 2C 2D 32 33 34 35 36 37` and `0x4A 4B 4C 4D 4E 4F`. `0x52` is
+   absent, and `0x4E`'s case reads none of the request payload — it is a state
+   poke plus an ack. `0x06`, `0x0A` and `0x1E` are absent too. **The host must
+   write display content to both legs.** See
+   [firmware-decomp-display-relay.md](firmware-decomp-display-relay.md) § 1.
+4. **Right lens is master, left is slave** — the master advertises `_R_` and
+   the non-master `_L_` (`bt_start.c`). The same flag gates the deferred `0x4E`
+   completion frame and the direction of every `Send*ToSlave` call.
 
 ## Touch / gesture family: `0xF5`
 
@@ -263,6 +274,37 @@ table and confirmed against live device rendering (2026-05-18):
 | 7 | `page` | Current page (0-based; 0 for single-page sends) |
 | 8 | `totalPages` | Total pages (1 for single-page sends) |
 | 9..end | body | UTF-8 text payload, max `MAX_CHUNK_SIZE = 176` bytes |
+
+### Acknowledgement structure
+
+`Firmware-source` (2026-09-08). Full working in
+[firmware-decomp-display-relay.md](firmware-decomp-display-relay.md) § 2.
+
+The status byte distinguishes chunk progress, and the host should not treat
+anything other than `0xC9` as failure:
+
+- `0xCB` — chunk accepted, more expected (`currentChunk != totalChunks - 1`)
+- `0xC9` — final chunk accepted
+
+Single-chunk sends always get `0xC9`, so this only matters once chunking
+starts. The same split appears in the `0x0F` handler, so it is a family
+convention.
+
+On the **final** chunk the master defers instead of replying inline, and a
+5-byte completion frame arrives later via the event path:
+
+```
+4E C9 <textSeqNum> <totalChunks> <finalChunkIndex>
+```
+
+Bytes 3–4 are consumed — the firmware zeroes them as it sends, so a second read
+returns zeros. Byte 2 is the echoed `textSeqNum` from header byte 1, not a
+render status. The deferred frame is **master-only** (right leg); the
+non-master replies inline.
+
+None of this proves the pixels changed — it means "accepted by the text
+handler", one layer above the GATT ACK. For an actual per-lens display check,
+use `0x39` (see "Readback opcodes" below).
 
 **Display constants** (firmware 1.6.6, confirmed via pixel-width measurements):
 - `DISPLAY_WIDTH = 488` pixels
@@ -894,12 +936,16 @@ Notes:
   empirical probes on firmware 1.6.6 returned byte 3 = `0x00` — see
   [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md)
   § "0x29 brightness get" for the analysis
-- `Firmware-source` (2026-09-07): byte 3 **is** a real, separately stored
-  field — the parser reads byte 2 from brightness context `+0xed5` and byte 3
-  from `+0xf9c`. The response is assembled by forwarding the request over SPI
-  to the *other temple* and returning its reply. The "auto flag" label stays
-  unconfirmed, but "the byte is meaningless" is ruled out; `0x00` on both
-  probes is more likely a leg-state or timing artefact than an absent field
+- `Firmware-source` (2026-09-08): byte 3 **is the auto flag** — the wiki was
+  right. Opcode `0x01` takes `param_2[4]` as level and `param_2[5]` as auto and
+  writes the auto byte to `param_1[0xf9c]`; `0x29` reads back `+0xed5` (level)
+  and `+0xf9c` (auto). Same field, written by the setter and read by the
+  getter. The two probes returning `0x00` therefore need a different
+  explanation — auto genuinely off at probe time, or the readback answering for
+  the wrong leg. Re-probe with auto on, querying both legs. Working in
+  [firmware-decomp-display-relay.md](firmware-decomp-display-relay.md) § 5
+- `Firmware-source`: `0x01` replies `<level> <auto> C9` (3 bytes). `0x02` sets
+  anti-shake and `0x2a` reads it back (both via `param_1[0xf64]`)
 
 Important — byte/decimal note:
 - `F5 12` is hex; in the Flutter dispatch in
@@ -919,23 +965,45 @@ Source:
 firmware's own, taken from its `printk` strings; only the first three are
 pinned to a specific opcode so far.
 
-| Opcode | Firmware name | Status |
-|--------|---------------|--------|
-| `0x29` | `BLE_REQ_GET_BRIGHTNESS` | response `29 65 <level> <field>` — see Brightness below |
-| `0x2a` | `BLE_REQ_GET_ANTI_SHAKE_ENABLE` | unexplored |
-| `0x2b` | `BLE_REQ_GET_DISPLAY_MODE` | unexplored; means the `0x50` mode state is **readable** |
-| `0x2c` | — | host declares its platform (see below) |
-| ? | `BLE_REQ_GET_WAKEUP_ANGLE` | opcode not yet pinned |
-| ? | `BLE_REQ_GET_DEVICE_INFO` | opcode not yet pinned |
-| ? | `BLE_REQ_GET_DEVICE_SN` | opcode not yet pinned |
-| ? | `BLE_REQ_GET_GLASSES_SN` | opcode not yet pinned |
-| ? | `BLE_REQ_GET_M_N_S_MAC` | opcode not yet pinned |
-| ? | `BLE_REQ_GET_ESB_CHANNEL` | opcode not yet pinned |
+Fully mapped 2026-09-08. "Via relay" means the case calls `FUN_00019d14`;
+"local" means it answers from the queried leg's own state.
 
-`0x2b GET_DISPLAY_MODE` is the interesting one for us: a host could
-resynchronise display-mode state after a reconnect instead of assuming it.
+| Opcode | Firmware name | Answered | Status |
+|--------|---------------|----------|--------|
+| `0x29` | `BLE_REQ_GET_BRIGHTNESS` | via relay | response `29 65 <level> <auto>` — see Brightness below |
+| `0x2a` | `BLE_REQ_GET_ANTI_SHAKE_ENABLE` | via relay | reads the field `0x02` writes |
+| `0x2b` | `BLE_REQ_GET_DISPLAY_MODE` | via relay | response `2b 69 <b2> <b3>`; means the `0x50` mode state is **readable** |
+| `0x2c` | `BLE_REQ_GET_DEVICE_INFO` | — | the request carries the host platform byte (see below) |
+| `0x2d` | `BLE_REQ_GET_M_N_S_MAC` | — | unexplored |
+| `0x2e` | unnamed | — | unexplored |
+| `0x32` | `BLE_REQ_GET_WAKEUP_ANGLE` | — | unexplored |
+| `0x33` | `BLE_REQ_GET_GLASSES_SN` | — | unexplored |
+| `0x34` | `BLE_REQ_GET_DEVICE_SN` | — | unexplored |
+| `0x35` | `BLE_REQ_GET_ESB_CHANNEL` | — | unexplored |
+| `0x36` | notification counts | local | unexplored |
+| `0x37` | unnamed, 5 bytes back | via relay | unexplored |
+| `0x38` | ANCS enable state | local | unexplored |
+| **`0x39`** | **system status / current running app** | **local** | **per-lens display state — see below** |
+| `0x3a`–`0x3f` | unnamed | — | unexplored |
 
-### `0x2c` — host platform declaration
+`0x2f`, `0x30` and `0x31` have no cases.
+
+### `0x39` — system status (per-lens)
+
+`Firmware-source`. Returns 6 bytes. The status byte is `0x00` when
+`__is_idle()` (logged `E_ID_SCREEN_IDLE`), otherwise `field20_0xc8[0xd]` — the
+current running app / screen id — or `0xFF` on a length mismatch.
+
+The case contains **no relay call**, unlike `0x29` / `0x2a` / `0x2b` / `0x37`,
+so it describes the lens you asked. This is the only readback that reports
+per-lens display state, and the only way to verify a display push rather than
+trust a GATT ACK.
+
+Screen ids are not yet enumerated, and `__is_idle()` is a compound condition
+(so status `0x00` means more than "screen id 0"). Detail and probe plan in
+[firmware-decomp-display-relay.md](firmware-decomp-display-relay.md) § 3.
+
+### `0x2c GET_DEVICE_INFO` — the request declares the host platform
 
 `Firmware-source`:
 

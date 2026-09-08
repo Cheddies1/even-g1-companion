@@ -234,13 +234,27 @@ case 0x29:  *param_3 = param_1[0xed5];   // byte 2 — brightness level
             bVar2    = param_1[0xf9c];   // byte 3 — separate stored field
 ```
 
-So the field is real and separately sourced, and the response is assembled by
-forwarding the request over SPI to the **other temple** (`FUN_00019d14` →
-`master_process_put_req`) and returning its reply. The wiki's "auto flag"
-label is still unconfirmed, but "the byte is nothing" is now off the table.
-`0x00` on both probes is more likely a leg-state or timing artefact than an
-absent field. See
-[external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
+**Superseded 2026-09-08 — the wiki was right.** A closer read of
+`master_process_put_req` confirms byte 3 is the auto-brightness flag. Opcode
+`0x01` (brightness set) takes `param_2[4]` as level and `param_2[5]` as auto,
+and writes the auto byte to `param_1[0xf9c]` — exactly the field `0x29` returns
+as byte 3. Same field, one written by the setter and read by the getter.
+
+So the two empirical probes returning `0x00` need a different explanation:
+either auto was genuinely off at probe time, or the readback answered for the
+wrong leg. A re-probe should set auto on and query both legs.
+
+One further correction: this note originally said the response is assembled by
+"forwarding the request over SPI to the **other temple**". That is more than
+the source supports. `FUN_00019d14` logs `spim tx` / `spim ret` around the call
+and the handler is named `master_process_put_req`, but whether the struct it
+reads holds the peer's state or local state is not established. There is
+separately an ESB path for temple-to-temple traffic (`sync_to_slave`,
+`local_esbm_ipc_service_recv` / `local_esbs_ipc_service_recv`).
+
+Full working in
+[firmware-decomp-display-relay.md](firmware-decomp-display-relay.md) § 5. See
+also [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
 
 ## New — not in any of our docs
 
@@ -312,26 +326,39 @@ decision point.
 
 From `ble_process_get_req.c`, named by the firmware's own log strings:
 
+**Fully pinned 2026-09-08** — the complete map, plus which cases answer
+locally and which go through the relay, is in
+[firmware-decomp-display-relay.md](firmware-decomp-display-relay.md) § 3.
+Summary:
+
 | Opcode | Firmware name |
 |--------|---------------|
 | `0x29` | `BLE_REQ_GET_BRIGHTNESS` |
 | `0x2a` | `BLE_REQ_GET_ANTI_SHAKE_ENABLE` |
 | `0x2b` | `BLE_REQ_GET_DISPLAY_MODE` |
-| — | `BLE_REQ_GET_WAKEUP_ANGLE` |
-| — | `BLE_REQ_GET_DEVICE_INFO` |
-| — | `BLE_REQ_GET_DEVICE_SN` |
-| — | `BLE_REQ_GET_GLASSES_SN` |
-| — | `BLE_REQ_GET_M_N_S_MAC` |
-| — | `BLE_REQ_GET_ESB_CHANNEL` |
+| `0x2c` | `BLE_REQ_GET_DEVICE_INFO` (the request carries the host platform byte) |
+| `0x2d` | `BLE_REQ_GET_M_N_S_MAC` |
+| `0x32` | `BLE_REQ_GET_WAKEUP_ANGLE` |
+| `0x33` | `BLE_REQ_GET_GLASSES_SN` |
+| `0x34` | `BLE_REQ_GET_DEVICE_SN` |
+| `0x35` | `BLE_REQ_GET_ESB_CHANNEL` |
+| `0x36` | notification counts |
+| `0x38` | ANCS enable state |
+| `0x39` | system status / current running app — **per-lens, answered locally** |
 
-`0x2b GET_DISPLAY_MODE` is the notable one: it means the `0x50` display-mode
-state is readable, so a host could resynchronise after a reconnect instead of
-assuming.
+`0x2f` / `0x30` / `0x31` have no cases. `0x2e`, `0x37` and `0x3a`–`0x3f` are
+unnamed.
 
-The unmapped names sit somewhere in `0x2c`–`0x3f`; pinning each to its opcode
-is a straightforward read of that file if we ever need them.
+Two notable ones. `0x2b GET_DISPLAY_MODE` means the `0x50` display-mode state
+is readable, so a host could resynchronise after a reconnect instead of
+assuming. And `0x39` is the only readback that reports the queried lens's own
+screen state — the closest thing to "what is this lens showing".
 
-### `0x2c` — the host declares its platform
+### `0x2c` `GET_DEVICE_INFO` — the request declares the host platform
+
+**Corrected 2026-09-08:** this is `BLE_REQ_GET_DEVICE_INFO`, not a standalone
+platform-declaration opcode. The platform byte rides in the request.
+
 
 ```
 raw_data[1] == 1  ->  Android
@@ -448,6 +475,9 @@ Re-read when a protocol question is structural ("what are the fields") rather
 than behavioural ("what does it do"). It will not answer the second kind.
 
 ## Related docs
+- [firmware-decomp-display-relay.md](firmware-decomp-display-relay.md) —
+  follow-up source read: the inter-leg forwarding subset, the `0x4E` ack
+  structure, the per-lens `0x39` state query, and which lens is the slave
 - [protocol-reference.md](protocol-reference.md)
 - [even-g1-event-mapping.md](even-g1-event-mapping.md)
 - [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md)

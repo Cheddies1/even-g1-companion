@@ -100,9 +100,24 @@ Two consequences:
   reflect that leg's state or the timing of the inter-leg round trip rather
   than the auto flag. Any future probe should query both legs.
 
-What the field at `+0xf9c` holds is not named in the decompilation. Still
-unverified — but "the byte is meaningless" is off the table. See
-`docs/firmware-decomp-notes.md`.
+**Resolved 2026-09-08 — the wiki is right.** A closer read settles it. Opcode
+`0x01` (brightness set) takes `param_2[4]` as level and `param_2[5]` as the
+auto flag, and writes the auto byte to `param_1[0xf9c]` — precisely the field
+`0x29` returns as byte 3:
+
+```
+case 0:  /* opcode 0x01 */          case 0:  /* opcode 0x29 */
+  ... param_1[0xf9c] = param_2[5];    *param_3 = param_1[0xed5];  /* level */
+                                      bVar2    = param_1[0xf9c];  /* auto  */
+```
+
+So byte 3 is the auto-brightness flag, and this is a case where the wiki was
+ahead of our empirical reading rather than behind it. The two probes returning
+`0x00` need a different explanation: auto genuinely off at probe time, or the
+readback answering for the wrong leg. Re-probe with auto confirmed on, querying
+both legs.
+
+See `docs/firmware-decomp-display-relay.md` § 5 for the full working.
 
 For this app's handling, see `current-architecture.md` — “Authoritative
 settings model” — which moots the reconcile question by re-pushing on every
