@@ -567,14 +567,49 @@ class Proto {
     return sn;
   }
 
-  /// Clear the glasses display using the official app's `0x50` display mode
-  /// control command.
+  /// Reads one lens's current firmware screen id.
   ///
-  /// The official Even Realities app sends `0x50 06 00 00 01 01` to clear the
-  /// screen before every mode entry. Unlike [exit] (`0x18`), this command does
-  /// not risk triggering the firmware's "Even AI is listening" overlay. Prefer
-  /// this for any call site that simply wants to dismiss displayed text without
-  /// entering a new audio/streaming mode.
+  /// The `0x39` response is six bytes with its status at byte 1. `0xff`
+  /// signals a malformed declared request length, so it is not a usable state.
+  static Future<int?> readScreenState(String lr) async {
+    final data = Uint8List.fromList([0x39, 0x04, 0x00, 0x00]);
+    final response = await BleManager.request(data, lr: lr);
+    if (response.isTimeout) {
+      AppLog.info('readScreenState: $lr timed out', tag: 'GlanceClear');
+      return null;
+    }
+
+    if (response.data.length != 6) {
+      AppLog.info(
+        'readScreenState: $lr malformed response length=${response.data.length}',
+        tag: 'GlanceClear',
+      );
+      return null;
+    }
+
+    // Response layout (firmware `ble_process_get_req.c` case 0x39):
+    //   [0..3] echo of the 4-byte request (`39 04 00 00`)
+    //   [4]    constant 0x00
+    //   [5]    status: 0x00 when `__is_idle()`, else the current screen id,
+    //          or 0xff when the declared length did not match
+    // Reading [1] returns our own echoed length byte, not the screen id.
+    final screenState = response.data[5];
+    if (screenState == 0xff) {
+      AppLog.info(
+        'readScreenState: $lr returned 0xff - check 0x39 header',
+        tag: 'GlanceClear',
+      );
+      return null;
+    }
+
+    AppLog.debug(
+      'readScreenState: $lr=0x${screenState.toRadixString(16).padLeft(2, '0')}',
+      tag: 'GlanceClear',
+    );
+    return screenState;
+  }
+
+  /// Clears the glasses display while recording each lens's pre-clear state.
   static Future<void> clearDisplay() async {
     if (_quickNoteCaptureActive) {
       AppLog.info(
@@ -584,19 +619,37 @@ class Proto {
       return;
     }
 
-    // Step 1: close the display mode (0x50). The firmware acks with F5 00 but
-    // does NOT blank the physical screen.
-    AppLog.info(
-      '${DateTime.now()} clearDisplay TX: 0x50 display-mode-close',
-      tag: 'GlanceClear',
-    );
-    await BleManager.sendData(
-      Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]),
-    );
+    if (postClearStateProbe) {
+      final preStates = await Future.wait([
+        readScreenState('L'),
+        readScreenState('R'),
+      ]);
+      AppLog.info(
+        'clearDisplay: pre-clear screen state '
+        'L=${_fmtState(preStates[0])} R=${_fmtState(preStates[1])}',
+        tag: 'GlanceClear',
+      );
+    }
 
-    // Step 2: exit to dashboard (0x18). This IS the command that blanks the
-    // screen. Sending 0x50 first should close the active mode so that 0x18
-    // exits cleanly without triggering the "Even AI is listening" ghost overlay.
+    // `0x50` is a master-only dashboard lock (see the corrected entry in
+    // docs/protocol-reference.md), not display-mode control. It does not clear
+    // the display and the left lens rejects it outright. Kept because removing
+    // it showed no measured benefit and this path has regressed before.
+    if (!skipDashboardLockOnClear) {
+      AppLog.info(
+        '${DateTime.now()} clearDisplay TX: 0x50 dashboard-lock',
+        tag: 'GlanceClear',
+      );
+      await BleManager.sendData(
+        Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]),
+      );
+    } else {
+      AppLog.info(
+        'clearDisplay PROBE: 0x50 dashboard-lock SKIPPED',
+        tag: 'GlanceClear',
+      );
+    }
+
     AppLog.info(
       '${DateTime.now()} clearDisplay TX: 0x18 exit-to-dashboard',
       tag: 'GlanceClear',
@@ -604,12 +657,53 @@ class Proto {
     await BleManager.sendData(
       Uint8List.fromList([0x18]),
     );
+
+    // Diagnostic: the firmware's `0x18` teardown for screen id 0x10 (Even AI)
+    // and 0x0b (Translate) is the only path that does not call
+    // update_persist_task_status_to_idle, so it should leave the screen id
+    // set. Reading after the clear is what distinguishes a real state leak
+    // from a correct teardown.
+    if (postClearStateProbe) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      final postStates = await Future.wait([
+        readScreenState('L'),
+        readScreenState('R'),
+      ]);
+      AppLog.info(
+        'clearDisplay: POST-clear screen state '
+        'L=${_fmtState(postStates[0])} R=${_fmtState(postStates[1])}',
+        tag: 'GlanceClear',
+      );
+    }
   }
 
-  /// Show a brief title card on the glasses, then force-clear.
+  /// DIAGNOSTIC toggle for the "Even AI is listening" flash investigation.
+  /// See docs/FINDINGS-evenai-flash-on-clear.md. Set false to restore the
+  /// historical `0x50 + 0x18` clear sequence.
+  ///
+  /// `0x50` is a master-only dashboard lock, not display-mode control, and it
+  /// does not clear anything — so skipping it should be behaviourally inert
+  /// apart from the ~110 ms of wire delay it used to add before the `0x18`.
+  ///
+  /// Left `false` (i.e. `0x50` still sent) deliberately. Removing it showed no
+  /// measured benefit over 8 mode switches, and the 2026-05-09 "Glance
+  /// auto-clear regression" in `worklist-history.md` shows this path punishes
+  /// untested changes. The broader question is tracked as
+  /// `nav-0x50-necessity`.
+  static const bool skipDashboardLockOnClear = false;
+
+  /// Post-clear `0x39` sampling. Off by default — it costs two BLE round
+  /// trips per clear and only catches roughly a third of flash events (see
+  /// docs/FINDINGS-evenai-flash-on-clear.md). Retained for future runs.
+  static const bool postClearStateProbe = false;
+
+  static String _fmtState(int? v) =>
+      v == null ? '??' : '0x${v.toRadixString(16).padLeft(2, '0')}';
+
+  /// Show a brief title card on the glasses, then clear.
   ///
   /// Sends [text] via the standard `0x4E` text path, holds for [duration],
-  /// then issues the `0x50 + 0x18` clear combo. Used for Glance/Navigate
+  /// then issues the instrumented `0x50 + 0x18` clear path. Used for Glance/Navigate
   /// mode-entry flashes and the post-reconnect screen-state reset.
   ///
   /// Callers are responsible for gating: this does not check session state.

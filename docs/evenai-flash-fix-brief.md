@@ -2,8 +2,28 @@
 
 > **Document type:** Implementation brief (for Codex or equivalent)
 > **Audience:** Implementing agent
-> **Status:** Ready to start. Phase 0 is instrumentation — do not skip it.
-> **Evidence basis:** [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md), derived from the G1 firmware decompilation. No device confirmation yet.
+> **Status:** **RETIRED 2026-09-08 — do not implement.** All four phases below were either executed and disproved, or superseded. See [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md) § "Device results" and § "Fixes: what was tried". Kept as the record of what was planned and why it was wrong.
+> **Evidence basis:** [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md), derived from the G1 firmware decompilation.
+
+## Why this brief is retired
+
+Three instrumented device runs settled it. In summary:
+
+- **Phase 0 (instrument, gate on `0x39`) — executed, and its design was wrong.**
+  It sampled state *before* the clear to explain a transient that happens
+  *during and after* it. It also read the wrong byte of the `0x39` response
+  (index 1, the echoed request length, instead of index 5), which produced a
+  confident false negative. The offset is now documented in `readScreenState`.
+- **Phase 1 (terminal `0x4E` status `0x41`) — disproved.** It writes the
+  pending slot `field20_0xc8[0x13]`, not the live screen id
+  `field20_0xc8[0xd]` that `case 0x18` branches on.
+- **Phase 2 (skip `0x18` when idle) — moot.** Pre-clear reads `0x10` on every
+  clear, so the skip never triggers.
+- **Phase 3 (remove `0x50`) — executed, no effect.** Eliminated as a cause.
+
+The cause is characterised and there is no host-side fix. `Proto.clearDisplay()`
+has been returned to its original `0x50 + 0x18` sequence.
+
 
 ## Goal
 

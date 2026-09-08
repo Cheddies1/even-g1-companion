@@ -53,21 +53,16 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
-### evenai-flash-fix: Eliminate the "Even AI is listening" flash on screen clear
-- **Status**: Now
-- **Priority**: High — root cause identified 2026-09-08; long-standing bug, previously believed fixed
-- **Effort**: Phase 0 ~2h, then device-data dependent
-- **Brief**: [evenai-flash-fix-brief.md](evenai-flash-fix-brief.md) — hand this to Codex
-- **Findings**: [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md)
-- **Context**: The intermittent Even AI ghost screen during clear was never actually fixed. The `0x50 + 0x18` combo recorded as the fix in `worklist-history.md` (2026-05-09) works by a mechanism that does not exist — `0x50` is a master-only dashboard lock that does not touch the display. It most likely only added wire delay before `0x18`, which is why the flash got rarer but never went away.
-- **Root cause** (firmware source, not yet device-confirmed): screen id `0x10` is the Even AI screen; our `0x4E` sends with `screenStatus = 0x71` can park `0x10` in the firmware's pending-screen slot; the `0x18` clear path reads screen state without holding the non-atomic mutex that protects it; and teardown raises a redraw flag asynchronously while that state is still being mutated. If the display thread renders mid-teardown, `ui_even_ai_task` draws one frame.
-- **Approach** (phased, in the brief):
-  - Phase 0 — add `0x39` per-lens screen-state readback and log pre-clear state on every clear. **Ship and gather data before changing behaviour.** The root cause is a source read, not a device result.
-  - Phase 1 — terminal `0x4E` send with `screenStatus` upper nibble `0x40`, which routes the firmware to `pending = 8` instead of `0x10`.
-  - Phase 2 — skip the `0x18` when both legs report screen id `0`/`1` (the firmware guard makes it a no-op).
-  - Phase 3 — remove `0x50` from the clear path, replace with an explicit tunable delay.
-- **Acceptance**: see the brief. Headline: 20 consecutive clears from each of Glance, Chat and Navigate with zero flashes, plus an explicit written answer to "does the flash correlate with a pre-clear screen id of `0x10`?" — including if the answer is no.
-- **Notes**: Preserve the `_quickNoteCaptureActive` suppression in `clearDisplay()`. Do not touch `0x50` in the nav or streaming lifecycles — that is `nav-0x50-necessity`. The `0x18` ack (`0xC9`) is emitted before any teardown work, so `Proto.exit()`'s success return is not evidence the screen cleared; do not add logic that trusts it.
+### evenai-flash-fix: "Even AI is listening" flash on screen clear — investigated, not fixable host-side
+- **Status**: Closed 2026-09-08 — root cause characterised, no host-side fix. Not a regression risk; nothing shipped.
+- **Findings**: [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md) — full device results
+- **Brief**: [evenai-flash-fix-brief.md](evenai-flash-fix-brief.md) — retired, kept as the record of what was planned
+- **Outcome**: The flash is a transient re-render of the firmware's Even AI surface (screen id `0x10`, `ui_even_ai_task`) on the **master/right lens** during the `0x18` teardown. `FUN_000800ca` — the only `0x18` teardown path that omits `update_persist_task_status_to_idle` — leaves the screen id set; a secondary path normally resets it within a few hundred ms, and when that is slow on the master a redraw renders the Even AI surface for one frame.
+- **Why us and not the official app**: our `0x4E` sends use `screenStatus 0x71` for everything, so `0x39` reads `0x10` on *every* clear — we always tear down out of the Even AI surface. The official app drives the `0x30`/`0x40`/`0x50` Even AI status lifecycle and rarely hits that path. MentraOS logged the same symptom as unsolvable.
+- **Disproved on device** (3 runs, S24 Ultra, fw 1.6.6): terminal `0x4E` status `0x41` (writes the pending slot, not the live id); gating the clear on `0x39` (pre-clear is `0x10` on every clear, flashing or not); removing `0x50` (no effect). Confirmed predictor: POST-clear `R=0x10` → flash, 2/2.
+- **Kept**: the `readScreenState` byte-offset fix (was reading index 1, the echoed request length, instead of index 5) with the response layout documented inline; and `Proto.postClearStateProbe`, default `false`, retaining the three-point `0x39` sampling for future runs.
+- **Deliberately not done**: detect-and-repair (re-sending `0x18` when POST-clear reports `0x10`) catches only ~1/3 of events and costs two BLE round trips per clear — not proportionate to a one-frame cosmetic glitch. Driving the full Even AI status lifecycle (`0x31` renders + `0x41` terminator) is the only remaining avenue and would change every text render in the app.
+- **Notes**: `Proto.clearDisplay()` is back to its original `0x50 + 0x18`. `0x50` was left in despite being inert here, because removing it showed no benefit and this path regressed once before (`worklist-history.md`, 2026-05-09). Cross-ref `nav-0x50-necessity` (Next) for the broader `0x50` question.
 
 ### 4. Navigate cleanup (composite)
 - **Status**: Now
