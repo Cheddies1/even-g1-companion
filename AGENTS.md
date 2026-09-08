@@ -27,9 +27,33 @@ over Tailscale - unmetered, and 0.34 s for 9.7 s of audio. Tailnet-only and
 unauthenticated, so no bearer is sent; there is no fallback to OpenAI, by
 choice. The reasoning call still goes to OpenAI.
 
-## Current implementation status (2026-09-07)
+## Current implementation status (2026-09-08)
 
 Recently implemented:
+- **Firmware decompilation folded in as a protocol source** (2026-09-08) —
+  `JohnRThomas/even_realities_decomp` is the only reference that is the
+  *receiver* rather than another sender, so it outranks the wiki, Gadgetbridge,
+  ayroblu and fahrplan on packet structure, and says nothing about behaviour.
+  See [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md) and
+  [docs/firmware-decomp-display-relay.md](docs/firmware-decomp-display-relay.md).
+  It corrected several things we had wrong: the `0x0a` TRIP_STATUS field model
+  (`x` and `y` are both `uint16`, no null separator), the `0x06` family model
+  (byte 4 is a content-type sub-command, not a transaction step — and
+  `0x03`/`0x04`/`0x05`/`0x07` are firmware-native schedule/stocks/news/citywalk
+  record types we do not use), and `0x50` (a **master-only dashboard lock**,
+  not display-mode control — do not describe it as clearing or priming the
+  display). Display content is **not** relayed between the temples, so the host
+  must write both legs. Right lens is master, left is slave.
+- **"Even AI is listening" flash on clear — investigated, closed unfixed**
+  (2026-09-08) — long-standing intermittent flash root-caused to a firmware
+  transient: `0x18` teardown out of screen id `0x10` (`ui_even_ai_task`) on the
+  master/right lens. Three candidate fixes disproved on device. Fixed one real
+  bug on the way: `Proto.readScreenState` was reading `response.data[1]` (the
+  echoed request length) instead of index 5. `clearDisplay` is unchanged in
+  behaviour; the `0x39` sampling is retained behind
+  `Proto.postClearStateProbe`, default `false`. Full write-up and the two
+  measurement mistakes that cost the day in
+  [docs/FINDINGS-evenai-flash-on-clear.md](docs/FINDINGS-evenai-flash-on-clear.md).
 - **Phone-mic recording** (2026-09-07) - recording without the glasses, from
   a home-screen button rather than a mode. `PhoneCaptureRecorder.kt` reads
   the phone mic via `AudioRecord` (`VOICE_RECOGNITION` source, 16 kHz mono
