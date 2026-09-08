@@ -330,7 +330,9 @@ Their F5 handler (`G1.java:531-606`) catalogues:
 - "Case charging level" — show case battery alongside glasses battery
 - "Glasses removed from case" — could trigger a Glance HUD "Welcome back" prompt
 
-**Their double-tap status is a clean validation of our work.** They explicitly know `0x18` clears the screen and have given up on the touchpad as a result. We discovered the `0x50 + 0x18` combo (close mode then exit) avoids the ghost-screen. **Our fix is better than theirs** — they're shipping with the touchpad effectively disabled because of the same bug we resolved. See [[0x18-ghost-screen]] memory.
+**Their double-tap status is a clean validation of our work.** They explicitly know `0x18` clears the screen and have given up on the touchpad as a result. We shipped the `0x50 + 0x18` combo instead of disabling the touchpad, which is still the better trade — but the claim that we "resolved" the bug was wrong.
+
+**Corrected 2026-09-08.** The ghost screen was never fixed, only made rarer. `0x50` is a master-only dashboard lock that does not touch the display, so "close mode then exit" is not what the combo does; it most likely just added wire delay ahead of `0x18`. The flash still occurs intermittently. Root cause and the real fix are in [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md). So: we mitigated where they retreated, but neither of us solved it.
 
 ### Mic-beat — separate from BLE heartbeat
 
@@ -360,7 +362,7 @@ Response shape: `2C 66 <level>` (`G1.java:558`). Per-leg battery is tracked sepa
 
 ### Things we do better than MentraOS
 
-1. **`0x50 + 0x18` ghost-screen fix.** They have the bug; we shipped the fix.
+1. **`0x50 + 0x18` ghost-screen mitigation.** They have the bug and disabled their touchpad; we mitigated and kept ours. Neither is a fix — corrected 2026-09-08, see `FINDINGS-evenai-flash-on-clear.md`.
 2. **Long-press gestures (`F5 04 / 05`).** They don't use them; we built QuickNote and Quick Ask on top.
 3. **Heartbeat cadence calibrated against HCI captures.** They picked 15 s with no documented rationale; we picked 2 s after a multi-log analysis with clear empirical reconnect-stability win.
 
@@ -388,7 +390,7 @@ Validation of existing work — these are areas where the comparison showed our 
 |---|---|---|---|
 | **Heartbeat cadence + ACK validation** | They use 15 s on Android, 2-byte payload on iOS; we use 2 s with shape-validated ACK | They use 5 s fire-and-forget; we validate echo | n/a (MentraOS handles) |
 | **Reconnect strategy** | Comparable on Android; not as good as our backoff + cooldown | Materially worse — immediate retry, no cap, leaks timers | n/a |
-| **`0x50 + 0x18` ghost-screen fix** | They hit the bug and disabled their touchpad as a result | They don't encounter the bug (no mode lifecycle) | n/a |
+| **`0x50 + 0x18` ghost-screen mitigation** | They hit the bug and disabled their touchpad as a result | They don't encounter the bug (no mode lifecycle) | n/a — and it is a mitigation, not a fix (corrected 2026-09-08) |
 | **Service decomposition** | n/a | 34 services vs their 3 god-classes; ours is more maintainable | n/a |
 | **`StreamingRenderQueue` (per-frame paced 0x52)** | n/a | They have no streaming pipeline at all | n/a |
 | **Notification policy actually enforced** | n/a | Their whitelist UI is documented but **not wired** — real shipped bug | n/a |

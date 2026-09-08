@@ -350,7 +350,9 @@ Observed reality (`Confirmed`, 2026-05-01):
 
 ### Wire protocol
 
-- `0x50 06 00 00 01 01` — display mode init, sent before the first `0x52`
+- `0x50 06 00 00 01 01` — sent before the first `0x52`. Labelled "display
+  mode init" here originally; it is actually the **dashboard lock** (see that
+  section) and why `0x52` needs it is unexplained — `nav-0x50-necessity`
   frame (see "Display mode control" below)
 - `0x52 06 00 00 01 01` — streaming text mode init
 - `0x53` — keepalive, sent every 5 seconds to prevent firmware timeout
@@ -556,7 +558,9 @@ Notes:
   running for the entire navigation session. Without it, the firmware
   times out after a few seconds. The official app sends 86 SYNC packets
   over a 70-second nav session at exactly 1-second intervals.
-- `0x50` mode control is required before the first INIT
+- `0x50` is sent before the first INIT. "Required" is from capture replay
+  only — it is the **dashboard lock**, master-only, and does not touch the
+  display, so the requirement is unexplained. See `nav-0x50-necessity`
 - fire-and-forget writes (`sendData`) are the correct transport — there is no
   positive ack for `0x0a`. There **is** a negative path: the parser posts an
   error frame carrying `<sub-command> | error flag` on a length mismatch and
@@ -616,18 +620,48 @@ Notes:
 - the `0x06` family is a separate content channel, not transactional framing
   around `0x1e`. See "`0x06` dashboard information family" above.
 
-## Display mode control: `0x50`
+## Dashboard lock: `0x50`
+
+> **Corrected 2026-09-08.** This section previously read "Display mode
+> control", with the guess that `0x50` means "clear display and prepare for
+> structured content". The firmware calls it the **dashboard lock**. It does
+> not clear the display, does not close a mode, and does nothing at all on the
+> left lens. Full analysis in
+> [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md).
 
 Source:
 - 2026-04-28 layouts capture — fires at every mode transition
+- firmware decompilation, `ble_process_req_dispatch.c` case `0x50`
 
-Observed reality (`Confirmed`):
+Observed reality (`Confirmed` on the wire, `Firmware-source` on meaning):
 
 - TX `0x50 06 00 00 01 01` — identical 6-byte packet fired before every
   mode entry (transcription, navigation, return to idle).
 - The payload is constant regardless of which mode follows; the mode is
   implicit in which data opcode (`0x52` or `0x0a`) arrives next.
-- Likely means "clear display and prepare for structured content."
+
+What the firmware does with it (`Firmware-source`), by its own log strings —
+`received Dashboard lock command`, `master exec dashboard lock process`,
+`slave received error dashboard lock command! can't exec`:
+
+- **Master-only.** The slave (left lens) rejects it and logs an error, so our
+  broadcast `0x50` is silently discarded on the left.
+- Byte 4 must be `0x01`, else `received error dashboard lock action command`.
+  Our packet satisfies this.
+- On success sets `DAT_20007f50 |= 2` and starts a k_timer.
+  `DashboardLockTimerExpiry_callback` releases the lock bits on expiry,
+  logging `dashboard lock timeout,release`.
+- If the lock bit is already set, it returns immediately — repeat sends are
+  no-ops.
+
+Consequences for our code:
+
+- The `0x50 + 0x18` clear combo recorded as the ghost-screen fix
+  (`worklist-history.md`, 2026-05-09) cannot work by the mechanism we wrote
+  down. Most likely it only added wire delay ahead of `0x18`.
+- The `0x50`-before-`0x0a`-INIT and `0x50`-before-`0x52` requirements below are
+  now **unexplained**. They came from capture replay, not a known mechanism.
+  Tracked as `nav-0x50-necessity` on the worklist.
 
 ## Battery and wear state: `0xF5`
 

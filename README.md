@@ -47,6 +47,16 @@ the documents to read first:
   (and only on packet structure). Records what it confirmed, what it
   corrected — the `0x0a` TRIP_STATUS field model and the `0x06` family model
   were both wrong — and the firmware-native record types we are not using.
+- [docs/firmware-decomp-display-relay.md](docs/firmware-decomp-display-relay.md)
+  — inter-leg forwarding subset, the `0x4E` ack structure, the per-lens `0x39`
+  display-state query, and lens roles (right is master, left is slave).
+  Display content is not relayed between temples, so the host must write both
+  legs.
+- [docs/FINDINGS-evenai-flash-on-clear.md](docs/FINDINGS-evenai-flash-on-clear.md)
+  — the long-standing intermittent "Even AI is listening" flash on screen
+  clear, traced to a firmware race. Also corrects `0x50`: it is a master-only
+  dashboard lock, not display-mode control, so the `0x50 + 0x18` combo
+  previously recorded as the fix was only ever a timing mitigation.
 - [docs/current-behaviour.md](docs/current-behaviour.md) — how the companion
   app behaves at runtime; useful as a reference for what a host app is
   expected to do for each gesture / event.

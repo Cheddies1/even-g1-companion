@@ -137,7 +137,7 @@ rendering/control families beyond `0x4E` text and BMP, including:
 - `0x52` live streaming text (cursor-style incremental)
 - `0x0a` navigation structured card
 - `0x1e` TX dashboard data slot injection
-- `0x50` display mode control
+- `0x50` dashboard lock (originally read as display mode control)
 
 Those are documented in:
 

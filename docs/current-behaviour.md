@@ -505,7 +505,8 @@ Chat mode is now a working v1 feature.
   chat backend
 - the visible Chat surface is displayed via `0x52` streaming text
   (`Confirmed`, 2026-05-01):
-  - `0x50` display mode control + `0x52` init before the first streamed frame
+  - `0x50` (dashboard lock — not display-mode control, corrected 2026-09-08)
+    + `0x52` init before the first streamed frame
   - `0x53` keepalive sent every 5 s while the `0x52` surface is active
   - non-streaming renders (user turn, Thinking) use `0x4E` text blocks
 - assistant reply rendering is paced by a `StreamingRenderQueue`:

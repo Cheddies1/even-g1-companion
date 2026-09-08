@@ -145,7 +145,7 @@ Areas where the wiki adds value beyond our docs:
 
 Areas where our docs are ahead:
 - `0x52` live streaming text, `0x0a` navigation card, `0x1e` TX dashboard
-  injection, `0x50` mode control — all absent from the wiki
+  injection, `0x50` dashboard lock — all absent from the wiki
 - the entire taps/double-tap/settings capture-backed evidence base
 
 ### Gadgetbridge `even-g1-custom-drawing-experiment` branch
@@ -257,7 +257,8 @@ Recently resolved:
     bitmap chunks. Replaces BMP-per-frame Navigate.
   - `0x1e` TX dashboard data slots — pushes titled content into the
     firmware's dashboard grid.
-  - `0x50` display mode control — fires before every mode transition.
+  - `0x50` **dashboard lock** (corrected 2026-09-08 — was read as display
+    mode control) — fires before every mode transition.
   See [FINDINGS-layouts.md](FINDINGS-layouts.md) for the full analysis.
 
 ## Why this file exists

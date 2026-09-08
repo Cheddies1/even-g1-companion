@@ -53,6 +53,22 @@ Working, but still needs real-world observation:
 
 ## Now / In Flight
 
+### evenai-flash-fix: Eliminate the "Even AI is listening" flash on screen clear
+- **Status**: Now
+- **Priority**: High — root cause identified 2026-09-08; long-standing bug, previously believed fixed
+- **Effort**: Phase 0 ~2h, then device-data dependent
+- **Brief**: [evenai-flash-fix-brief.md](evenai-flash-fix-brief.md) — hand this to Codex
+- **Findings**: [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md)
+- **Context**: The intermittent Even AI ghost screen during clear was never actually fixed. The `0x50 + 0x18` combo recorded as the fix in `worklist-history.md` (2026-05-09) works by a mechanism that does not exist — `0x50` is a master-only dashboard lock that does not touch the display. It most likely only added wire delay before `0x18`, which is why the flash got rarer but never went away.
+- **Root cause** (firmware source, not yet device-confirmed): screen id `0x10` is the Even AI screen; our `0x4E` sends with `screenStatus = 0x71` can park `0x10` in the firmware's pending-screen slot; the `0x18` clear path reads screen state without holding the non-atomic mutex that protects it; and teardown raises a redraw flag asynchronously while that state is still being mutated. If the display thread renders mid-teardown, `ui_even_ai_task` draws one frame.
+- **Approach** (phased, in the brief):
+  - Phase 0 — add `0x39` per-lens screen-state readback and log pre-clear state on every clear. **Ship and gather data before changing behaviour.** The root cause is a source read, not a device result.
+  - Phase 1 — terminal `0x4E` send with `screenStatus` upper nibble `0x40`, which routes the firmware to `pending = 8` instead of `0x10`.
+  - Phase 2 — skip the `0x18` when both legs report screen id `0`/`1` (the firmware guard makes it a no-op).
+  - Phase 3 — remove `0x50` from the clear path, replace with an explicit tunable delay.
+- **Acceptance**: see the brief. Headline: 20 consecutive clears from each of Glance, Chat and Navigate with zero flashes, plus an explicit written answer to "does the flash correlate with a pre-clear screen id of `0x10`?" — including if the answer is no.
+- **Notes**: Preserve the `_quickNoteCaptureActive` suppression in `clearDisplay()`. Do not touch `0x50` in the nav or streaming lifecycles — that is `nav-0x50-necessity`. The `0x18` ack (`0xC9`) is emitted before any teardown work, so `Proto.exit()`'s success return is not evidence the screen cleared; do not add logic that trusts it.
+
 ### 4. Navigate cleanup (composite)
 - **Status**: Now
 - **Context**: Navigate is functionally working on the `0x0a` structured-card path. Several cleanup tasks remain before it can shed its debug scaffolding. Eddie expects most are straightforward.
@@ -114,6 +130,19 @@ Working, but still needs real-world observation:
 ---
 
 ## Next — Prioritised
+
+### nav-0x50-necessity: Establish whether `0x50` is actually required before `0x0a` INIT and `0x52`
+- **Status**: Next
+- **Priority**: Medium — cheap test, removes an unexplained step from two lifecycles
+- **Effort**: ~1h
+- **Context**: Our nav and streaming lifecycles both send `0x50` first, documented as "display mode control required before INIT". The firmware decompilation shows `0x50` is a master-only dashboard lock that does not touch the display and arms a release timer. The requirement was derived from replaying the official app's capture, not from any known mechanism — so it may be incidental. It also cannot be doing anything on the left lens, which rejects it.
+- **Scope**: Run Navigate through a full `0x0a` bootstrap with the `0x50` removed, and a Chat `0x52` session likewise. Record whether either breaks.
+- **Acceptance**:
+  - [ ] Navigate `0x0a` bootstrap tested with and without the preceding `0x50`; result recorded.
+  - [ ] Chat `0x52` session tested with and without; result recorded.
+  - [ ] `protocol-reference.md` and `AGENTS.md` updated to either state the requirement is real (and note we still do not know why) or drop it.
+- **Notes**: Keep separate from `evenai-flash-fix`, which removes `0x50` from the *clear* path only. Cross-ref `docs/FINDINGS-evenai-flash-on-clear.md` § "`0x50` is a dashboard lock".
+- **Blocked by**: nothing, but do not run it concurrently with `navigate-cleanup` device sessions — one variable at a time.
 
 ### cartographer-frame-prototype: Spike 1 — rendering feasibility: three pathological scenes
 - **Status**: Next
@@ -1024,8 +1053,10 @@ Rendering protocols (layouts capture):
   - **`0x1e` TX dashboard data slots** — pushes titled content into the
     firmware's grid layout. Enables companion-app quicknote and dashboard
     injection features.
-  - **`0x50` display mode control** — primes the display before entering
-    streaming text or navigation card mode.
+  - **`0x50` dashboard lock** — observed before entering streaming text or
+    navigation card mode. Originally recorded as "display mode control /
+    primes the display"; corrected 2026-09-08 from the firmware source — it is
+    master-only and does not touch the display.
 - `0x52` and `0x0a` are both now implemented in the companion app (Chat and
   Navigate respectively). `0x1e` dashboard injection remains a future
   protocol-driven area.

@@ -430,7 +430,8 @@ Owns:
 - concise text-state rendering back to the glasses
 - Chat uses the confirmed `0x52` streaming text protocol as its on-glasses
   conversation surface (`Confirmed`, 2026-05-01).
-  `Proto.startStreamingText()` sends `0x50` display-mode control and the
+  `Proto.startStreamingText()` sends `0x50` (the **dashboard lock** — not
+  display-mode control, corrected 2026-09-08) and the
   `0x52` init frame. `0x53` keepalive runs every 5 s while the `0x52`
   surface is active.
 - **Paced streaming via `StreamingRenderQueue`:** Backend chunks are

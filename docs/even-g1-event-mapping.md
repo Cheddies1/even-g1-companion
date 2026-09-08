@@ -542,7 +542,8 @@ BMP transfer were identified in the 2026-04-28 layouts capture — see
   chunks. Replaces the BMP-per-frame Navigate path.
 - **`0x1e` TX dashboard data slots** — pushes titled content (note title +
   body) into the firmware's dashboard grid layout.
-- **`0x50` display mode control** — primes the display before entering
+- **`0x50` dashboard lock** (corrected 2026-09-08 — it does **not** prime or
+  clear the display; master-only) — observed before entering
   streaming text or navigation card mode.
 
 ## Unknown

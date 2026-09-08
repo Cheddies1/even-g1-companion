@@ -155,7 +155,8 @@ Recently implemented:
 Under active development:
 - Navigate `0x0a` structured card — **protocol confirmed working** (full
   108-packet replay renders on the glasses). The firmware requires all three
-  sub-types (text + icon + map), `0x50` mode control before INIT, and a
+  sub-types (text + icon + map), a `0x50` before INIT (the dashboard lock —
+  whether it is genuinely required is untested, see `nav-0x50-necessity`), and a
   continuous 1-second SYNC poller to keep the session alive. **Transport
   status:** interleaved per-leg fire-and-forget replay is now the stable debug
   mode; broadcast could starve a leg, and full sequential replay introduced a
@@ -203,6 +204,9 @@ The BLE protocol is extensively documented from four HCI snoop capture sessions.
 - [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md) — every observed F5 sub-code with confidence labels
 - [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md)
 - [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md)
+- [docs/FINDINGS-evenai-flash-on-clear.md](docs/FINDINGS-evenai-flash-on-clear.md)
+  — root cause of the intermittent Even AI ghost screen on clear, and why
+  `0x50` is a dashboard lock rather than display-mode control
 - [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
 - [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md)
 - [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md) — comparison with the JohnRThomas wiki
@@ -240,7 +244,12 @@ Key protocol families already mapped:
   NOT auto-scroll; host manages scrolling by wrapping at word boundaries
   and trimming to last 3 lines; `0x53` keepalive every 5 s
 - `0x1e` TX dashboard data slot injection / RX quicknote post-release audio stream
-- `0x50` display mode control (required before `0x0a` nav and `0x52` streaming)
+- `0x50` **dashboard lock** — master-only, does not touch the display, arms a
+  release timer. Corrected 2026-09-08; previously documented as "display mode
+  control". Still sent before `0x0a` nav and `0x52` streaming because the
+  capture did, but the requirement is now unexplained — see
+  `nav-0x50-necessity` on the worklist. Do not describe `0x50` as clearing or
+  priming the display
 - `0x06` **dashboard information family** — byte 4 is a content-type
   sub-command, not a transaction step: `0x01` time/date + weather,
   `0x03` schedule/calendar, `0x04` stocks, `0x05` news, `0x06` display mode,

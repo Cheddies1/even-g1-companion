@@ -18,7 +18,7 @@ Realities Android app, firmware 1.6.6. Wall-clock annotations in
 | Live streaming text | **`0x52`** | `02 02` + text | **Word-by-word incremental text rendering with cursor.** The exact protocol the official app uses for live transcription. Known test phrase "The quick brown fox..." appears byte-for-byte in the payloads, growing word by word. |
 | Navigation card | **`0x0a`** | `01` text, `02` icon, `03` map | **Structured hybrid card: text data slots + bitmap chunks.** The firmware has a card template; the host fills text fields (ETA, distance, road name, turn distance) as null-separated strings in ONE 48-byte packet, then sends icon + map bitmaps in chunks. |
 | Dashboard data slots | **`0x1e`** / **`0x06`** | structured | **The firmware renders a fixed grid layout; the host pushes slot content** (date, weather, note titles/bodies, stock data) via `0x1e` writes with title + body structure. `0x06` handles the transactional framing. |
-| Mode control | **`0x50`** | constant | **Display mode initialiser.** Identical 6-byte packet `50 06 00 00 01 01` fires before every mode entry (transcribe, navigation). Likely "prepare display for structured content." |
+| Mode control | **`0x50`** | constant | **Dashboard lock** (corrected 2026-09-08 — was read as a display-mode initialiser). Identical 6-byte packet `50 06 00 00 01 01` fires before every mode entry (transcribe, navigation). Master-only; does not touch the display. |
 
 The companion app currently uses only `0x4E` (text blocks) and `0x15/0x16/0x20`
 (full-screen BMP). These three new paths offer **dramatically better rendering**
@@ -271,7 +271,16 @@ entire dashboard layout. The firmware handles all the rendering.
 
 ---
 
-## `0x50` — Display mode control
+## `0x50` — Dashboard lock (was: "display mode control")
+
+> **Corrected 2026-09-08 from the firmware source.** `0x50` is the **dashboard
+> lock**, not display-mode control: master-only, does not touch the display,
+> arms a release timer. The wire observations below are accurate; the
+> *interpretation* ("prepare display for structured content", "clear display
+> and stand by") is wrong. See
+> [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md) and
+> the corrected entry in [protocol-reference.md](protocol-reference.md).
+> Left otherwise unedited as the record of what was captured.
 
 Four occurrences, all identical: `50 06 00 00 01 01`. Timestamps:
 
@@ -405,7 +414,9 @@ Additional implementation notes from that follow-up:
 4. **Real icon/map data** — dummy zeros don't work. Either:
    - replay captured icon data matched by turn direction, or
    - implement the RLE encoder (icon is 136×136, map is 488×136)
-5. **The 0x50 mode control** is needed before the first INIT
+5. **The 0x50 packet** is sent before the first INIT (it is the dashboard
+   lock, not mode control — corrected 2026-09-08; whether it is genuinely
+   needed is untested, see `nav-0x50-necessity`)
 
 ### Investigation backlog for next session
 
