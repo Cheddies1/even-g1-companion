@@ -40,6 +40,13 @@ the documents to read first:
   all navigation sub-commands), and the ayroblu/bazel-demo Swift
   implementation (which decodes the TRIP_STATUS packet structure and
   confirms the icon/map bitmap dimensions and encoding).
+- [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md) —
+  reconciliation against `JohnRThomas/even_realities_decomp`, a Ghidra
+  decompilation of the G1 firmware. Every other external source is another
+  sender; this one is the receiver, so it outranks them on packet structure
+  (and only on packet structure). Records what it confirmed, what it
+  corrected — the `0x0a` TRIP_STATUS field model and the `0x06` family model
+  were both wrong — and the firmware-native record types we are not using.
 - [docs/current-behaviour.md](docs/current-behaviour.md) — how the companion
   app behaves at runtime; useful as a reference for what a host app is
   expected to do for each gesture / event.

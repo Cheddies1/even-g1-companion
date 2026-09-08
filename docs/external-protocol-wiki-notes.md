@@ -4,6 +4,13 @@
 > **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
 > **Evidence basis:** Cross-reference against external sources: JohnRThomas wiki, Gadgetbridge `even-g1-custom-drawing-experiment` branch, ayroblu/bazel-demo Swift implementation (not capture-based)
 
+> **Note (2026-09-07):** the same author also maintains
+> `JohnRThomas/even_realities_decomp`, a Ghidra decompilation of the G1
+> firmware itself. That is a much stronger source than this wiki for anything
+> structural, and it is written up separately in
+> [firmware-decomp-notes.md](firmware-decomp-notes.md). Where the wiki and the
+> decompilation disagree about packet structure, the decompilation wins.
+
 Artifact:
 
 - `JohnRThomas/EvenDemoApp` wiki page: `Even-Realities-G1-BLE-Protocol`
@@ -71,6 +78,31 @@ app. This leaves two interpretations open:
 The existing capture data does not let us distinguish between these. Byte 3
 is therefore **unverified** on firmware 1.6.6. The level byte (byte 2) is
 consistent with the `F5 12` echo and appears reliable.
+
+**Firmware decompilation (2026-09-07) narrows this.** The `0x29` parser reads
+two distinct stored fields:
+
+```
+case 0x29:  *param_3 = param_1[0xed5];   // byte 2 — brightness level
+            bVar2    = param_1[0xf9c];   // byte 3 — separate stored field
+```
+
+and it assembles the response by forwarding the request over SPI to the
+**other temple** (`FUN_00019d14` -> `master_process_put_req`) and returning
+that leg's reply.
+
+Two consequences:
+
+- Byte 3 is a real field with its own storage, so the first interpretation
+  above ("the wiki is wrong about byte 3's meaning") is now the weaker one.
+  It could still be mislabelled, but it is not absent.
+- Because the value comes from the *other* leg over SPI, a `0x00` reading may
+  reflect that leg's state or the timing of the inter-leg round trip rather
+  than the auto flag. Any future probe should query both legs.
+
+What the field at `+0xf9c` holds is not named in the decompilation. Still
+unverified — but "the byte is meaningless" is off the table. See
+`docs/firmware-decomp-notes.md`.
 
 For this app's handling, see `current-architecture.md` — “Authoritative
 settings model” — which moots the reconcile question by re-pushing on every

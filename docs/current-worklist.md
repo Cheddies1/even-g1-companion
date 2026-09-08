@@ -63,7 +63,11 @@ Working, but still needs real-world observation:
   - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
   - [x] **Time set (0x06 01)** — periodic epoch-time push from the app to the glasses. The glasses use this for both the navigation HUD clock and the firmware dashboard. Wire format per JohnRThomas wiki: `06 16 00 <seq> 01 <epoch32> <epoch64_ms> <weather_icon> <temp_c> <c_f_flag> <24h_flag> 00`. Start with time-only; weather fields can be zeroed initially.
   - [x] **PANORAMIC_MAP placeholder** — replace the misleading static map capture (488x136) with the smallest viable neutral placeholder image. This is option 2 from the Parked PANORAMIC_MAP decision item. The placeholder should be honest about not being a real map — single-colour fill or minimal grid.
-- **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
+- **Firmware-decomp input (2026-09-07)** — `docs/firmware-decomp-notes.md`. Three things land on this item:
+  - **TRIP_STATUS field model was wrong.** `y` is a `uint16` (offsets 8-9), not a byte plus a null separator, and the first string starts at offset 10. Our captured prefix `01 03 c8 00 12 00` re-reads as direction=Right, x=200, y=18. Corrected in `docs/protocol-reference.md` and `docs/FINDINGS-layouts.md`. Check `navigate_service.dart` against the corrected table before any further dynamic-field work.
+  - **Field size caps are hard.** 24 / 24 / 64 / 24 / 24 bytes for `time_remaining` / `remaining_kilometers` / `road_name_info` / `remaining_distance_info` / `current_speed`. Exceeding one **aborts the whole packet** rather than truncating — a plausible cause of any "renders nothing" case with a long road name. Same for bytes 1-2: if the declared length does not match the actual packet length, the firmware drops it silently.
+  - **`spec_ble_command_hook.c` is an on-device nav simulator.** The firmware can synthesise `BLE_REQ_PUT_NAVIGATION_INFO` payloads from cJSON with no phone attached. If it is reachable over a normal BLE session (unknown), it is a much better way to isolate rendering bugs than replaying 108 packets. Worth 30 minutes before the replay-scaffolding decision.
+- **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `docs/firmware-decomp-notes.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
 
 ### navigate-osm-research: Navigate mode — architecture decision and spike plan
 - **Status**: Now
@@ -196,6 +200,12 @@ Working, but still needs real-world observation:
   - [ ] System-status widget rendering.
   - [ ] Widgets visible on G1 dashboard at next tilt-up.
   - [ ] Note slots correctly deleted when widgets are dismissed or empty.
+- **Open decision from the firmware decomp (2026-09-07)** — read before starting. See `docs/firmware-decomp-notes.md` § "`0x06` has native structured widget types".
+  - The firmware calls `0x1E` records **quick notes**, not dashboard slots. fahrplan's widget approach is a repurposing of the note store, and our packet reading of it is confirmed correct.
+  - But `0x06` carries **firmware-native structured record types** that fahrplan does not use: `0x03` schedule/calendar (`schedule title` / `time` / `location` / `schedule_validity`, with record counts and multi-packet assembly), `0x04` stocks, `0x05` news, `0x07` citywalk. Calendar events are a first-class firmware record with a firmware-rendered layout.
+  - **Our app already sends `0x06 0x03` on every connect** — with zero records. `Proto.setTimeAndWeather()`'s third frame (`06 0c 00 <seq> 03 01 00 01 00 00 00 01`) is an empty schedule push that we had mislabelled as a transaction "finalise" step. So the channel is already open.
+  - **Decision needed**: does the today's-calendar widget go through `0x06 0x03` (firmware-native records, firmware layout, probably better-looking) or through `0x1E` note slots (fahrplan's proven path, full control of text)? Cheap way to settle it: fire one populated `0x06 0x03` schedule record on device and look at the dashboard. Do that before building `DashboardComposer`, because it changes the model shape.
+  - Firmware-side reading if needed: `init_dashboard_info.c`, `DashBoard_Reflash.c`, `ui_DashBoard_task.c`, `setCalenadrIndex.c`.
 - **Notes**: Supersedes the former `dashboard-injection` Backlog entry. Cross-ref `quicknote-dashboard-push` (Backlog) — that item pushes a completed QuickNote to a named slot; they share the `0x1E` byte format but are separate features. Decide at implementation time whether to fold `quicknote-dashboard-push` into this item or keep it as a follow-on. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x1E dashboard widgets" section. fahrplan source references: `models/g1/note.dart`, `models/fahrplan/fahrplan_dashboard.dart:147-183`, `bluetooth_manager.dart:806-822`.
 
 
@@ -268,7 +278,18 @@ Working, but still needs real-world observation:
   - [ ] Default to zero/null values when weather data is not available (backwards-compatible with current behaviour).
   - [ ] Wire to a weather data source (initially hardcoded/manual, or wait for `gadgetbridge-weather-receiver`).
   - [ ] Verify weather panel renders correctly on the G1's native dashboard.
-- **Notes**: Cross-ref `gadgetbridge-weather-receiver` (also Next, PR-B) which is the intended live data source. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x06 0x01 time-and-weather" subsection.
+- **Firmware-decomp input (2026-09-07)** — this item is now much cheaper than "Low priority, wire up a guess". Three sources agree on the field order (wiki, fahrplan, and the firmware parser's storage offsets), and **we are already sending all five trailing bytes as `00 00 00 00 02`**:
+
+  | Offset | Field | Currently |
+  |--------|-------|-----------|
+  | `0x11` | weather icon | `0x00` |
+  | `0x12` | temperature | `0x00` |
+  | `0x13` | unit (C/F) | `0x00` |
+  | `0x14` | 12/24-hour | `0x00` |
+  | `0x15` | unknown; triggers a firmware redraw when changed | `0x02` |
+
+  So the confirmation step is a probe, not an implementation: flip `0x11` and `0x12` on device and watch the native dashboard. No new packet, no new opcode. Also resolve `0x15` — the wiki has it as `0x00` and we send `0x02`, and it forces a redraw when it changes.
+- **Notes**: Cross-ref `gadgetbridge-weather-receiver` (also Next, PR-B) which is the intended live data source. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x06 0x01 time-and-weather" subsection, and `docs/firmware-decomp-notes.md`.
 
 ### g1-font-table-memory-refinement: Refine `g1-firmware-font-ascii-only` memory
 - **Status**: Next

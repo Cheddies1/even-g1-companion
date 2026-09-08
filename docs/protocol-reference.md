@@ -2,14 +2,18 @@
 
 > **Document type:** G1 reference
 > **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
-> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6; supplemented by vendor demo material where noted
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6; supplemented by the firmware decompilation and vendor demo material where noted
 
 This file is a wire-level command catalogue for the Even G1 BLE protocol, built from HCI snoop captures of the official Android app and live device testing. Some older entries originate from vendor demo material; where these conflict with capture evidence, prefer the capture-backed finding.
 
 Confidence hierarchy when sources conflict:
   1. Observed device behaviour (capture-backed or live-tested)
   2. [even-g1-event-mapping.md](even-g1-event-mapping.md) (event catalogue)
-  3. Vendor/demo material (labelled `Vendor-claimed only` below)
+  3. Firmware decompilation (labelled `Firmware-source` below) — outranks
+     every other external source on **packet structure**, but says nothing
+     about behaviour. See
+     [firmware-decomp-notes.md](firmware-decomp-notes.md)
+  4. Vendor/demo material (labelled `Vendor-claimed only` below)
 
 Use this file as a command-family reference, not a definitive semantic truth source — the event mapping and FINDINGS docs are more precisely evidenced for the topics they cover.
 
@@ -17,12 +21,27 @@ Use this file as a command-family reference, not a definitive semantic truth sou
 
 - `Confirmed`: observed in current app/device testing
 - `Suspected`: plausible and partially aligned with testing
+- `Firmware-source`: read out of the decompiled firmware parser — reliable on
+  field order, field types and size caps; not evidence of behaviour
 - `Vendor-claimed only`: preserved from demo/vendor material but not confirmed enough
 
 ## Related docs
 - [even-g1-event-mapping.md](even-g1-event-mapping.md)
 - [investigation-notes.md](investigation-notes.md)
+- [firmware-decomp-notes.md](firmware-decomp-notes.md)
 - [python-sdk-comparison-notes.md](python-sdk-comparison-notes.md)
+
+## Two structural rules from the firmware parser
+
+`Firmware-source` — apply these before debugging any hand-built packet that
+renders nothing:
+
+1. **Bytes 1–2 are a little-endian total length and the firmware validates
+   them.** On mismatch it logs `packet length error` and drops the packet
+   silently. Confirmed in the `0x06` and `0x0a` parsers.
+2. **`0xC9` is the firmware's generic success code**, not specific to the
+   `0x0E` mic-enable family. `deal_event_to_phone.c` emits
+   `<opcode> C9 <state>` acks for at least `0x0D`, `0x0F` and `0x4E`.
 
 ## Touch / gesture family: `0xF5`
 
@@ -168,6 +187,9 @@ Observed reality:
 - mic enable is `Confirmed` enough for the current app path
 - the app has used mic-on successfully for the old connected voice flow and for current capture scaffolding
 - mic-disable / clean stop semantics are still not proven strongly enough to document as settled behaviour
+- `Firmware-source`: `0xC9` is the firmware's **generic** success code, not
+  specific to this family — `deal_event_to_phone.c` builds
+  `<opcode> C9 <state>` acks for at least `0x0D`, `0x0F` and `0x4E` too
 
 ## Glasses mic audio packets: `0xF1`
 
@@ -413,13 +435,46 @@ Observed reality (`Confirmed`):
   INIT → SYNC → TRIP_STATUS → MAP_OVERVIEW ×13 → PANORAMIC_MAP ×90 → SYNC
 - **Sub-type 1 — TRIP_STATUS** (one packet per card update):
   ```
-  0a <len> 00 <seq> 01 <DirectionTurn> <x0> <x1> <y> 00
+  0a <len> 00 <seq> 01 <DirectionTurn> <x_lo> <x_hi> <y_lo> <y_hi>
     <totalDuration_utf8> 00 <totalDistance_utf8> 00 <roadName_utf8> 00 <turnDistance_utf8> 00 <speed_utf8> 00
   ```
-  Decoded prefix from snoop: `01 03 c8 00 12 00` = sub-cmd TRIP_STATUS,
-  DirectionTurn=Right(0x03), x=[0xc8,0x00], y=0x12, null separator.
-  Five null-separated text fields follow (the Swift implementation confirms
-  the 5th field is speed).
+  **Corrected 2026-09-07 from the firmware parser** (`Firmware-source`,
+  `ble_process_put_req.c` case 10 sub-case 1). We previously read this as
+  `<x0> <x1> <y> 00` — a one-byte `y` followed by a null separator. Both `x`
+  and `y` are `uint16` little-endian, and there is **no separator**: the first
+  string starts at offset 10.
+
+  | Offset | Field | Notes |
+  |--------|-------|-------|
+  | 0 | `0x0a` | Opcode |
+  | 1–2 | total length, LE `uint16` | validated; mismatch drops the packet |
+  | 3 | `seq` | |
+  | 4 | `0x01` | Sub-command TRIP_STATUS |
+  | 5 | `direction` | `DirectionTurn` manoeuvre code |
+  | 6–7 | `x`, LE `uint16` | bounds-checked ≤ `0x1E8` (488) |
+  | 8–9 | `y`, LE `uint16` | bounds-checked ≤ `0x88` (136) |
+  | 10.. | five NUL-terminated strings | see caps below |
+
+  Our own captured prefix `01 03 c8 00 12 00` re-reads cleanly as sub-cmd
+  TRIP_STATUS, direction = Right (`0x03`), x = 200, y = 18. Same bytes on the
+  wire; the old field model was wrong, not the capture.
+
+  Field order and firmware-side size caps (`Firmware-source`), with the
+  firmware's own names:
+
+  | # | Firmware name | Our name | Max bytes |
+  |---|---------------|----------|-----------|
+  | 1 | `time_remaining` | totalDuration | 24 |
+  | 2 | `remaining_kilometers` | totalDistance | 24 |
+  | 3 | `road_name_info` | roadName | 64 |
+  | 4 | `remaining_distance_info` | turnDistance | 24 |
+  | 5 | `current_speed` | speed | 24 |
+
+  Exceeding a cap aborts the parse for the whole packet — it does not
+  truncate. Our semantic reading (field 2 = distance to destination, field 4 =
+  distance to the next turn) is supported by the observed values; the
+  firmware's own naming for those two is ambiguous.
+
   Observed: `"26 min" \0 "2.2km" \0 "Church Road " \0 "46m" \0 "0.0km/h" \0`
   — 48 bytes total.
 
@@ -460,8 +515,17 @@ Notes:
   times out after a few seconds. The official app sends 86 SYNC packets
   over a 70-second nav session at exactly 1-second intervals.
 - `0x50` mode control is required before the first INIT
-- fire-and-forget writes (`sendData`) are the correct transport — the
-  firmware does not ack `0x0a` commands
+- fire-and-forget writes (`sendData`) are the correct transport — there is no
+  positive ack for `0x0a`. There **is** a negative path: the parser posts an
+  error frame carrying `<sub-command> | error flag` on a length mismatch and
+  on every oversize-string case (`Firmware-source`). Whether that reaches BLE
+  or only the inter-leg IPC channel is unresolved — the same `post_to_host`
+  call is used for master/slave sync. Do not build on it before finding it in
+  a snoop.
+- bytes 1–2 must equal the actual packet length. The firmware logs
+  `packet length error` and drops the packet with no other symptom
+  (`Firmware-source`) — first thing to check when a hand-built `0x0a` frame
+  renders nothing
 - sending 108 packets (~20KB) to both legs simultaneously requires pacing
   and per-leg transport care to avoid BLE buffer overflow and connection drops
 - the current confirmed debug transport in the companion app is an
@@ -496,8 +560,19 @@ Notes:
   TX dashboard content push (this section), TX QuickNote audio
   request/ack, and RX QuickNote audio stream. See "QuickNote protocol
   family" below for the full `0x1e` disambiguation table.
-- the `0x06` three-step transaction family handles the transactional
-  framing around dashboard updates; `0x1e` carries the actual slot content.
+- `Firmware-source`: the firmware calls these records **quick notes**, not
+  dashboard slots — sub-command `0x03` logs
+  `Quick Note Title =%s, QuickNote TEXT =%s` with `title length` / `text
+  length` checks. Our structural reading of the packet is correct; using the
+  slots as generic widgets (fahrplan's approach) is a repurposing.
+- `Firmware-source`: sending a note with **empty content deletes it**
+  (`received empty quick note data, delete quick note num.%d`). There is no
+  separate delete opcode to find.
+- `Firmware-source`: chunked note writes are order-checked
+  (`There is a packet order error, current packet order = %d, expected
+  packet order = %d`) — the firmware will not reassemble out-of-order chunks.
+- the `0x06` family is a separate content channel, not transactional framing
+  around `0x1e`. See "`0x06` dashboard information family" above.
 
 ## Display mode control: `0x50`
 
@@ -610,13 +685,72 @@ Implementation:
 - TX command: [Proto.setDoubleTapAction](../lib/services/proto.dart)
 - UI / persistence: same triplet as Head-up settings
 
-## `0x06` transaction family
+## `0x06` dashboard information family
 
-`0x06` is a general-purpose transactional wrapper. The firmware accepts a
-consistent three-step structure for multiple operations; the sub-codes in
-step 2 identify the payload type. Two variants are currently known.
+**Corrected 2026-09-07.** This section previously described `0x06` as "a
+general-purpose transactional wrapper" with a request / payload / finalise
+structure. That was inferred from the official app always sending three frames
+in a row, and it is wrong.
+
+`Firmware-source` (`ble_process_put_req.c` case 6): the firmware calls this
+the **dashboard information packet**. Byte 3 is a "sync id" and **byte 4 is a
+content-type sub-command**. There is no transaction — each frame is an
+independent push.
+
+| Byte 4 | Firmware meaning |
+|--------|------------------|
+| `0x01` | time / date sync, plus display-format and weather fields |
+| `0x02` | acknowledged and ignored; no payload parse |
+| `0x03` | schedule / calendar records |
+| `0x04` | stocks |
+| `0x05` | news |
+| `0x06` | dashboard display mode + "custom display Area value" |
+| `0x07` | citywalk |
+
+Bytes 1–2 are a validated total length; on mismatch the firmware logs
+`dashboard information packet length error` and drops the frame.
+
+Sub-commands `0x03`/`0x04`/`0x05`/`0x07` are firmware-native structured record
+types with their own multi-packet assembly and index management — a separate
+mechanism from the `0x1e` note slots. See
+[firmware-decomp-notes.md](firmware-decomp-notes.md) §
+"`0x06` has native structured widget types".
+
+Two variants have been observed on the wire.
 
 ### Variant A — Note management: delete / reorder (`0x06 ... / 0x22` ack)
+
+> **⚠ Probably misidentified — flagged 2026-09-07, needs a capture re-parse.**
+>
+> Compare the three frames below against Variant B (time-set). They are the
+> same sequence: identical lengths (`07` / `16` / `0c`), identical byte-4
+> sub-commands (`0x06` / `0x01` / `0x03`), and a byte-for-byte identical third
+> frame. Under the corrected `0x06` model — byte 4 is a content-type
+> sub-command, not a transaction step — this is the routine
+> display-mode + clock + empty-schedule sync, captured during a note
+> delete/reorder rather than caused by it.
+>
+> That makes the "8-byte note UID" reading unsafe. Bytes 5–12 sit exactly
+> where `epoch32` and the low half of `epoch64` live, and the bytes the doc
+> records straight after (`d4 9d 01 00`) carry the high-word signature of a
+> 2026-era epoch-milliseconds value. The block is very likely timestamp data,
+> not a UID.
+>
+> Knock-on: the cross-reference from the `R21` / `0x21` section — "the 8-byte
+> tail matches the UID structure used in the `0x06` note-management
+> transactions" — loses this half of its support. The `0x21` timestamp+UID
+> reading stands on its own capture evidence and is unaffected; only the
+> `0x06` corroboration goes.
+>
+> Also note the byte listing below does not add up to the declared length
+> (`0x16` = 22), so it contains a transcription slip. Re-parse the 2026-04-28
+> Phase 4 window against the corrected `0x06 0x01` field table before
+> trusting any of it. Left in place unedited as the record of what was
+> observed.
+>
+> If this holds, note delete/reorder has **no known opcode** — and per the
+> firmware source the delete path for note content is a `0x1e` write with
+> empty content, not a `0x06` transaction at all.
 
 Source:
 - 2026-04-28 settings capture, Phase 4 (delete / reorder of saved notes
@@ -677,10 +811,44 @@ final localSec     = (now.millisecondsSinceEpoch + localOffsetMs) ~/ 1000;  // e
 final localMs      = now.millisecondsSinceEpoch + localOffsetMs;             // epoch64
 ```
 
+**What the three frames actually are** (`Firmware-source`, corrected
+2026-09-07): the sequence `Proto.setTimeAndWeather()` sends is not
+begin / payload / commit. It is three unrelated pushes — set dashboard display
+mode (byte 4 = `0x06`), sync the clock (`0x01`), then push a **schedule list
+with zero records** (`0x03`). The third frame
+(`06 0c 00 <seq> 03 01 00 01 00 00 00 01`) is harmless but does nothing;
+removing it would not affect the clock sync.
+
+This also explains why the `0x22` ack observed for note management never
+appeared for time-set: there is no transaction to ack.
+
+**Trailing bytes of the `0x01` payload** (`Firmware-source`). Our packet ends
+`... <epoch64> 00 00 00 00 02`, and every byte lands in firmware state:
+
+| Offset | Field | Our current value |
+|--------|-------|-------------------|
+| `0x11` | weather icon | `0x00` |
+| `0x12` | temperature | `0x00` |
+| `0x13` | temperature unit (C/F) | `0x00` |
+| `0x14` | 12/24-hour time format | `0x00` |
+| `0x15` | read only when total length > `0x15`; triggers a firmware redraw when the value changes | `0x02` |
+
+`Suspected`, high confidence — three-way triangulation. The JohnRThomas wiki
+gives the order as `<weather_icon> <temp_c> <c_f_flag> <24h_flag> 00`;
+fahrplan (`models/g1/time_weather.dart:158-185`) builds the same four fields
+with a firmware-native `WeatherIcons` enum; and the firmware parser stores
+those four offsets into four distinct fields, with the two it puts at `+0x5d`
+/ `+0x5e` being exactly the region its display log branches on for
+`centigrade degree` / `Fahrenheit` and 24/12-hour.
+
+Note the wiki has byte `0x15` as `0x00` where we send `0x02`, and that byte
+triggers a firmware redraw when it changes. Worth resolving before extending
+the packet. See the `time-weather-0x06-extend` worklist item.
+
 Notes:
-- the same `0x06` three-step framing is used for note management (Variant A
-  above), confirming this is a general transactional pattern, not specific
-  to notes
+- the `0x06` framing is shared with note management (Variant A above) because
+  both are content pushes in the same family, not because either is
+  transactional
 - prior to the 2026-05-18 fix, the app sent `now.millisecondsSinceEpoch`
   (true UTC) which caused the glasses clock to display UTC time rather than
   local time
@@ -726,6 +894,12 @@ Notes:
   empirical probes on firmware 1.6.6 returned byte 3 = `0x00` — see
   [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md)
   § "0x29 brightness get" for the analysis
+- `Firmware-source` (2026-09-07): byte 3 **is** a real, separately stored
+  field — the parser reads byte 2 from brightness context `+0xed5` and byte 3
+  from `+0xf9c`. The response is assembled by forwarding the request over SPI
+  to the *other temple* and returning its reply. The "auto flag" label stays
+  unconfirmed, but "the byte is meaningless" is ruled out; `0x00` on both
+  probes is more likely a leg-state or timing artefact than an absent field
 
 Important — byte/decimal note:
 - `F5 12` is hex; in the Flutter dispatch in
@@ -734,6 +908,45 @@ Important — byte/decimal note:
   the brightness echo is handled at `case 18:` (= `0x12`). Reviewers comparing
   hex sub-codes against `case` arms in `_describeF5Event`/the dispatch switch
   should keep that conversion in mind.
+
+## Readback opcodes: `0x29`–`0x3f`
+
+Source:
+- firmware decompilation, `src/app/ble_process_get_req.c` — see
+  [firmware-decomp-notes.md](firmware-decomp-notes.md)
+
+`Firmware-source`. The readback range is `0x29`–`0x3f`. Names below are the
+firmware's own, taken from its `printk` strings; only the first three are
+pinned to a specific opcode so far.
+
+| Opcode | Firmware name | Status |
+|--------|---------------|--------|
+| `0x29` | `BLE_REQ_GET_BRIGHTNESS` | response `29 65 <level> <field>` — see Brightness below |
+| `0x2a` | `BLE_REQ_GET_ANTI_SHAKE_ENABLE` | unexplored |
+| `0x2b` | `BLE_REQ_GET_DISPLAY_MODE` | unexplored; means the `0x50` mode state is **readable** |
+| `0x2c` | — | host declares its platform (see below) |
+| ? | `BLE_REQ_GET_WAKEUP_ANGLE` | opcode not yet pinned |
+| ? | `BLE_REQ_GET_DEVICE_INFO` | opcode not yet pinned |
+| ? | `BLE_REQ_GET_DEVICE_SN` | opcode not yet pinned |
+| ? | `BLE_REQ_GET_GLASSES_SN` | opcode not yet pinned |
+| ? | `BLE_REQ_GET_M_N_S_MAC` | opcode not yet pinned |
+| ? | `BLE_REQ_GET_ESB_CHANNEL` | opcode not yet pinned |
+
+`0x2b GET_DISPLAY_MODE` is the interesting one for us: a host could
+resynchronise display-mode state after a reconnect instead of assuming it.
+
+### `0x2c` — host platform declaration
+
+`Firmware-source`:
+
+```
+raw_data[1] == 1  ->  Android
+raw_data[1] == 2  ->  iOS
+```
+
+The firmware stores this and branches on it. Unverified whether the companion
+app sends it at all; if the firmware's default is the iOS branch it may be
+waiting on ANCS-shaped behaviour we never provide. Worth a check.
 
 ## Heartbeat: `0x25`
 
@@ -817,6 +1030,13 @@ Byte map:
 The 8-byte tail at bytes 7–14 matches the UID structure used in the `0x06`
 note-management transactions (see "Note management" section). `Suspected`:
 this field is the UID of the just-saved note.
+
+**2026-09-07:** the `0x06` half of that corroboration is probably invalid —
+see the warning on "Variant A — Note management" above; that payload block is
+likely timestamp data, not a UID. The reading here still stands on its own
+capture evidence (the 42-byte variant's repeating `xx xx 93 65` pattern and
+the diff-based detection that works in practice), but treat the `0x06`
+cross-reference as withdrawn pending a re-parse.
 
 #### 42-byte variant (notes-list metadata dump)
 

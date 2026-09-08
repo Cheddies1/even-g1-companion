@@ -150,11 +150,12 @@ Only during Phase 4 (navigation): 284 TX writes over ~70 s.
 
 **Sub-type 1 — structured text data** (one packet per card update):
 ```
-0a <len> 00 <seq> 01 03 c8 00 12 00
+0a <len> 00 <seq> 01 <direction> <x_lo> <x_hi> <y_lo> <y_hi>
   <eta_utf8> 00
   <distance_utf8> 00
   <road_name_utf8> 00
   <turn_distance_utf8> 00
+  <speed_utf8> 00
 ```
 
 The observed payload decoded:
@@ -166,6 +167,23 @@ This matches EXACTLY what the user saw on the glasses: "Church road, right
 arrow 46m 26m 2.2km". The fields are null-separated UTF-8 strings, all in
 ONE ~48-byte packet. The firmware renders them into the navigation card
 template using its built-in font and layout.
+
+**Prefix corrected 2026-09-07 from the firmware decompilation.** This session
+read the observed prefix `01 03 c8 00 12 00` as sub-cmd, direction, a two-byte
+`x`, a one-byte `y`, and a null separator. The firmware parser reads two
+`uint16` little-endian values and starts the first string immediately after,
+at offset 10 — there is no separator. So `c8 00` is x = 200 and `12 00` is
+y = 18. Same bytes, corrected field model. The bounds checks in the parser
+(`x` ≤ 488, `y` ≤ 136) also confirm the display geometry from an independent
+direction.
+
+There is a **fifth string** (speed) that this capture session did not name;
+the firmware's own field list is `time_remaining`, `remaining_kilometers`,
+`road_name_info`, `remaining_distance_info`, `current_speed`, with size caps
+of 24 / 24 / 64 / 24 / 24 bytes. Exceeding a cap aborts the whole packet
+rather than truncating. Full detail in
+[firmware-decomp-notes.md](firmware-decomp-notes.md) and the corrected table
+in [protocol-reference.md](protocol-reference.md).
 
 **Sub-type 2 — direction icon bitmap** (`02`):
 ```

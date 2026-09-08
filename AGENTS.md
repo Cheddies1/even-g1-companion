@@ -189,7 +189,9 @@ Only build on event meanings we trust from live testing:
 - `F5 20` = double-tap delegates to host (Transcribe / Translate / Teleprompter all fire it; Dashboard and None do not)
 
 Important:
-- do not design around single taps — confirmed firmware-only in every tested state
+- do not design around single taps — confirmed firmware-only in every tested
+  state, and corroborated by the firmware source (the single-click branch in
+  `touch_key_thread.c` sets a local flag and never reaches the phone-event path)
 - do not treat Python SDK labels as ground truth
 - right long-press (QuickNote) does NOT fire `F5 17`/`F5 18`; it uses the `0x21` family. Left and right long-press are not symmetric.
 
@@ -204,6 +206,11 @@ The BLE protocol is extensively documented from four HCI snoop capture sessions.
 - [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
 - [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md)
 - [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md) — comparison with the JohnRThomas wiki
+- [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md) — the G1
+  **firmware decompilation**. This is the only source that is the receiver
+  rather than another sender, so it outranks every other external reference
+  on packet structure. It says nothing about behaviour — live testing still
+  wins there. Check it before deriving any new field layout from scratch.
 
 Key protocol families already mapped:
 - `0x01` brightness set, `F5 12` brightness echo
@@ -227,13 +234,31 @@ Key protocol families already mapped:
   and trimming to last 3 lines; `0x53` keepalive every 5 s
 - `0x1e` TX dashboard data slot injection / RX quicknote post-release audio stream
 - `0x50` display mode control (required before `0x0a` nav and `0x52` streaming)
-- `0x06` / `0x22` note management transactions
+- `0x06` **dashboard information family** — byte 4 is a content-type
+  sub-command, not a transaction step: `0x01` time/date + weather,
+  `0x03` schedule/calendar, `0x04` stocks, `0x05` news, `0x06` display mode,
+  `0x07` citywalk. `0x03`/`0x04`/`0x05`/`0x07` are firmware-native structured
+  record types we do not use yet. Corrected 2026-09-07 from the firmware
+  decomp — the old "three-step transactional wrapper" model was wrong
+- `0x22` note management ack
 - `0x4E` text rendering, `0x15/0x16/0x20` BMP transfer (legacy, still in codebase)
 
 External protocol references:
+- `JohnRThomas/even_realities_decomp` — Ghidra decompilation of the **firmware
+  itself**. Highest-ranked external source for packet structure; useless for
+  behaviour. The dispatch map (`ble_process_put_req.c` = `0x01`-`0x27`,
+  `ble_process_get_req.c` = `0x29`-`0x3f`, `ble_process_req_dispatch.c` =
+  `0x47`-`0x56`) bounds the whole protocol. See
+  `docs/firmware-decomp-notes.md`.
 - Gadgetbridge `G1Constants.java` — comprehensive named constants for all families
 - ayroblu/bazel-demo Swift implementation — decoded TRIP_STATUS prefix structure,
   confirmed icon/map dimensions and encoding. See `docs/external-protocol-wiki-notes.md`.
+
+Two firmware rules worth internalising (both cause silent failures):
+- bytes 1-2 of most commands are a validated little-endian total length; a
+  mismatch makes the firmware drop the packet with no other symptom
+- `0x0a` TRIP_STATUS string fields have hard caps (24/24/64/24/24 bytes) and
+  exceeding one aborts the whole packet rather than truncating
 
 Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` scripts. Enable HCI snoop → BT off/on → capture → `adb bugreport` → parse.
 
@@ -299,5 +324,7 @@ Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` s
 - [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md)
 - [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md) —
   cross-references to Gadgetbridge constants + ayroblu Swift implementation
+- [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md) — firmware
+  decompilation; what it confirmed, what it corrected, and what it opened up
 - [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md) — the rendering
   protocol findings including the nav card debugging results

@@ -2,7 +2,7 @@
 
 > **Document type:** G1 reference
 > **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
-> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6
+> **Evidence basis:** HCI snoop captures + live testing, firmware 1.6.6; structural cross-check against the firmware decompilation
 
 This file captures the current working understanding of `F5` gesture and state
 events observed from the Even G1 glasses.
@@ -17,6 +17,7 @@ This is the current event-behaviour mapping document.
 It is intentionally separate from:
 - [protocol-reference.md](protocol-reference.md): wire-level BLE command catalogue
 - [investigation-notes.md](investigation-notes.md): broader exploratory notes and hypotheses
+- [firmware-decomp-notes.md](firmware-decomp-notes.md): firmware decompilation — structural cross-check only, no behavioural evidence
 - [python-sdk-comparison-notes.md](python-sdk-comparison-notes.md): comparison/reference only
 
 ## Scope
@@ -34,7 +35,30 @@ Three tiers, consistent with [protocol-reference.md](protocol-reference.md):
 
 - `Confirmed`: observed in current app/device testing or HCI snoop captures
 - `Suspected`: plausible and partially aligned with testing, but not fully pinned down
+- `Firmware-source`: read out of the decompiled firmware — good for structure and for
+  corroborating a negative, never a substitute for observing the behaviour
 - `Vendor-claimed only`: preserved from demo/vendor material or Python SDK labels; not confirmed against current firmware
+
+## How the firmware builds an `F5` frame
+
+`Firmware-source` (2026-09-07, `deal_event_to_phone.c`). The outbound frame is
+assembled as `F5 <event_code>` with the internal event code passed through
+**verbatim** on the default path, then sent with a fixed 21-byte length. So the
+premise of this whole document — that F5 sub-codes are a flat enumeration of
+firmware-internal event ids — is structurally correct rather than just a
+convenient model.
+
+Three event codes are special-cased into acknowledgement frames instead
+(`<opcode> C9 <state>` for `0x0D`, `0x0F`, `0x4E`), which is where the
+firmware's generic `0xC9` success code shows up. A handful carry a value byte
+fetched from firmware state at send time — `F5 0A`, `F5 0E`, `F5 0F`, `F5 12`.
+
+The emitter runs off an internal message queue: `ble_process_req_dispatch.c`
+calls it when the queued message type is `0xf5`. So "does this gesture reach
+the phone?" reduces to "does its handler enqueue an `0xf5` message?" — which
+is why single clicks produce nothing (see `F5 01` below).
+
+See [firmware-decomp-notes.md](firmware-decomp-notes.md).
 
 ## Firmware vs App behaviour model
 
@@ -142,6 +166,22 @@ For the full model with examples and evidence, see
     there's a target" hypothesis.
   - current model: single taps are absorbed by the firmware in every observed
     state. The companion app should not be designed around them.
+  - `Firmware-source` (2026-09-07) corroborates this, and explains the
+    mechanism. `touch_key_thread.c` classifies the gesture into a key-event
+    type (`DAT_200084f8`: 1 = single click, plus types 2-6 for the other
+    gestures) and `key_event_thread.c` dispatches it. The single-click branch
+    goes to firmware-local actions and master→slave sync — the thread logs
+    `master send calendar key single click ,timestamp = %d` and
+    `Click event does not respond, close Quicknote to prevent exceptions`.
+    Nothing on that branch enqueues an outbound `0xf5` message, which is what
+    `deal_event_to_phone.c` needs in order to emit an `F5` frame.
+  - That is a direct structural match for the capture result: the firmware
+    *did* visibly respond on the glasses (notes/notifications cycled) while
+    emitting no BLE event, because single click is wired to the local
+    dashboard and to the other temple, not to the host. Corroboration rather
+    than proof — the decompilation is only 60% labelled on app functions and
+    another route out cannot be excluded — but it points the same way.
+    **Guardrail stands.**
 
 ### Confirmed (promoted from Suspected post-implementation)
 
@@ -328,6 +368,15 @@ fed from the existing F5 dispatch in
 - Notes:
   - both temples emit this independently; the app accepts whichever arrives
     most recently
+  - **the value is synthesised near full charge** (`Firmware-source`,
+    2026-09-07). `deal_event_to_phone.c` does not pass the raw gauge value
+    through for event `0x0a`. Raw values below `0x5d` (93) are passed through
+    unchanged; raw `0x5d`–`0x60` (93–96) are remapped upward through 94–98
+    depending on a second state flag; anything above `0x60` (96) is clamped to
+    `0x64` (100). So anything we display in the 94–100% band is a
+    firmware-constructed value, not a measurement. This is consistent with the
+    capture reading `0x64` at "100%", and it is the likely answer to "why does
+    it sit at 100% for so long".
 
 #### `F5 0B`
 
@@ -471,6 +520,12 @@ fed from the existing F5 dispatch in
   - payload meaning is still unknown
   - current logs show this on the right leg only
   - do not infer field semantics yet
+  - `Firmware-source` (2026-09-07): `0x22` has its own case in
+    `ble_process_put_req.c`, so it is a genuine command family in the host
+    write range rather than a stray dashboard artefact. The parser has not
+    been read in detail yet — if we ever want dashboard state decoding, that
+    case is the place to start, and it beats the wiki's field hypotheses as a
+    source
 
 ## Rendering protocols (confirmed via official-app HCI snoop)
 
