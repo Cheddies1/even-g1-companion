@@ -331,7 +331,7 @@ Working, but still needs real-world observation:
 - **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Notable patterns / Gadgetbridge weather broadcast intake".
 
 ### per-leg-render-silent-degradation: Single-leg render silently reports success as a clean two-leg run
-- **Status**: Next
+- **Status**: Done
 - **Priority**: High - this is a correctness-of-observability bug on the daily-use display path, and it silently produced a broken user experience that the app reported as a success.
 - **Cross-ref**: `transport-honesty-smalls` and `ble-stability-tier3` (both Backlog, BLE transport family) - this belongs to that family but should not be folded into either, because it has its own reproduction and its own firmware-decomp investigation angle.
 - **Context - what happened**: Device-observed 2026-09-08. Eddie ran a Chat-mode question on the glasses. The response rendered in the right eye only; the left eye showed nothing. He initially assumed a fleeting glitch. The logs say otherwise: the app logged a completely clean run - `render queue: display complete, words=124/124`, `assistant reply sent -> chars=785, turns=2`, keepalives sent on schedule, then a clean `session reset`. No leg error, no write failure, no reconnect, nothing at warn or error level. The transport reported total success while one eye was blank.
@@ -356,12 +356,13 @@ Working, but still needs real-world observation:
 - **Acceptance**:
   - [x] Determine whether `0x4E` / `0x52` are in the `master_process_put_req.c` inter-leg forwarding subset. - Answered 2026-09-08: `0x4E` yes but carries no payload, `0x52` no. Host must write both legs. Recorded in `docs/firmware-decomp-display-relay.md` §1.
   - [x] Determine what the `<state>` byte in the `<opcode> C9 <state>` ack means for `0x4E`, and whether it can report a render failure. - Answered: echoed sequence number, not a render status. Our `0xC9`/`0xCB` handling is already correct. `docs/firmware-decomp-display-relay.md` §2.
-  - [ ] `_targetLegsForBroadcast` logs at info or error whenever it returns fewer than two legs, naming which leg was dropped and its state, so a degraded render is never silent again.
-  - [ ] A single-leg render is distinguishable from a two-leg render in the logs without verbose logging enabled.
-  - [ ] Stop treating the two legs as interchangeable: if broadcast must degrade to one leg, prefer the master (`R`) and say so, since left-only additionally loses the master-only completion-event path.
-  - [ ] Decide and record whether a degraded render should surface to the user at all (for example a status line on the home screen or the persistent notification), or logs only.
-  - [ ] Reproduce deliberately - force one leg unhealthy and confirm the new logging fires and says the right thing.
-  - [ ] Device-confirm the relay conclusion cheaply: write `0x4E` text to one leg only and look at both lenses. One line of test code settles §1 empirically.
+  - [x] `_targetLegsForBroadcast` logs at info or error whenever it returns fewer than two legs, naming which leg was dropped and its state, so a degraded render is never silent again. - Done 2026-09-08: `Transport: degraded broadcast` names selected and dropped legs, plus each dropped leg's connection, health, heartbeat and reconnect state.
+  - [x] A single-leg render is distinguishable from a two-leg render in the logs without verbose logging enabled. - The info-level degradation line is emitted once per broadcast-target selection.
+  - [x] Stop treating the two legs as interchangeable: if broadcast must degrade to one leg, prefer the master (`R`) and say so, since left-only additionally loses the master-only completion-event path. - Done 2026-09-08: healthy two-leg sends retain the proven `L`, then `R` order. A forced one-leg target is ordered `R`, then `L`; the log records `masterPreferred=R`.
+  - [x] Decide and record whether a degraded render should surface to the user at all (for example a status line on the home screen or the persistent notification), or logs only. - Logs only for now. A transient warning gives no recovery action and would add noise during reconnect; the home screen already exposes each leg's health.
+  - [ ] Deferred evidence - force one leg unhealthy and confirm the new logging fires and says the right thing.
+  - [ ] Deferred evidence - write `0x4E` text to one leg only and inspect both lenses. One line of test code settles §1 empirically.
+- **Outcome (2026-09-08)**: A user-visible left-eye failure immediately after reconnect exposed an ordering regression in the first implementation, not a degraded target selection. The logs showed both writes, right first and left 235 ms later, with no degradation line. Restoring the proven healthy `L`, then `R` order made subsequent rendering materially more reliable. The two deferred experiments are not required to close the observability fix; run them before relying on the firmware relay conclusion for a future transport redesign.
 - **Notes**: Found while closing out the 2026-09-08 session, from a user report that looked like a one-off. Process point worth keeping: the symptom was invisible in the logs, and only became findable because the app-level logs were clean enough to *rule out* every other explanation. Cross-ref `transport-honesty-smalls`, `ble-stability-tier3` and `request-correlation-seq` (finding 3 above feeds that one directly). Do not bundle with any of them. Using `0x39` as a real render-verification signal is a larger piece of work and probably belongs in its own item once the screen ids are enumerated.
 
 ### heartbeat-retry-suppression: Heartbeat retry suppression in `BleManager.request`

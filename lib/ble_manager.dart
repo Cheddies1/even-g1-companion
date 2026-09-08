@@ -1233,12 +1233,61 @@ class BleManager {
   bool isLegAvailable(String lr) => legState(lr).isAvailable;
 
   List<String> _targetLegsForBroadcast() {
-    final healthyLegs =
-        ['L', 'R'].where((lr) => legState(lr).isHealthy).toList();
-    if (healthyLegs.isNotEmpty) {
+    // Healthy two-leg sends retain the proven left-then-right order. The
+    // firmware master preference applies only once a broadcast is already
+    // forced down to one qualifying leg.
+    const normalBroadcastOrder = ['L', 'R'];
+    final healthyLegs = normalBroadcastOrder
+        .where((lr) => legState(lr).isHealthy)
+        .toList();
+    if (healthyLegs.length == 2) {
       return healthyLegs;
     }
-    return ['L', 'R'].where((lr) => legState(lr).isAvailable).toList();
+    if (healthyLegs.isNotEmpty) {
+      final targetLegs = _preferMasterForDegradedBroadcast(healthyLegs);
+      _logBroadcastDegradationIfNeeded(targetLegs);
+      return targetLegs;
+    }
+    final availableLegs = normalBroadcastOrder
+        .where((lr) => legState(lr).isAvailable)
+        .toList();
+    if (availableLegs.length == 2) {
+      return availableLegs;
+    }
+    final targetLegs = _preferMasterForDegradedBroadcast(availableLegs);
+    _logBroadcastDegradationIfNeeded(targetLegs);
+    return targetLegs;
+  }
+
+  List<String> _preferMasterForDegradedBroadcast(List<String> candidateLegs) {
+    const degradedBroadcastOrder = ['R', 'L'];
+    return degradedBroadcastOrder
+        .where(candidateLegs.contains)
+        .toList(growable: false);
+  }
+
+  void _logBroadcastDegradationIfNeeded(List<String> targetLegs) {
+    if (targetLegs.length == 2) {
+      return;
+    }
+
+    final droppedLegs = ['L', 'R']
+        .where((lr) => !targetLegs.contains(lr))
+        .map((lr) {
+      final state = legState(lr);
+      return '$lr(connected=${state.connected}, status=${state.status.name}, '
+          'healthy=${state.isHealthy}, available=${state.isAvailable}, '
+          'heartbeatFailures=${state.heartbeatFailures}, '
+          'reconnectAttempts=${state.reconnectAttempts}, '
+          'reconnectInFlight=${state.reconnectInFlight})';
+    }).join(', ');
+
+    AppLog.info(
+      '${DateTime.now()} Transport: degraded broadcast -> '
+      'targets=${targetLegs.isEmpty ? 'none' : targetLegs.join(',')} '
+      'dropped=$droppedLegs masterPreferred=R',
+      tag: 'BLE',
+    );
   }
 
   void _applyConnectionPayload(Map<String, dynamic> payload) {
