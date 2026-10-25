@@ -204,7 +204,7 @@ Working, but still needs real-world observation:
   - [ ] Scene graph fed to Spike 1 renderer; panoramic frame visible in HUD during walk.
 - **Notes**: `cartographer` is a Tailscale-reachable service, not part of Hermes. The HTTP endpoint from this spike becomes the backbone of the full `cartographer` service. Map-match corridor width and off-route hysteresis tunables (see `navigate-osm-research` design questions) are set during this spike — start generous.
 
-### dashboard-widgets-v1: Dashboard widgets v1 — calendar events and system status
+### dashboard-widgets-v1: Dashboard widgets v1 - system status
 - **Status**: Next
 - **Priority**: Medium-high
 - **PR group**: PR-B (Dashboard widgets v1)
@@ -214,82 +214,57 @@ Working, but still needs real-world observation:
   - Build `DashboardNote` model mirroring fahrplan's `Note` shape.
   - Build `DashboardComposer` that gathers up to 4 typed widgets and serialises to notes.
   - 60-second sync timer that pushes the current widget set. (fahrplan sync timer pattern: `bluetooth_manager.dart:806-822`.)
-  - First concrete widget: **today's calendar events** (next N items, time + title, ASCII-only) — reuses calendar access from `router-v1-glance-handlers` `CalendarHandler`.
-  - Second concrete widget: **system status** (battery + connection + signal strength) — small, useful, no new data sources needed.
+  - First concrete widget: **system status** (battery + connection + signal strength), using existing data sources.
+  - **Scope update (2026-09-09)**: calendar integration is parked in `calendar-integration-outlook`. Eddie's only useful calendar is gated in Outlook on the phone. Calendar access is no longer a dependency of this item; existing weather and QuickNote widget work remains separate.
 - **Acceptance**:
   - [ ] `DashboardNote` add/delete builder against `0x1E` byte format.
   - [ ] `DashboardComposer` produces up to 4 widget payloads.
   - [ ] 60-second sync timer pushes refresh.
-  - [ ] Today's-calendar widget rendering (ASCII-only).
   - [ ] System-status widget rendering.
   - [ ] Widgets visible on G1 dashboard at next tilt-up.
   - [ ] Note slots correctly deleted when widgets are dismissed or empty.
-- **Open decision from the firmware decomp (2026-09-07)** — read before starting. See `docs/firmware-decomp-notes.md` § "`0x06` has native structured widget types".
+- **Protocol context from the firmware decomp (2026-09-07)**: see `docs/firmware-decomp-notes.md`, "`0x06` has native structured widget types". Calendar-specific rendering decisions below are parked with `calendar-integration-outlook` and do not block the system-status widget.
   - The firmware calls `0x1E` records **quick notes**, not dashboard slots. fahrplan's widget approach is a repurposing of the note store, and our packet reading of it is confirmed correct.
   - But `0x06` carries **firmware-native structured record types** that fahrplan does not use: `0x03` schedule/calendar (`schedule title` / `time` / `location` / `schedule_validity`, with record counts and multi-packet assembly), `0x04` stocks, `0x05` news, `0x07` citywalk. Calendar events are a first-class firmware record with a firmware-rendered layout.
   - **Our app already sends `0x06 0x03` on every connect** — with zero records. `Proto.setTimeAndWeather()`'s third frame (`06 0c 00 <seq> 03 01 00 01 00 00 00 01`) is an empty schedule push that we had mislabelled as a transaction "finalise" step. So the channel is already open.
-  - **Decision needed**: does the today's-calendar widget go through `0x06 0x03` (firmware-native records, firmware layout, probably better-looking) or through `0x1E` note slots (fahrplan's proven path, full control of text)? Cheap way to settle it: fire one populated `0x06 0x03` schedule record on device and look at the dashboard. Do that before building `DashboardComposer`, because it changes the model shape.
+  - **Parked decision**: if calendar integration resumes, compare one populated `0x06 0x03` schedule record with the `0x1E` note-slot path on device before choosing the calendar widget layout.
   - Firmware-side reading if needed: `init_dashboard_info.c`, `DashBoard_Reflash.c`, `ui_DashBoard_task.c`, `setCalenadrIndex.c`.
 - **Notes**: Supersedes the former `dashboard-injection` Backlog entry. Cross-ref `quicknote-dashboard-push` (Backlog) — that item pushes a completed QuickNote to a named slot; they share the `0x1E` byte format but are separate features. Decide at implementation time whether to fold `quicknote-dashboard-push` into this item or keep it as a follow-on. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Render pipeline / 0x1E dashboard widgets" section. fahrplan source references: `models/g1/note.dart`, `models/fahrplan/fahrplan_dashboard.dart:147-183`, `bluetooth_manager.dart:806-822`.
 
 
-### router-v1-glance-handlers: Router v1 — `glance` trigger + Calendar, Notes, Media handlers
+### router-v1-glance-handlers: Quick Actions - local commands before the assistant
+
 - **Status**: Next
-- **Priority**: Medium
+- **Priority**: Medium (existing priority retained). Ships as one slice with `quick-actions-timers-reminders`; the WhatsApp follow-ons below are unprioritised.
 - **PR group**: PR-A (Router v1 reference adoption)
-- **Context**: Turns the left-hold Quick Ask into a deterministic command layer, with LLM as fallback. Introduces a `glance` trigger word that routes to structured handlers before falling through to the existing OpenAI path. Acoustically distinctive; two syllables; no near-homophones. Decided 2026-05-18.
-  fahrplan ships exactly this architecture working today — use it as the primary reference implementation. Their pattern: `VoiceModule(name, commands)` registry containing `VoiceCommand(description, triggerPhrases, execute(inputText))` entries, plus an `endCommand()` 5-second auto-clear hook. Key fahrplan files: `lib/voice/module.dart` (31 lines, interfaces), `lib/voice/voicecontrol.dart` (311 lines, registry + match algorithm), and `lib/voice/modules/{checklist,music,stop,waypoint,webview}.dart` (example modules).
-  **Polarity note:** fahrplan uses LLM as a tiebreaker between deterministic command candidates; their primary route is fuzzy match. We invert: keep our existing OpenAI Chat as the no-match fallback (generative answer), with fuzzy match as primary router. The `VoiceModule` interface is symmetric across both polarities.
-- **Routing model**:
-  - Transcript normalised (lowercase, strip punctuation).
-  - First token == `glance` → router claims the transcript.
-  - Else → existing LLM path unchanged.
-  - Router-claimed but no handler matched → fall through to LLM (e.g. `glance recipe for chicken` still works).
-- **Architecture**: `QuickAsk transcript → AssistantRouter → CommandHandler → DisplayRenderer`
-- **Fuzzy match algorithm** (fahrplan `voicecontrol.dart:163-209`): for each trigger phrase, run `ratio`, `partialRatio`, `tokenSortRatio`, `tokenSetRatio` from `fuzzywuzzy` (or Dart equivalent), take max, accept score ≥ 60 with longest-phrase tiebreak. `_findBestCommandAsync` variant (lines 211–240) uses LLM as a tiebreaker between deterministic candidates — adopt only if needed.
-- **STT noise filter** (openclaw-glasses `src/handlers/transcription.ts:45-61`): drop incoming transcripts where duration < 500 ms OR mean STT confidence < 0.85, applied **before** the `glance` trigger keyword check, so noisy passes never reach handler matching at all. If confidence is not available from the STT provider, apply the duration filter only (degrade gracefully). OpenAI Whisper does expose confidence. This is approximately 20 lines of Dart in the STT result path. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "openclaw-glasses / Things worth borrowing" point 1.
-- **Handler keyword matching** (within router-claimed transcripts):
-  - `calendar` / `meeting` / `meetings` / `today's` / `next` → `CalendarHandler`
-  - `note` / `notes` / `todo` / `shopping` → `NotesHandler`
-  - `playing` / `music` / `track` / `song` → `MediaHandler`
-- **CalendarHandler**:
-  - Fetch next N events from Android calendar provider.
-  - Render (auto-clears after 5 s):
-    ```
-    15:00 Product Sync
-    16:30 Jan 1:1
-    ```
-  - Requires Android calendar runtime permission — handle first-time permission UX.
-- **NotesHandler**:
-  - Pull top N active items from existing local SQLite `NotesStore`, grouped by category.
-  - Render (auto-clears after 5 s):
-    ```
-    TODO
-    - BP notes
-    - Renew cert
-    - Email Victor
-    ```
-- **MediaHandler** (notification-mirror only):
-  - Reuse existing media notification state — do not capture live audio.
-  - Render current track in full (this can use full text width; glance mode crops by default).
-  - Shazam-style live audio fingerprinting is explicitly OUT of scope here — see `router-v1-shazam` in Backlog.
-  - Before shipping `MediaHandler`: implement `MyAudioHandler` boot trick (fahrplan `main.dart:58-73`) — spin up an empty `MyAudioHandler` via `AudioService.init()` and call `play()` on it at startup to register the app as a media-controller participant. This makes system-level media APIs accessible. Their `modules/music.dart` wraps `FlutterMediaController` for play/pause/skip/back/"what's playing" and is the reference implementation.
+- **Decision (2026-09-09)**: expand the existing router proposal into Quick Actions: Timer, Focus Timer, Reminder, WhatsApp Reply, Glance a list with Next/Previous/Done, and passive mode switching to Capture, Navigation or Chat. Favourite outbound messaging is a separate feasibility gate. Calendar commands are parked. These are actions within the existing app, not additional modes.
+- **Routing**: left-hold Quick Ask still transcribes through local Speaches on Deepthought over Tailscale. Recognised commands execute on the phone; general questions continue to the existing OpenAI assistant. This is not offline voice recognition. Keep literal dictated message content separate from command normalisation. A recognised but incomplete or ambiguous action asks for clarification or cancels without changing state; it must not fall through to an AI answer that implies execution.
+- **Command context**: Next, Previous and Done apply only to the displayed list item; Send applies only to a pending message preview. Cancel closes the pending action and Undo restores the last list completion. Allow controller-owned follow-up listening on these surfaces despite the existing visible-content Quick Ask guard. Incoming notifications must not silently change the target. Do not bypass microphone exclusion during either recording source.
+- **Agreed first slice (2026-09-09)**: one router delivering list recall, timers, reminders and passive mode switches together. Read outstanding shopping/to-do items from the existing `NotesStore`, display an identified item, and support Next/Previous/Done with safe Undo. Switching mode calls `CompanionController`; selecting Capture does not start recording. Refuse a switch that would abandon a recording and retain the existing explicit stop/save flow. Voice switching while a mic is occupied is not promised. Timer, Focus and Reminder behaviour is specified in `quick-actions-timers-reminders` (Next, same slice): separate acceptance criteria, scheduled together.
+- **Follow-on dependencies**: `whatsapp-notification-replies` and `whatsapp-favourite-outbound` use this router but sit outside the first slice. They have separate acceptance criteria and need not ship with it. Existing notification-only MediaHandler recall remains later scope: show full current track from existing notification state, no audio fingerprinting. `now-playing-mediasession` and `router-v1-shazam` remain separate work.
+- **Open implementation choices**: final command grammar and whether commands require a `glance` prefix. The previous fuzzy-match threshold of 60 is superseded; fuzzy matching must not execute sends, completions or mode changes. Start with explicit phrases and contextual commands. The fahrplan `VoiceModule`/`VoiceCommand` registry remains a reference, not a requirement to port a framework or add a fuzzy-matching package. Assess STT noise rejection against the actual Speaches response; do not assume a confidence field or import untested thresholds that reject short commands such as "Done". An empty audio playback service is not a prerequisite for reading existing notification state.
 - **Acceptance**:
-  - [ ] Port `VoiceModule` and `VoiceCommand` interfaces (Dart, idiomatic to codebase).
-  - [ ] Add `fuzzywuzzy` package dependency or Dart equivalent.
-  - [ ] Match algorithm: ≥ 60 acceptance, longest-phrase tiebreak.
-  - [ ] Wire Calendar/Notes/Media handlers as `VoiceCommand` instances within a `VoiceModule` registry.
-  - [ ] STT noise filter applied before trigger keyword check (duration < 500 ms OR confidence < 0.85 → drop).
-  - [ ] `glance calendar` (and synonyms) shows next N events from Android calendar.
-  - [ ] `glance notes` (and synonyms) shows top N items from `NotesStore`.
-  - [ ] `glance music` (and synonyms) shows current media notification state.
-  - [ ] `glance <anything unmatched>` falls through to LLM.
-  - [ ] Non-`glance` transcripts continue to reach LLM path unchanged.
-  - [ ] Calendar permission flow works on first-time use.
-  - [ ] `MyAudioHandler` boot registered before `MediaHandler` ships.
-  - [ ] Keep existing OpenAI Chat path as no-match fallthrough.
-  - [ ] All HUD output is ASCII-only, text-only via `0x4E`.
-- **Notes**: `MediaHandler` reuses existing notification state — the `now-playing-mediasession` Backlog item (Audible MediaSession metadata fix) is complementary: fixing that would improve what `MediaHandler` can render for Audible and similar apps. Cross-ref that item when implementing. Independent of Capture v2 stream. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "fahrplan / Assistant / LLM integration" section.
+  - [ ] On device, recognised commands take the local action route; a general question still reaches OpenAI after local STT. A failed STT call executes nothing.
+  - [ ] Shopping/to-do recall reads the existing store, handles empty lists and boundaries, and displays the target clearly. Next/Previous/Done work while glancing; Done persists and Undo restores exactly that item.
+  - [ ] Bare Done/Send outside their valid context and ambiguous action phrases cause no mutation or send. A new notification cannot redirect a pending command.
+  - [ ] Capture/Navigation/Chat switches use controller ownership; Capture entry starts no recording, and active phone/glasses recordings cannot be abandoned or have their mic stolen.
+  - [ ] Cancel, short follow-up speech and return to ordinary Glance are tested on the glasses. HUD output uses existing text layout and supported glyphs.
+  - [ ] Timer, Focus and Reminder commands route through this same router; the slice is not complete until `quick-actions-timers-reminders` acceptance also passes.
+- **References**: [comparison notes](g1-companion-apps-comparison-notes.md), fahrplan `lib/voice/module.dart`, `lib/voice/voicecontrol.dart` and `lib/voice/modules/{checklist,music,stop,waypoint,webview}.dart`. `router-v1-chat-logging` is already done.
+
+### quick-actions-timers-reminders: Timer, Focus Timer and app-owned Reminder
+
+- **Status**: Next - ships in the Quick Actions first slice with `router-v1-glance-handlers`
+- **Priority**: Medium (same slice as `router-v1-glance-handlers`)
+- **PR group**: PR-A (Router v1 reference adoption)
+- **Depends on**: `router-v1-glance-handlers` command routing and controller-owned display restoration. Agreed 2026-09-09 to ship in the same slice, not as a later increment; the 2026-09-09 grooming pass split them and that split was wrong.
+- **Scope (2026-09-09)**: "Timer for ten minutes" displays a countdown that incoming notifications may cover, then restores the correct remaining time. "Focus for 25 minutes" adds suppression of ordinary glasses interruptions for that duration. "Remind me in an hour to call Paul" saves the text and surfaces it when due; support explicit relative/absolute times without calendar access. Cancel and remaining-time queries are supporting commands.
+- **Boundaries**: deadlines run independently of display visibility. Focus changes this app's glasses interruptions, with phone notification/DND changes outside this scope. Ending or cancelling Focus restores the prior glasses policy. Decide overlapping timers, reminder delivery during Focus, urgent-call exceptions and mode conflicts before implementation; suggested exceptions are not settled policy.
+- **Acceptance**:
+  - [ ] On device, a normal notification covers a timer and dismissal restores a countdown based on the original deadline. Switching mode or disconnecting the glasses does not reset it.
+  - [ ] Focus suppresses ordinary glasses notifications and restores the previous policy on expiry/cancel. Exercise the chosen call/reminder exception policy explicitly.
+  - [ ] A reminder retains its dictated text and confirmed due time. Ambiguous times do not silently schedule; cancel removes the selected reminder.
+  - [ ] Timer expiry and reminders are tested with the phone locked/backgrounded. Persist deadlines and document/test process restart, reboot and disconnected-glasses delivery behaviour before calling the feature complete.
 
 ### time-weather-0x06-extend: Extend `0x06 0x01` payload with weather icon and temperature
 - **Status**: Next
@@ -443,6 +418,52 @@ Working, but still needs real-world observation:
 ---
 
 ## Backlog — Unprioritised
+
+### capture-meeting-cue-cards: Prepared meeting points attached to a recording
+
+- **Status**: Backlog
+- **Context (2026-09-09)**: Eddie usually records in-person meetings. Add optional typed/pasted title and points to cover when entering Capture, with no compulsory preparation before recording. Snapshot those points into the recording's metadata for either mic source, so preparation remains available afterwards.
+- **Behaviour**: tilt-up during an active Capture session recalls a short cue card with a recording indicator; tilt-down or a timeout returns to the recording HUD. Repeated tilt-up recalls the same card without advancing an agenda. Start with a short card and no pagination. When a phone recording is active and Capture is the selected mode, recall its cues instead of attempting to start the glasses mic. Phone recordings in other modes must not take over their display.
+- **Dependencies and boundaries**: stable recording identity/metadata association in the shared recording store; do not key notes solely by the mutable filename (see `recording-filename-seconds-resolution`). Keep gesture decisions in `CompanionController`. Preserve double-tap stop/save for glasses Capture and existing phone stop controls; this item does not assign double-tap to phone recording.
+- **Acceptance**:
+  - [ ] Recording starts with or without prepared points; its saved snapshot survives app restart and recording rename for both mic sources. Metadata share/delete behaviour is decided and documented before implementation.
+  - [ ] On device, tilt-up recalls cues during glasses recording and during phone recording with Capture selected; tilt-down/timeout restores REC. Continuous audio is verified across these interactions, with no second mic start.
+  - [ ] Ordinary head movements do not advance or complete points; the recording HUD cannot overwrite a cue card prematurely. Existing stop/save behaviour remains intact.
+- **Later candidate**: match prepared questions against a post-recording Whisper transcript, linking answered questions to passages and marking unanswered ones. This depends on transcript linkage below and is not a cue-card prerequisite.
+
+### whatsapp-notification-replies: Dictate and confirm a reply to WhatsApp
+
+- **Status**: Backlog
+- **Depends on**: `router-v1-glance-handlers` and a device spike retaining/invoking a usable WhatsApp notification reply action from the Android listener.
+- **Scope (2026-09-09)**: WhatsApp first, as this is almost all of Eddie's reply use. While a message is selected, dictate a reply, display the recipient/conversation and exact text, then require explicit Send or Cancel. Preserve literal text; no AI rewriting. Bind the draft to that notification/conversation even if another message arrives.
+- **Acceptance**:
+  - [ ] Prove the notification reply route on Eddie's Samsung, then send a dictated reply with the phone locked and in a pocket; verify receipt in the intended WhatsApp conversation.
+  - [ ] No send occurs before explicit confirmation. Cancel, stale/missing reply actions, incoming messages during dictation and repeated confirmation do not send to the wrong chat or send twice.
+  - [ ] UI distinguishes hand-off to WhatsApp from independently confirmed delivery. Existing notification browsing/dismissal still works.
+- **Later compatibility**: WhatsApp Business, then possibly Teams; each requires its own notification-action test. Native Gemini integration is not a prerequisite.
+
+### whatsapp-favourite-outbound: Message a saved favourite without a notification
+
+- **Status**: Backlog - feasibility gate
+- **Context (2026-09-09)**: frequent hands-busy action: "Send a message to wife that says XXX". Configure one alias, probably "wife", against a specific WhatsApp contact. Keep this separate from notification replies: there may be no existing message to reply to.
+- **Depends on**: a proven outbound route plus `router-v1-glance-handlers` and the recipient/text preview with explicit Send/Cancel. Reuse reply preview handling if available, without assuming its notification action can start a conversation.
+- **Acceptance**:
+  - [ ] Identify and prove a route that sends to the configured contact with the phone locked and in a pocket, with no existing WhatsApp notification. Verify receipt; document the route and limitations before scheduling implementation.
+  - [ ] A click-to-chat/`wa.me` prefill that still needs phone interaction does not pass the feasibility gate. An unproven route remains blocked on evidence, not described as supported.
+  - [ ] Alias resolves only to the saved contact; preview shows that person and exact dictated text. No contact guessing, AI rewriting or sending before explicit confirmation. Cancel and repeated confirmation are safe.
+- **Scope**: one favourite first. More contacts and WA Business/Teams outbound support are later decisions.
+
+### capture-bookmarks-transcript-links: Mark recording moments and find them afterwards
+
+- **Status**: Backlog - later Capture work
+- **Context (2026-09-09)**: make long recordings easier to revisit using elapsed-time markers and post-recording Whisper transcripts. Use the same stable recording metadata association as `capture-meeting-cue-cards`; cues themselves are not required for a bookmark.
+- **First interaction**: Mark moment on the phone recording UI and foreground notification for both mic sources, without touching the active audio stream. A later option is finding explicitly spoken phrases such as "bookmark that" in the completed transcript and linking the preceding context. This does not require live STT or a second microphone session.
+- **Gesture gate**: tilt-up is reserved for cue recall during Capture and double-tap retains glasses stop/save. Right-hold remains firmware QuickNote. Left-hold is only a feasibility candidate: test continuous audio and firmware overlays before assigning any bookmark meaning; it is not known to be a spare button.
+- **Acceptance**:
+  - [ ] Phone/notification markers persist their elapsed times against the right recording through rename and app restart for both mic sources; on-device audio remains continuous.
+  - [ ] Post-recording transcript/audio view can jump to a marker and surrounding context with verified timestamp alignment. Decide how existing machine-side Whisper output enters this view before implementing transcript ingestion.
+  - [ ] If a glasses gesture is pursued, document device evidence for audio continuity and firmware behaviour first; retain the phone marker path if no suitable gesture exists.
+- **Later candidate**: cue-question-to-transcript matching from `capture-meeting-cue-cards`, with evidence links and unanswered questions retained. No new general-purpose personal-memory service is required.
 
 ### stt-temp-wav-leak-on-failure: Temp WAV not deleted when transcription fails
 - **Status**: Backlog
@@ -736,6 +757,31 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
 ---
 
 ## Parked
+
+### calendar-integration-outlook: Calendar actions and meeting-linked reminders
+
+- **Status**: Parked (2026-09-09)
+- **Reason**: Eddie's only useful calendar is his work calendar, gated in Outlook on the phone. Calendar integration is out for now. The former router CalendarHandler, today's-calendar dashboard widget and calendar/person/location-triggered reminder ideas are excluded from current Quick Actions scope.
+- **Revisit condition**: Eddie chooses to reopen calendar access and a usable permitted route to the relevant events is established. Then revisit Android Calendar Provider availability and the `0x06 0x03` versus `0x1E` schedule rendering decision recorded under `dashboard-widgets-v1`.
+- **Unaffected**: app-owned timed reminders, manually prepared meeting cues, system-status and weather widgets.
+
+### live-transcription: Live captions during conversations
+
+- **Status**: Parked (2026-09-09)
+- **Reason**: Eddie liked the original app's live transcription but gets better results recording and transcribing later through Whisper on his machine. Prioritisation remains with post-recording use; this discussion does not commission a new live-transcription mode.
+- **Revisit condition**: a specific live need and an on-device latency/audio-quality experiment justify reopening it. `capture-bookmarks-transcript-links` captures the useful post-recording extension.
+
+### ideation-2026-09-09-undecided: Ambient-recall ideas raised and never discussed
+
+- **Status**: Parked (2026-09-09) - no decision taken either way
+- **Reason**: raised in the 2026-09-09 ideation session and never picked up in the conversation. Neither accepted nor rejected. Recorded here so they are not silently lost, and so they are not rediscovered later as new ideas.
+- **Ideas, with the smallest useful version of each**:
+  - **Remember this place** - save a cafe, a parking spot or somewhere worth returning to. Spoken label plus the phone's location; recall by name.
+  - **Journey card** - keep the next train, platform, hotel address or booking reference to hand while travelling. Manually prepared cached text first; live updates later.
+  - **Return-to-task prompt** - recover concentration after a call or interruption. Save "I was doing X, next step is Y" and recall it afterwards.
+  - **Practice prompts** - rehearse a talk or drill vocabulary while walking. Short question cards, answers revealed on request.
+- **Overlaps to check before reviving any of them**: `capture-meeting-cue-cards` already builds prepared-card display and recall; a Journey card or practice card may be the same surface with different content. `router-v1-glance-handlers` already builds Next/Previous/Done over a list, which is the interaction Practice prompts needs.
+- **Revisit condition**: the next ideation pass, or once Quick Actions v1 is in daily use and the following increment is being chosen. Decide then; do not treat continued silence as rejection.
 
 ### PANORAMIC_MAP decision
 - **Status**: Parked — option 3 being resolved by `navigate-osm-research`
@@ -1153,8 +1199,8 @@ Good first prompt pattern:
   - Phone-local capture (`phone-local-capture`) - **Done 2026-09-07, working tree uncommitted**; new home-screen Record/Stop button using the phone's own mic, same pipeline and storage as glasses Capture; device-verified 2026-09-07/08 including both directions of the mic exclusion and the notification's "Stop and save" action; only a long screen-off recording against Samsung's battery optimiser remains outstanding; `recording-filename-seconds-resolution` (Backlog, Low) was surfaced by this work
   - STT is now local (`stt-local-whisper`, Done 2026-09-08) - Quick Ask, Chat and QuickNote transcribe via the self-hosted whisper-server on deepthought over Tailscale, no fallback; the reasoning call for Chat and Quick Ask still goes to OpenAI, unchanged
   - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
-  - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; calendar events + system status widgets; PR-B
-  - Router v1 (`router-v1-glance-handlers`) — **Next #2**; medium priority; fahrplan VoiceModule registry + STT noise filter now incorporated into `router-v1-glance-handlers`; PR-A (`router-v1-chat-logging` done — delivered by hermes-agent-v1)
+  - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; system-status widget, calendar scope parked in `calendar-integration-outlook`; PR-B
+  - Router v1 (`router-v1-glance-handlers`) — **Next #2**; medium priority retained; Quick Actions scope updated 2026-09-09: first slice is contextual lists, timers, reminders and passive mode switches through one router (`quick-actions-timers-reminders` is Next and ships with it), with WhatsApp replies as a separate Backlog slice; favourite outbound messaging needs a locked-phone/no-notification feasibility test; PR-A (`router-v1-chat-logging` done)
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C
   - Honest foreground notification (`honest-foreground-notification`) — **Next (Medium)**; step 1 of the `companion-lifetime-decision` two-step path; standalone quick fix, no dependency on the joint BleManager.kt design pass; Codex brief available
   - BLE transport robustness (2026-06-09 review): items in Backlog under "BLE transport — robustness review findings"; `companion-lifetime-decision` decided 2026-06-09 (two-step path); Tier 1 high-priority items now are `ble-native-write-queue` + `ble-pending-gatt-leak` (joint design pass with service-hosted-BLE from `companion-lifetime-decision`; Codex briefs available) + `heartbeat-suspend-is-noop` + `mtu-failure-fallthrough`; Tier 2 items follow
