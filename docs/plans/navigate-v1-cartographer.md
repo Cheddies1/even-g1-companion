@@ -1,7 +1,21 @@
 # Walking navigation v1: cartographer tiles on deepthought, navigator on the phone
 
-**Status:** IN PROGRESS - phases 1-2 done (gates A and B passed); phase 3 recorder built, pocketed walk pending
+**Status:** IN PROGRESS - phases 1-3 done (gates A, B and C passed); next is phase 4
 **Created:** 2026-11-06   **Last updated:** 2026-11-06   **Completed:** -
+
+## Start here (next session: phase 4)
+- **Code state (2026-11-06):** phases 1-3 live on local branch `nav-marker-harness` (committed,
+  working tree clean; **not pushed, not merged** to `main`). Decide with Eddie whether to push or
+  merge before starting phase 4 code.
+- **Cartographer state:** `/home/eddie/projects/personal/cartographer/` holds the gate B renderer
+  (`prepare.py`, `render.py`, `make_itinerary.py`, `validate.py`, `data/`, `fixtures/`) and is
+  **not a git repo**. Phase 4 builds on it; Codex owns it and the box.
+- **Area:** the home extract below (Hanwell / Ealing bbox), confirmed by Eddie 2026-11-06 as the
+  v1 area. Travel coverage stays out of v1.
+- **First step of phase 4:** resolve the open arrow question (meanings of built-in arrows
+  0x0c-0x23) so manoeuvres can map onto the table, then brief Codex with phase 4 below, the
+  gate B renderer defaults (Decisions), the bitmap format (Decisions) and
+  `docs/FINDINGS-nav-marker-tiles.md`.
 
 ## Goal
 A working v1 walking navigation mode. At trip start, a `cartographer` service on deepthought
@@ -71,7 +85,7 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
 - **Done when:** each scene has a legible / marginal / dead verdict from a walk.
 - **Delegate:** Codex via `delegate_task` for the renderer; device verdict inline.
 
-### [ ] 3 - Screen-off GPS recorder (gate C) - parallel-safe with 1 and 2
+### [x] 3 - Screen-off GPS recorder (gate C) - parallel-safe with 1 and 2
 - **Objective:** prove ~1 Hz GPS for 30-60 min with the phone pocketed and screen off.
 - **Steps:** Android foreground service of type `location`, fused provider at ~1 Hz, writes a
   timestamped trace; One UI battery-optimisation exemption. No BLE, no routing.
@@ -89,6 +103,15 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   overview bitmaps, and a marker transform (route progress -> pixel). Overlapping tiles centred
   on manoeuvres plus coverage between them. Manoeuvres map onto the firmware arrow table from
   phase 1. Tailscale-only, separate from anything else on the box.
+  Build on the gate B renderer and its defaults (pano 1.5 m/px forward-right, mini-map 2 m/px
+  forward-up, ~190 m tiles with ~50 m overlap). Every tile carries **both** a panoramic and a
+  mini-map bitmap in the pinned two-layer 1-bit format; mini-map RLE when smaller than raw.
+  Put the cartographer directory under git as part of this phase.
+  Store regions by id with a small manifest (name, centre, bbox, created, last used, pinned,
+  size on disk), even though v1 has only the home region, so the region-sync follow-on below is
+  an addition, not a rework. Record measured per-region disk use (extract, geometry cache,
+  routing graph) in the contract doc.
+  Prerequisite: arrow meanings 0x0c-0x23 (open question) for the manoeuvre mapping.
 - **Deliverable:** the service + `docs/cartographer-contract.md` in this repo.
 - **Done when:** one real home-area route downloads once, hashes and dimensions validate, and the
   bundle stays usable with Tailscale disconnected.
@@ -101,7 +124,10 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   manoeuvres into `TRIP_STATUS` text + firmware `direction`; pick the tile, compute the marker
   from its transform; switch tiles only in overlaps; off-route after sustained disagreement
   (>10 s) -> one reroute call; keep going on cached data if Tailscale drops. Mode ownership stays
-  in `CompanionController`.
+  in `CompanionController`. Ignore fixes with `acc_m` worse than ~25 m for map-matching and
+  off-route (gate C). While a trip is live, route `F5 00/02/03` to the navigator rather than the
+  generic close/tilt handlers. Reuse the gate C location request (`FUSED_PROVIDER`, 1000 ms, high
+  accuracy) in a `location`-typed foreground service started from the share intent.
 - **Deliverable:** navigator service(s) in `lib/services/` with unit tests for map-matching,
   tile selection and off-route hysteresis.
 - **Done when:** a real walk shows per-second marker moves, tile switches at intended points,
@@ -176,10 +202,49 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   foregrounded, since Android 14+ refuses a background start. Trip start from a Google Maps
   share brings the app forward, so that constraint is met.
 
+- 2026-11-06 - Use case is pub-to-pub walks. Indoor / Wi-Fi-only positioning is out of scope
+  (Eddie); gate C's indoor gaps and 100 m+ fixes are accepted, handled only by accuracy
+  filtering in phase 5.
+- 2026-11-06 - Phase 4 starts on the home area only (Eddie). Travel coverage, including Prague
+  w/c 2026-11-09, is not part of v1.
+- 2026-11-06 - Region sync is the first follow-on after v1: Navigate-area "Sync current location",
+  region list on the phone, pinned vs auto-expiring unpinned regions, large transient downloads
+  accepted. Phase 4 stores regions by id with a manifest so this is additive.
+
+## Follow-on after v1: region sync (own plan when v1 ships)
+Eddie's design, 2026-11-06:
+- A **"Sync current location"** action in the app sends the phone's GPS position to cartographer,
+  which builds a region (~5 km radius) on deepthought: extract, routing graph, geometry cache.
+  Tiles are still rendered per trip, not per region.
+- The app **lists the regions on deepthought** so they can be tidied from the phone; Eddie can
+  also tidy locally on the box.
+- **Pinned** regions are kept: home, work, Prague office (Nové Butovice), central Prague
+  (Náměstí Republiky). **Fleeting** ones (e.g. Bristol, Essen) are deleted when no longer
+  needed.
+Agreed with Eddie 2026-11-06:
+- The sync action lives in the app's **Navigate** area (a Navigate / Regions screen), not Glance.
+  Also offer it automatically when a shared destination falls outside every region.
+- **Pinned vs unpinned**: pinned regions are kept; unpinned ones expire after N days unused (N to
+  settle, ~30), so tidying is optional.
+- **Large transient downloads are fine** (Geofabrik country extracts: England ~1.5 GB, Czech
+  Republic ~0.9 GB, NRW ~0.7 GB). Use the simplest source; clip, then delete or park the country
+  file on the NAS. No need to engineer bbox-only fetching.
+- Cached region storage (below) is acceptable on deepthought's disk.
+Size estimate (measured where marked):
+- Home region today: highway extract 1.7 MB + geometry cache 9.5 MB (**measured**), plus a
+  routing graph not yet built (estimate 10-40 MB). So ~15-50 MB per region; ten regions under
+  ~0.5 GB. Dense central Prague will be at the top end.
+- Source extract used to clip it: Greater London 130 MB (**measured**); transient, can be
+  deleted or parked on the NAS.
+- Per-trip bundle: ~21 KB raw per tile (pano 2 x 8,296 B + mini-map 2 x 2,312 B); a 3 km walk
+  is ~20-25 tiles, ~0.5 MB raw, far less compressed. Negligible on the phone.
+- The six gate B fixtures take 268 KB (**measured**).
+- Conclusion: regions fit comfortably on deepthought's own disk; the NAS is only worth using for
+  archived source extracts.
+Phase 4 lays the groundwork (region id + manifest incl. `pinned` and `last_used`, measured
+size); v1 still ships with the home region only.
+
 ## Open questions
-- Travel coverage: Eddie wants "current area + 3 miles" on demand when away (Prague, w/c
-  2026-11-09). Out of scope for v1 as written; decide at phase 4 whether cartographer fetches
-  and imports an extract on request, or Eddie pre-loads regions before a trip.
 - Valhalla vs GraphHopper - Codex, phase 4, on pedestrian route quality.
 - Tile spacing and overlap - phase 2 found ~190 m / ~50 m fine when static; confirm on phase 5 walks.
 - Per-value meaning of built-in arrows 0x0c-0x23 (all render; only 0x01-0x0b are named).
@@ -201,3 +266,7 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   `tool/gps_trace_summary.py`, `docs/FINDINGS-screen-off-gps.md`; 30 s indoor screen-off smoke
   test clean (1 Hz, no gaps). Pocketed 30-60 min walk and verdict still to do. Code uncommitted
   on `nav-marker-harness`, not its own branch.
+- 2026-11-06 - phase 3 - gate C passed on a 58 min pocketed run (`docs/FINDINGS-screen-off-gps.md`):
+  walking 1 Hz, zero gaps, moving p95 14.4 m; all gaps and poor accuracy were stationary
+  indoors; no doze, no OS kill; battery 11.4 %/h. Deviation: one run, fused provider only.
+  Carry into phase 5: filter fixes by `acc_m`, not by rate.
