@@ -1,0 +1,1194 @@
+{
+  "format_version": 1,
+  "coordinate_order": "lat,lon",
+  "orientation_convention": "degrees clockwise from true north; pano forward right, overview forward up",
+  "wire_format": "dim then bright; row-major top-first; LSB-first; raw, no headers or padding",
+  "region_bbox_wsen": [
+    -0.41,
+    51.467,
+    -0.266,
+    51.557
+  ],
+  "attribution": "\u00a9 OpenStreetMap contributors, ODbL 1.0; https://www.openstreetmap.org/copyright",
+  "source_url": "https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf",
+  "source_timestamp": "2026-11-04T21:21:03Z",
+  "source_sha256": "8f81ced7d8da5eefa4ac3d4e88f57e8b451db253fbc1f4c149496648f4d0a645",
+  "routes": {
+    "main": {
+      "name": "Golden Manor / Campbell Road junction to The Dodo Micropub",
+      "start": {
+        "name": "Campbell Road / Golden Manor junction",
+        "lat_lon": [
+          51.5122017,
+          -0.3405805
+        ]
+      },
+      "end": {
+        "name": "The Dodo Micropub",
+        "lat_lon": [
+          51.5067295,
+          -0.3374416
+        ],
+        "osm_node_id": 3261904462
+      },
+      "walking_directions": "South on Golden Manor; follow Station Road south-east; east along Uxbridge Road; south on Boston Road to The Dodo. Use pavements and the pedestrian crossing at Hanwell Broadway.",
+      "geometry_note": "Hand-traced OSM road centrelines with mapped pavements; generalised walking alignment, not crossing-level guidance. Final approach to pub POI is approximate.",
+      "osm_way_ids": [
+        1449350962,
+        233369621,
+        635157176,
+        1072978224,
+        635157175,
+        304105869,
+        304105870,
+        304105880,
+        4117193,
+        304105852,
+        304105855,
+        304105853
+      ],
+      "polyline": [
+        [
+          51.5122017,
+          -0.3405805
+        ],
+        [
+          51.5121543,
+          -0.3405956
+        ],
+        [
+          51.5118885,
+          -0.3406805
+        ],
+        [
+          51.5117406,
+          -0.3407892
+        ],
+        [
+          51.511652,
+          -0.3408796
+        ],
+        [
+          51.511543,
+          -0.3410482
+        ],
+        [
+          51.5115295,
+          -0.3410566
+        ],
+        [
+          51.5113019,
+          -0.3410017
+        ],
+        [
+          51.5112804,
+          -0.3409905
+        ],
+        [
+          51.5112559,
+          -0.3409749
+        ],
+        [
+          51.5111779,
+          -0.3408792
+        ],
+        [
+          51.5111267,
+          -0.3407297
+        ],
+        [
+          51.5110553,
+          -0.3405066
+        ],
+        [
+          51.5109831,
+          -0.3403589
+        ],
+        [
+          51.5108692,
+          -0.3402047
+        ],
+        [
+          51.5108237,
+          -0.3401554
+        ],
+        [
+          51.5107718,
+          -0.3401167
+        ],
+        [
+          51.5104054,
+          -0.3398305
+        ],
+        [
+          51.5103541,
+          -0.3397904
+        ],
+        [
+          51.5103059,
+          -0.3397512
+        ],
+        [
+          51.5099428,
+          -0.339456
+        ],
+        [
+          51.5098866,
+          -0.3394103
+        ],
+        [
+          51.5098424,
+          -0.3393758
+        ],
+        [
+          51.5097869,
+          -0.3393326
+        ],
+        [
+          51.5097346,
+          -0.3392927
+        ],
+        [
+          51.5094799,
+          -0.339099
+        ],
+        [
+          51.5094297,
+          -0.3390608
+        ],
+        [
+          51.5093889,
+          -0.3390287
+        ],
+        [
+          51.5092804,
+          -0.3389434
+        ],
+        [
+          51.5092663,
+          -0.3389323
+        ],
+        [
+          51.5092535,
+          -0.3389222
+        ],
+        [
+          51.5092179,
+          -0.338891
+        ],
+        [
+          51.5091817,
+          -0.3388594
+        ],
+        [
+          51.5088562,
+          -0.3385816
+        ],
+        [
+          51.5088246,
+          -0.3385544
+        ],
+        [
+          51.508754,
+          -0.3385039
+        ],
+        [
+          51.5087811,
+          -0.3383253
+        ],
+        [
+          51.5087855,
+          -0.3382481
+        ],
+        [
+          51.5087866,
+          -0.3381868
+        ],
+        [
+          51.5087944,
+          -0.3379942
+        ],
+        [
+          51.5087234,
+          -0.3379834
+        ],
+        [
+          51.5086872,
+          -0.3379767
+        ],
+        [
+          51.5086253,
+          -0.3379623
+        ],
+        [
+          51.5085433,
+          -0.337935
+        ],
+        [
+          51.5083369,
+          -0.3378752
+        ],
+        [
+          51.50826,
+          -0.337843
+        ],
+        [
+          51.5081092,
+          -0.337787
+        ],
+        [
+          51.5080193,
+          -0.3377435
+        ],
+        [
+          51.5079696,
+          -0.3377267
+        ],
+        [
+          51.5077964,
+          -0.3376634
+        ],
+        [
+          51.5076622,
+          -0.3376232
+        ],
+        [
+          51.5074067,
+          -0.3375469
+        ],
+        [
+          51.50736,
+          -0.3375329
+        ],
+        [
+          51.5073057,
+          -0.3375171
+        ],
+        [
+          51.5072801,
+          -0.3375096
+        ],
+        [
+          51.5072398,
+          -0.3374988
+        ],
+        [
+          51.5070167,
+          -0.3374358
+        ],
+        [
+          51.5068564,
+          -0.337386
+        ],
+        [
+          51.5067836,
+          -0.3373634
+        ],
+        [
+          51.5067621,
+          -0.3373582
+        ],
+        [
+          51.5067295,
+          -0.3374416
+        ]
+      ],
+      "length_m": 720.37
+    },
+    "cutthrough": {
+      "name": "Off-route recreation-ground cut-through west of Golden Manor",
+      "off_route": true,
+      "start": {
+        "name": "Footpath west from Alwyne Road",
+        "lat_lon": [
+          51.5114608,
+          -0.34159
+        ]
+      },
+      "end": {
+        "name": "North-west end of diagonal recreation-ground path",
+        "lat_lon": [
+          51.5135598,
+          -0.3470893
+        ]
+      },
+      "osm_way_ids": [
+        4941025,
+        221205026
+      ],
+      "polyline": [
+        [
+          51.5114608,
+          -0.34159
+        ],
+        [
+          51.5114917,
+          -0.3417303
+        ],
+        [
+          51.5115147,
+          -0.3421164
+        ],
+        [
+          51.5115668,
+          -0.3423914
+        ],
+        [
+          51.5116082,
+          -0.3426099
+        ],
+        [
+          51.5117179,
+          -0.3429854
+        ],
+        [
+          51.5117599,
+          -0.343096
+        ],
+        [
+          51.5118886,
+          -0.343411
+        ],
+        [
+          51.5119425,
+          -0.3435486
+        ],
+        [
+          51.5122836,
+          -0.3445163
+        ],
+        [
+          51.5130505,
+          -0.3461838
+        ],
+        [
+          51.5134119,
+          -0.3468981
+        ],
+        [
+          51.5135598,
+          -0.3470893
+        ]
+      ],
+      "length_m": 453.1,
+      "geometry_note": "Independent mapped public footway, not a pavement. Optional separate legibility test; not part of the pub walk."
+    }
+  },
+  "scenes": [
+    {
+      "id": "r01_suburban",
+      "name": "Pub walk 1: suburban",
+      "route_id": "main",
+      "progress_start_m": 0,
+      "progress_end_m": 190,
+      "centre": {
+        "lat": 51.51142896140854,
+        "lon": -0.34103234881954664
+      },
+      "route_polyline": [
+        [
+          51.5122017,
+          -0.3405805
+        ],
+        [
+          51.5121543,
+          -0.3405956
+        ],
+        [
+          51.5118885,
+          -0.3406805
+        ],
+        [
+          51.5117406,
+          -0.3407892
+        ],
+        [
+          51.511652,
+          -0.3408796
+        ],
+        [
+          51.511543,
+          -0.3410482
+        ],
+        [
+          51.5115295,
+          -0.3410566
+        ],
+        [
+          51.5113019,
+          -0.3410017
+        ],
+        [
+          51.5112804,
+          -0.3409905
+        ],
+        [
+          51.5112559,
+          -0.3409749
+        ],
+        [
+          51.5111779,
+          -0.3408792
+        ],
+        [
+          51.5111267,
+          -0.3407297
+        ],
+        [
+          51.5110553,
+          -0.3405066
+        ],
+        [
+          51.5109831,
+          -0.3403589
+        ],
+        [
+          51.5108692,
+          -0.3402047
+        ],
+        [
+          51.51082723510143,
+          -0.3401592303406711
+        ]
+      ],
+      "orientation_deg": 191.2352,
+      "metres_per_pixel": {
+        "pano": 1.5,
+        "overview": 2.0
+      },
+      "marker_pixel": [
+        195,
+        81
+      ],
+      "maps": {
+        "pano": {
+          "width": 488,
+          "height": 136,
+          "orientation_deg": 191.2352,
+          "forward": "right",
+          "metres_per_pixel": 1.5,
+          "marker_pixel": [
+            195,
+            81
+          ],
+          "next_turn_pixel": null,
+          "projection_origin_lat_lon": [
+            51.5122017,
+            -0.3405805
+          ],
+          "pixel_offset": [
+            195.42509338564327,
+            81.03975566035506
+          ],
+          "bytes": 16592,
+          "file": "r01_suburban_pano.bin"
+        },
+        "overview": {
+          "width": 136,
+          "height": 136,
+          "orientation_deg": 191.2352,
+          "forward": "up",
+          "metres_per_pixel": 2.0,
+          "marker_pixel": [
+            68,
+            112
+          ],
+          "next_turn_pixel": null,
+          "projection_origin_lat_lon": [
+            51.5122017,
+            -0.3405805
+          ],
+          "pixel_offset": [
+            68,
+            112
+          ],
+          "bytes": 4624,
+          "file": "r01_suburban_overview.bin"
+        }
+      }
+    },
+    {
+      "id": "r02_suburban",
+      "name": "Pub walk 2: suburban",
+      "route_id": "main",
+      "progress_start_m": 140,
+      "progress_end_m": 330,
+      "centre": {
+        "lat": 51.51046312791466,
+        "lon": -0.3398755920556103
+      },
+      "route_polyline": [
+        [
+          51.51111622127396,
+          -0.3406969576501551
+        ],
+        [
+          51.5110553,
+          -0.3405066
+        ],
+        [
+          51.5109831,
+          -0.3403589
+        ],
+        [
+          51.5108692,
+          -0.3402047
+        ],
+        [
+          51.5108237,
+          -0.3401554
+        ],
+        [
+          51.5107718,
+          -0.3401167
+        ],
+        [
+          51.5104054,
+          -0.3398305
+        ],
+        [
+          51.5103541,
+          -0.3397904
+        ],
+        [
+          51.5103059,
+          -0.3397512
+        ],
+        [
+          51.5099428,
+          -0.339456
+        ],
+        [
+          51.5098866,
+          -0.3394103
+        ],
+        [
+          51.5098424,
+          -0.3393758
+        ],
+        [
+          51.5097869,
+          -0.3393326
+        ],
+        [
+          51.5097346,
+          -0.3392927
+        ],
+        [
+          51.5096980235483,
+          -0.33926488351513834
+        ]
+      ],
+      "orientation_deg": 120.043,
+      "metres_per_pixel": {
+        "pano": 1.5,
+        "overview": 2.0
+      },
+      "marker_pixel": [
+        189,
+        39
+      ],
+      "maps": {
+        "pano": {
+          "width": 488,
+          "height": 136,
+          "orientation_deg": 120.043,
+          "forward": "right",
+          "metres_per_pixel": 1.5,
+          "marker_pixel": [
+            189,
+            39
+          ],
+          "next_turn_pixel": null,
+          "projection_origin_lat_lon": [
+            51.51111622127396,
+            -0.3406969576501551
+          ],
+          "pixel_offset": [
+            188.58639541173523,
+            38.77931226362617
+          ],
+          "bytes": 16592,
+          "file": "r02_suburban_pano.bin"
+        },
+        "overview": {
+          "width": 136,
+          "height": 136,
+          "orientation_deg": 120.043,
+          "forward": "up",
+          "metres_per_pixel": 2.0,
+          "marker_pixel": [
+            68,
+            112
+          ],
+          "next_turn_pixel": null,
+          "projection_origin_lat_lon": [
+            51.51111622127396,
+            -0.3406969576501551
+          ],
+          "pixel_offset": [
+            68,
+            112
+          ],
+          "bytes": 4624,
+          "file": "r02_suburban_overview.bin"
+        }
+      }
+    },
+    {
+      "id": "r03_junction",
+      "name": "Pub walk 3: junction",
+      "route_id": "main",
+      "progress_start_m": 280,
+      "progress_end_m": 470,
+      "centre": {
+        "lat": 51.50933285319211,
+        "lon": -0.3389846373943537
+      },
+      "route_polyline": [
+        [
+          51.510101180036585,
+          -0.3395847628388871
+        ],
+        [
+          51.5099428,
+          -0.339456
+        ],
+        [
+          51.5098866,
+          -0.3394103
+        ],
+        [
+          51.5098424,
+          -0.3393758
+        ],
+        [
+          51.5097869,
+          -0.3393326
+        ],
+        [
+          51.5097346,
+          -0.3392927
+        ],
+        [
+          51.5094799,
+          -0.339099
+        ],
+        [
+          51.5094297,
+          -0.3390608
+        ],
+        [
+          51.5093889,
+          -0.3390287
+        ],
+        [
+          51.5092804,
+          -0.3389434
+        ],
+        [
+          51.5092663,
+          -0.3389323
+        ],
+        [
+          51.5092535,
+          -0.3389222
+        ],
+        [
+          51.5092179,
+          -0.338891
+        ],
+        [
+          51.5091817,
+          -0.3388594
+        ],
+        [
+          51.5088562,
+          -0.3385816
+        ],
+        [
+          51.5088246,
+          -0.3385544
+        ],
+        [
+          51.508754,
+          -0.3385039
+        ],
+        [
+          51.5087811,
+          -0.3383253
+        ],
+        [
+          51.5087855,
+          -0.3382481
+        ],
+        [
+          51.5087866,
+          -0.3381868
+        ],
+        [
+          51.50878671122763,
+          -0.338184053533239
+        ]
+      ],
+      "orientation_deg": 153.1609,
+      "metres_per_pixel": {
+        "pano": 1.5,
+        "overview": 2.0
+      },
+      "marker_pixel": [
+        185,
+        74
+      ],
+      "maps": {
+        "pano": {
+          "width": 488,
+          "height": 136,
+          "orientation_deg": 153.1609,
+          "forward": "right",
+          "metres_per_pixel": 1.5,
+          "marker_pixel": [
+            185,
+            74
+          ],
+          "next_turn_pixel": [
+            297,
+            74
+          ],
+          "projection_origin_lat_lon": [
+            51.510101180036585,
+            -0.3395847628388871
+          ],
+          "pixel_offset": [
+            185.4389936532758,
+            73.7870474489681
+          ],
+          "bytes": 16592,
+          "file": "r03_junction_pano.bin"
+        },
+        "overview": {
+          "width": 136,
+          "height": 136,
+          "orientation_deg": 153.1609,
+          "forward": "up",
+          "metres_per_pixel": 2.0,
+          "marker_pixel": [
+            68,
+            112
+          ],
+          "next_turn_pixel": [
+            68,
+            28
+          ],
+          "projection_origin_lat_lon": [
+            51.510101180036585,
+            -0.3395847628388871
+          ],
+          "pixel_offset": [
+            68,
+            112
+          ],
+          "bytes": 4624,
+          "file": "r03_junction_overview.bin"
+        }
+      }
+    },
+    {
+      "id": "r04_junction",
+      "name": "Pub walk 4: junction",
+      "route_id": "main",
+      "progress_start_m": 420,
+      "progress_end_m": 610,
+      "centre": {
+        "lat": 51.50851157548324,
+        "lon": -0.3379258084975672
+      },
+      "route_polyline": [
+        [
+          51.508974526433796,
+          -0.3386825864310559
+        ],
+        [
+          51.5088562,
+          -0.3385816
+        ],
+        [
+          51.5088246,
+          -0.3385544
+        ],
+        [
+          51.508754,
+          -0.3385039
+        ],
+        [
+          51.5087811,
+          -0.3383253
+        ],
+        [
+          51.5087855,
+          -0.3382481
+        ],
+        [
+          51.5087866,
+          -0.3381868
+        ],
+        [
+          51.5087944,
+          -0.3379942
+        ],
+        [
+          51.5087234,
+          -0.3379834
+        ],
+        [
+          51.5086872,
+          -0.3379767
+        ],
+        [
+          51.5086253,
+          -0.3379623
+        ],
+        [
+          51.5085433,
+          -0.337935
+        ],
+        [
+          51.5083369,
+          -0.3378752
+        ],
+        [
+          51.50826,
+          -0.337843
+        ],
+        [
+          51.5081092,
+          -0.337787
+        ],
+        [
+          51.5080193,
+          -0.3377435
+        ],
+        [
+          51.5079696,
+          -0.3377267
+        ],
+        [
+          51.5077964,
+          -0.3376634
+        ],
+        [
+          51.50767812185162,
+          -0.3376279694369228
+        ]
+      ],
+      "orientation_deg": 152.2048,
+      "metres_per_pixel": {
+        "pano": 1.5,
+        "overview": 2.0
+      },
+      "marker_pixel": [
+        190,
+        78
+      ],
+      "maps": {
+        "pano": {
+          "width": 488,
+          "height": 136,
+          "orientation_deg": 152.2048,
+          "forward": "right",
+          "metres_per_pixel": 1.5,
+          "marker_pixel": [
+            190,
+            78
+          ],
+          "next_turn_pixel": [
+            208,
+            78
+          ],
+          "projection_origin_lat_lon": [
+            51.508974526433796,
+            -0.3386825864310559
+          ],
+          "pixel_offset": [
+            189.64799577849644,
+            77.54972101841554
+          ],
+          "bytes": 16592,
+          "file": "r04_junction_pano.bin"
+        },
+        "overview": {
+          "width": 136,
+          "height": 136,
+          "orientation_deg": 152.2048,
+          "forward": "up",
+          "metres_per_pixel": 2.0,
+          "marker_pixel": [
+            68,
+            112
+          ],
+          "next_turn_pixel": [
+            68,
+            98
+          ],
+          "projection_origin_lat_lon": [
+            51.508974526433796,
+            -0.3386825864310559
+          ],
+          "pixel_offset": [
+            68,
+            112
+          ],
+          "bytes": 4624,
+          "file": "r04_junction_overview.bin"
+        }
+      }
+    },
+    {
+      "id": "r05_arrival",
+      "name": "Pub walk 5: arrival",
+      "route_id": "main",
+      "progress_start_m": 560,
+      "progress_end_m": 720.37,
+      "centre": {
+        "lat": 51.50741123470855,
+        "lon": -0.337548254200637
+      },
+      "route_polyline": [
+        [
+          51.50811606191861,
+          -0.33778954819258566
+        ],
+        [
+          51.5081092,
+          -0.337787
+        ],
+        [
+          51.5080193,
+          -0.3377435
+        ],
+        [
+          51.5079696,
+          -0.3377267
+        ],
+        [
+          51.5077964,
+          -0.3376634
+        ],
+        [
+          51.5076622,
+          -0.3376232
+        ],
+        [
+          51.5074067,
+          -0.3375469
+        ],
+        [
+          51.50736,
+          -0.3375329
+        ],
+        [
+          51.5073057,
+          -0.3375171
+        ],
+        [
+          51.5072801,
+          -0.3375096
+        ],
+        [
+          51.5072398,
+          -0.3374988
+        ],
+        [
+          51.5070167,
+          -0.3374358
+        ],
+        [
+          51.5068564,
+          -0.337386
+        ],
+        [
+          51.5067836,
+          -0.3373634
+        ],
+        [
+          51.5067621,
+          -0.3373582
+        ],
+        [
+          51.50672951925347,
+          -0.33744155074418136
+        ]
+      ],
+      "orientation_deg": 165.3813,
+      "metres_per_pixel": {
+        "pano": 1.5,
+        "overview": 2.0
+      },
+      "marker_pixel": [
+        192,
+        62
+      ],
+      "maps": {
+        "pano": {
+          "width": 488,
+          "height": 136,
+          "orientation_deg": 165.3813,
+          "forward": "right",
+          "metres_per_pixel": 1.5,
+          "marker_pixel": [
+            192,
+            62
+          ],
+          "next_turn_pixel": [
+            294,
+            68
+          ],
+          "projection_origin_lat_lon": [
+            51.50811606191861,
+            -0.33778954819258566
+          ],
+          "pixel_offset": [
+            191.74531492332167,
+            62.420303566146856
+          ],
+          "bytes": 16592,
+          "file": "r05_arrival_pano.bin"
+        },
+        "overview": {
+          "width": 136,
+          "height": 136,
+          "orientation_deg": 165.3813,
+          "forward": "up",
+          "metres_per_pixel": 2.0,
+          "marker_pixel": [
+            68,
+            112
+          ],
+          "next_turn_pixel": [
+            73,
+            35
+          ],
+          "projection_origin_lat_lon": [
+            51.50811606191861,
+            -0.33778954819258566
+          ],
+          "pixel_offset": [
+            68,
+            112
+          ],
+          "bytes": 4624,
+          "file": "r05_arrival_overview.bin"
+        }
+      }
+    },
+    {
+      "id": "x_cutthrough",
+      "name": "Optional off-route cut-through",
+      "route_id": "cutthrough",
+      "off_route": true,
+      "progress_start_m": 0,
+      "progress_end_m": 180,
+      "centre": {
+        "lat": 51.51167377691673,
+        "lon": -0.34283436793283156
+      },
+      "route_polyline": [
+        [
+          51.5114608,
+          -0.34159
+        ],
+        [
+          51.5114917,
+          -0.3417303
+        ],
+        [
+          51.5115147,
+          -0.3421164
+        ],
+        [
+          51.5115668,
+          -0.3423914
+        ],
+        [
+          51.5116082,
+          -0.3426099
+        ],
+        [
+          51.5117179,
+          -0.3429854
+        ],
+        [
+          51.5117599,
+          -0.343096
+        ],
+        [
+          51.5118886,
+          -0.343411
+        ],
+        [
+          51.5119425,
+          -0.3435486
+        ],
+        [
+          51.5120850332369,
+          -0.34395296650056323
+        ]
+      ],
+      "orientation_deg": 282.6886,
+      "metres_per_pixel": {
+        "pano": 1.5,
+        "overview": 2.0
+      },
+      "marker_pixel": [
+        185,
+        58
+      ],
+      "maps": {
+        "pano": {
+          "width": 488,
+          "height": 136,
+          "orientation_deg": 282.6886,
+          "forward": "right",
+          "metres_per_pixel": 1.5,
+          "marker_pixel": [
+            185,
+            58
+          ],
+          "next_turn_pixel": null,
+          "projection_origin_lat_lon": [
+            51.5114608,
+            -0.34159
+          ],
+          "pixel_offset": [
+            185.24080089879652,
+            57.61885832665912
+          ],
+          "bytes": 16592,
+          "file": "x_cutthrough_pano.bin"
+        },
+        "overview": {
+          "width": 136,
+          "height": 136,
+          "orientation_deg": 282.6886,
+          "forward": "up",
+          "metres_per_pixel": 2.0,
+          "marker_pixel": [
+            68,
+            112
+          ],
+          "next_turn_pixel": null,
+          "projection_origin_lat_lon": [
+            51.5114608,
+            -0.34159
+          ],
+          "pixel_offset": [
+            68,
+            112
+          ],
+          "bytes": 4624,
+          "file": "x_cutthrough_overview.bin"
+        }
+      }
+    }
+  ]
+}

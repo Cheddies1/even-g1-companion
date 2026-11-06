@@ -102,7 +102,8 @@ receiver registers in `MainActivity.onCreate`, so open the app after a
 reinstall. `--es batch <file>` runs a timed packet script from the app's
 external `files/probe/` dir; `tool/nav_harness.py` generates the `0x0a` ones.
 On the master (R) many responses are queued and arrive late; use L acks for
-timing. Anything worth keeping belongs in `Proto`.
+timing. Anything worth keeping belongs in `Proto`. While a batch runs the probe
+holds back `F5 00/02/03` from Dart (every mode acts on tilt; close kills nav).
 
 Device access: adb over Tailscale at `100.89.74.113:5555` (after a phone
 reboot it needs USB `adb tcpip 5555` first).

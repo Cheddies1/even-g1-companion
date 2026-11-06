@@ -18,13 +18,21 @@ Usage:
   python3 tool/nav_harness.py push           # gen + adb push to the app
   python3 tool/nav_harness.py run <name>     # broadcast one batch
   python3 tool/nav_harness.py stop
+
+Phase 2 fixtures: every `<scene>_pano.bin` + `<scene>_overview.bin` pair in
+tool/nav_fixtures/ becomes `s_<scene>.txt`: boot with the scene's maps, marker
+at the scene's position (scenes.json, else centre), then hold for a walk.
 """
+import glob
+import json
 import os
 import subprocess
 import sys
 
 PKG = "com.eddie.evencompanion"
 OUT = os.path.join(os.path.dirname(__file__), "..", "build", "navharness")
+FIXTURES = os.path.join(os.path.dirname(__file__), "nav_fixtures")
+SCENE_HOLD_S = 600
 REMOTE = f"/sdcard/Android/data/{PKG}/files/probe"
 
 PW, PH = 488, 136
@@ -203,7 +211,7 @@ def send_pano(lines, raw, label, master_last=True):
     lines.append(f"mark pano {label} end")
 
 
-def boot(name, pano):
+def boot(name, pano, overview=None, pos=(244, 68), road=None):
     L = ["# clear + INIT + overview + panoramic, marker at centre"]
     # INIT does not take over a live 0x4E text surface (device, 2026-11-06)
     L.append("B 18")
@@ -211,9 +219,9 @@ def boot(name, pano):
     tx(L, init())
     L.append("sleep 100")
     tx(L, sync())
-    tx(L, pos_trip(244, 68))
+    tx(L, scene_trip(pos, road))
     L.append("mark overview start")
-    ov = overview_packets(overview_img())
+    ov = overview_packets(overview if overview is not None else overview_img())
     for p in ov:
         tx(L, p)
     L.append(f"mark overview end packets={len(ov)}")
@@ -222,8 +230,50 @@ def boot(name, pano):
     # The slave (L) finishes its maps after the master; without a later
     # TRIP_STATUS it can stay on "route is being generated" (device, 2026-11-06).
     L.append("sleep 300")
-    tx(L, pos_trip(244, 68))
+    tx(L, scene_trip(pos, road))
     return L
+
+
+def scene_trip(pos, road=None):
+    if road is None:
+        return pos_trip(*pos)
+    # Head-level page shows road text + built-in arrow; keep under the caps.
+    return trip(2, pos[0], pos[1], t="", dist="", road=road[:60], turn="", speed="")
+
+
+def clamp_marker(x, y):
+    return min(max(int(x), 6), 482), min(max(int(y), 6), 130)
+
+
+def scene_sessions():
+    """Fixture scenes from tool/nav_fixtures/ (phase 2, gate B)."""
+    meta = {}
+    path = os.path.join(FIXTURES, "scenes.json")
+    if os.path.exists(path):
+        data = json.load(open(path))
+        items = data if isinstance(data, list) else data.get("scenes", data)
+        if isinstance(items, dict):
+            items = [dict(v, name=k) for k, v in items.items()]
+        meta = {m.get("id") or m.get("name"): m for m in items}
+    out = {}
+    for pano_path in sorted(glob.glob(os.path.join(FIXTURES, "*_pano.bin"))):
+        name = os.path.basename(pano_path)[:-len("_pano.bin")]
+        ov_path = os.path.join(FIXTURES, f"{name}_overview.bin")
+        pano, ov = open(pano_path, "rb").read(), open(ov_path, "rb").read()
+        assert len(pano) == 2 * PW * PH // 8, f"{pano_path}: {len(pano)} B"
+        assert len(ov) == 2 * OW * OH // 8, f"{ov_path}: {len(ov)} B"
+        m = meta.get(name, {})
+        mk = m.get("marker_pixel") or m.get("marker") or {}
+        if isinstance(mk, dict):
+            mk = (mk.get("x", 244), mk.get("y", 68))
+        pos = clamp_marker(*(mk or (244, 68)))
+        # End any nav session a stopped scene left running: INIT on a live
+        # session is acked 00 and the new maps never show (device, 2026-11-06).
+        L = ["mark exit previous", "B " + exit_().hex(), "sleep 3000"]
+        L += boot(name, pano, ov, pos, road=f"scene {name}")
+        out[f"s_{name}.txt"] = (L + [f"mark hold {SCENE_HOLD_S}s"] + keepalive(SCENE_HOLD_S)
+                                + ["mark exit", "B " + exit_().hex()])
+    return out
 
 
 def sweep():
@@ -337,6 +387,7 @@ def gen():
     files["t5_ovswap.txt"] = (boot("route", pano_route()) + overview_swaps(2) + overview_swaps(5, 3)
                               + ex)
     files["t4_arrows.txt"] = boot("route", pano_route()) + arrows() + ex
+    files.update(scene_sessions())
     for name, lines in files.items():
         with open(os.path.join(OUT, name), "w") as f:
             f.write("\n".join(lines) + "\n")

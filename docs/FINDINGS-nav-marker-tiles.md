@@ -165,3 +165,42 @@ Glance's notification close sends `0x18` and kills nav mid-test.
 | `t4_arrows.txt` | arrows 1-0x23, 2 s each (head level) |
 | `t5_ovswap.txt` | mini-map swaps every 2 s and 5 s (head level) |
 | `t0_headup.txt` | simulated head-up (no visible effect) |
+| `s_<scene>.txt` | phase 2 fixture scene from `tool/nav_fixtures/`: exit any live nav, wait 3 s, boot with the scene's maps, hold 600 s |
+
+## Gate B: fixture tiles walked (phase 2)
+
+**Date:** 2026-11-06. **Verdict: gate B passes.** All six scenes are legible at head level
+(mini-map) and tilted up (panoramic), with both lenses rendering in sync. No scene was marginal
+or dead.
+
+Renderer: `cartographer` on deepthought (Codex-owned, `/home/eddie/projects/personal/cartographer/`),
+from an OSM extract of a ~5 km bbox around Hanwell. Fixtures and `scenes.json` are in
+`tool/nav_fixtures/`. Defaults: panoramic forward = right at 1.5 m/px; mini-map forward = up at
+2 m/px with ~224 m look-ahead; route 4 px on the bright layer, sparse context streets on the dim
+layer, no labels or fills.
+
+Route: Campbell Road / Golden Manor junction to The Dodo Micropub, Boston Road, ~720 m, five
+tiles of ~190 m with ~50 m overlap. The tiles were stepped by hand; the marker was static at
+each tile start, and the arrow was a fixed straight-on placeholder, not the next manoeuvre.
+
+| Scene | Route m | Mini-map | Panoramic | Notes from the walk-through |
+|---|---|---|---|---|
+| `r01_suburban` | 0-190 | legible | legible | clear, matched streets known well |
+| `r02_suburban` | 140-330 | legible | legible | Connolly Dell park and Station Road readable; tilt-up a useful overview |
+| `r03_junction` | 280-470 | legible | legible | junction ahead clear, clean render |
+| `r04_junction` | 420-610 | legible | legible | Uxbridge Road / Boston Road left/right very clear; the busiest junction |
+| `r05_arrival` | 560-720 | legible | legible | last stretch of Boston Road to the pub correct |
+| `x_cutthrough` | off-route | legible | legible | sweeping right-hand footpath, followable and distinct from roads |
+
+Judged by Eddie wearing the glasses with route knowledge, not on a moving walk; good enough for
+a legibility gate, and phase 5 is the moving test.
+
+Harness lessons (device, 2026-11-06):
+
+- Stopping a batch does not end nav on the glasses. Send `0x0a 05` EXIT and wait about 3 s
+  before the next INIT; INIT about 1 s after EXIT leaves the display blank while SYNC still
+  reports running.
+- Every app mode acts on tilt-up (Capture records, Chat listens, Navigate redraws) and on close
+  (sends `0x18`, which kills nav). The debug probe now holds back `F5 00/02/03` from Dart while a
+  batch runs.
+- The L INIT reply `0a 06 00 <seq> 00 00` is normal, also on a clean start.

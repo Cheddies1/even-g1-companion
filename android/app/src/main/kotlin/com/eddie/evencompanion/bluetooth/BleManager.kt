@@ -733,6 +733,16 @@ class BleManager private constructor() {
                         Log.i(PROBE_TAG, "RX $side ${value.joinToString("") { "%02x".format(it) }}")
                     }
                 }
+                // While a probe batch drives the display, hold back close and tilt
+                // gestures from Dart: every mode acts on tilt-up (Capture records,
+                // Chat listens) and close sends 0x18, which kills a nav session.
+                if (probeEnabled && probeBatchRunning && value.size > 1 &&
+                    value[0] == 0xF5.toByte() &&
+                    (value[1] == 0x00.toByte() || value[1] == 0x02.toByte() || value[1] == 0x03.toByte())
+                ) {
+                    Log.i(PROBE_TAG, "batch: held back F5 %02x from app".format(value[1]))
+                    return@launch
+                }
                 //  eg. LC3 to PCM
                 if (isMicData) {
                     val lc3 = value.copyOfRange(2, 202)

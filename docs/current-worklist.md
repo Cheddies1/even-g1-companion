@@ -89,6 +89,7 @@ Working, but still needs real-world observation:
   2. **Map line-drawing** — renders a line-drawing of the map into the panoramic-map region (488×136) of the HUD; mini-map (136×136) shows the derived maneuver direction icon.
   3. **Walking / pedestrian directions** — this is a walking use case; routing quality for pedestrians is a first-class criterion.
   4. **Screen-off operation** — the current notification approach degrades or breaks when the phone screen is off; the replacement must work reliably with the screen off.
+- **Superseded 2026-11-06**: the firmware decomp showed `TRIP_STATUS` `pos_x`/`pos_y` moves a marker over the panoramic map without resending it, and `direction` selects built-in arrows. The plan is now deepthought pre-rendered route-forward tiles + phone-driven marker; see [plans/navigate-v1-cartographer.md](plans/navigate-v1-cartographer.md). The June decision below is kept for history.
 - **Architecture decision (2026-06-20, revised 2026-06-20 after Codex peer review): thin phone + thick Deepthought — vector scene graph**
   - **`cartographer` (Deepthought) — route compiler:** Tailscale-reachable, *not part of Hermes* (Hermes owns agent/assistant concerns; cartographer owns GIS/route/raster — clean separation). At trip start, receives origin + destination and returns:
     ```
