@@ -131,18 +131,25 @@ Working, but still needs real-world observation:
 - **Priority**: High - removes the biggest input constraint the app has been designed around
 - **Effort**: ~1 day design + implementation, plus a device session
 - **Context**: Device run 2026-11-06 (S24 Ultra, fw 1.6.6) confirmed that with a `0x4E` surface sent with status `0x51` (twice), single taps reach the phone as `F5 01`, tagged with the lens tapped (R, R, L, L in four taps). Under our usual `0x71`, on the dashboard and when idle they stay firmware-only, which is why every earlier test said "absorbed". Source: `src/threads/threads.c:2225-2262` in the `1.66_exact` decomp. Full status-nibble table in [protocol-reference.md](protocol-reference.md) § `0xF5 0x01`.
-- **Traps found on device**:
-  - a `0x5x` render overlays whatever text was already on screen (the Capture idle prompt showed through) rather than clearing it, so clear or fully repaint first
-  - in Glance mode the first `0x51` render made the right lens emit `F5 00`, which the Glance close handler acted on and cleared the screen. Every mode treats `F5 00` as close, so a self-inflicted `F5 00` after our own render must be ignored
-  - the first `0x5x` send sets a 16 s auto-dismiss; the second makes it manual
-  - `0x5x` is in the Even AI surface family, so retest the Even AI flash on clear ([FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md)) alongside it
-- **Candidate uses**: Glance carousel paging (left previous, right next), Quick Actions Next/Done on a displayed list item (`router-v1-glance-handlers`), dismissing a Chat reply.
+- **Recipe (`Confirmed` on device 2026-11-06)**: open with status `0x31`, pin by re-sending the same page with `0x51`, page with `0x51` updates, close on `F5 00` (double tap), tilt-down or timeout. Clean layout, no auto-dismiss once pinned, `F5 01` tagged L/R, clean page swaps. `0x51` from idle draws nothing, and `0x71` then `0x51` overlays two layouts - do not use either. Full detail in [protocol-reference.md](protocol-reference.md) § "Recipe: tap-enabled text surface".
+- **Costs to design around**:
+  - "Even AI Listening" entry screen flashes once per open (not per page)
+  - text area is 472 px (x 88-560) instead of 576; `G1TextLayout` needs a second wrap width, and long notifications gain a line
+  - our own `0x18` (and sometimes a render) makes the right lens emit `F5 00`; every mode treats that as close, so ignore `F5 00` briefly after our own renders and clears
+  - a mis-hit double tap arrives as `F5 01` then `F5 00`
+- **Glance design (agreed 2026-11-06)**:
+  - tilt-up opens the carousel on the tap-enabled surface (tilt-up advance stays as a fallback)
+  - right tap = "read, next"; left tap = back
+  - phone dismissals are deferred: notifications paged past are marked pending and only dismissed on the phone when the carousel closes (double tap, tilt-down or timeout), so left tap can genuinely go back within a session. Protected and ongoing notifications are never dismissed, as today
+  - closing the carousel commits the pending dismissals - the same "read it, it's gone" behaviour as tilt-up then tilt-down today
+- **Other candidate uses**: Quick Actions Next/Done on a displayed list item (`router-v1-glance-handlers`), dismissing a Chat reply.
 - **Acceptance**:
-  - [ ] Decide which surfaces switch from `0x71` to `0x5x`, and the left/right tap semantics per mode, in `CompanionController` (mode ownership stays there).
-  - [ ] Self-inflicted `F5 00` after a `0x5x` render does not close the surface; a real double-tap close still works.
-  - [ ] No overlay artefacts when moving between `0x71` and `0x5x` surfaces.
-  - [ ] Even AI flash rate on clear not worse than before.
-  - [ ] AGENTS.md trusted-behaviour and `even-g1-event-mapping.md` updated with the shipped behaviour.
+  - [ ] Glance carousel uses the open/pin/page recipe; right tap advances, left tap goes back, tap semantics live in `CompanionController` (mode ownership stays there).
+  - [ ] Phone dismissal deferred to carousel close; left tap can return to a notification paged past in the same session.
+  - [ ] Self-inflicted `F5 00` after our own render or clear does not close the surface; a real double-tap close still works.
+  - [ ] `G1TextLayout` wraps to the 472 px Even AI layout for these surfaces.
+  - [ ] Even AI flash on open and on clear judged acceptable on device, or mitigated.
+  - [ ] AGENTS.md trusted-behaviour, `current-behaviour.md` and `even-g1-event-mapping.md` updated with the shipped behaviour.
 
 ### cartographer-frame-prototype: Spike 1 — rendering feasibility: three pathological scenes
 - **Status**: Next

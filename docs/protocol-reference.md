@@ -90,24 +90,50 @@ renders nothing:
     |---|---|---|---|
     | `0x3x` | 7 | yes | 16 s |
     | `0x4x` | 8 | yes | 8 s |
-    | `0x5x` | 9 if the surface is already type 7+, otherwise 7 | yes | none once type 9 (16 s on the first send) |
+    | `0x5x` | 9 if the surface is already type 7+; 7 if it is type 6; otherwise **unchanged** (nothing new is drawn) | yes | none once type 9 |
     | `0x6x` | 10, and stops the mic | yes | - |
     | `0x7x` | 15 | **no** | - |
 
     Our app sends `0x71` everywhere, which is why every earlier test said
-    "firmware-only". Sending `0x5x` twice gives a manual surface that stayed
-    up well past 16 s on device.
+    "firmware-only".
 
-Caveats from the 2026-11-06 run:
-- a `0x5x` render **overlays** whatever text was already on screen (the
-  Capture idle prompt showed through) rather than clearing it; clear first
-- in Glance mode the first `0x51` render made the right lens emit `F5 00`,
-  and our Glance close handler acted on it and cleared the screen. Any app
-  use of `0x5x` must tolerate this self-inflicted `F5 00`
-- the `0x5x` surface types 7-11 are the Even AI surface family, so retest the
-  Even AI flash on clear (`FINDINGS-evenai-flash-on-clear.md`) alongside any
-  adoption
-- tracked as `single-tap-0x5x-adoption` on the worklist
+Layout (`Firmware-source`, `src/ui/ui_even_ai.c:236-332`): types 15/16
+(`0x7x`) draw full width, x 0 to `0x240` (576 px). Types 7-11 (`0x3x`-`0x5x`)
+draw the Even AI layout: text from x `0x58` to `0x230` (88 to 560 px, 472 px
+wide), an 88 px left gutter, and a scroll bar at `0x23c` unless hidden.
+
+#### Recipe: tap-enabled text surface (`Confirmed`, 2026-11-06)
+
+Device run on S24 Ultra, fw 1.6.6, both lenses, driven from the debug probe:
+
+1. **Open** - send the page with status `0x31`. Works from any prior state,
+   draws the narrow layout cleanly with no leftovers, and did not emit `F5 00`.
+2. **Pin** - re-send the same page with status `0x51`. The surface becomes
+   type 9: no auto-dismiss (still up 15 s+ past the 16 s mark), and single
+   taps arrive as `F5 01` tagged with the lens tapped (R L R L, 4/4).
+3. **Page** - send new content with status `0x51` only. Clean swap, no flash,
+   no leftovers from the previous page.
+4. **Close** - a user double tap arrives as `F5 00` (the firmware reports
+   double click as close over a text surface, `src/threads/threads.c:2296-2340`;
+   `F5 20` only fires from idle). Tilt-down and our own `0x18` still work.
+
+What does **not** work:
+- `0x51` from idle (after `0x18`): the surface type is left unchanged, so
+  nothing is drawn.
+- `0x71` then `0x51`: the `0x51` redraw uses the narrow layout without wiping
+  the full-width text, so both show, offset by the gutter.
+
+Costs:
+- opening with `0x31` shows the firmware's "Even AI Listening" entry screen
+  briefly, once per open (not per page)
+- 472 px text width instead of 576; `G1TextLayout` needs a second wrap width
+- `0x18` emits `F5 00` from the right lens, and in Glance mode a `0x51` render
+  over a `0x71` surface did too. Every mode treats `F5 00` as close, so the
+  app must ignore `F5 00` for a short window after its own renders and clears
+- a mis-hit double tap arrives as `F5 01` followed by `F5 00`; nothing to
+  debounce, but "next" may fire before the close
+
+Tracked as `single-tap-0x5x-adoption` on the worklist.
 
 ### `0xF5 0x02`
 

@@ -235,19 +235,21 @@ Only build on event meanings we trust from live testing:
 - `F5 1E` / `30` = dashboard/state-up follow-on
 - `F5 1F` / `31` = dashboard/state-down follow-on
 - `F5 20` = double-tap delegates to host (Transcribe / Translate / Teleprompter all fire it; Dashboard and None do not)
-- `F5 01` = single tap, **only** while a `0x4E` surface sent with status
-  `0x5x` is up (`Confirmed` 2026-11-06, both lenses, tagged with the lens
-  tapped). Send the `0x5x` render twice to get a manual surface with no
-  auto-dismiss
+- `F5 01` = single tap, **only** while a tap-enabled `0x4E` surface is up
+  (`Confirmed` 2026-11-06, both lenses, tagged with the lens tapped). Recipe:
+  open with status `0x31`, pin by re-sending with `0x51`, page with `0x51`
+  updates. See `docs/protocol-reference.md` § "Recipe: tap-enabled text surface"
 
 Important:
 - single taps are firmware-only under our usual `0x4E` status `0x71`, on the
   dashboard and when idle - that is why every test before 2026-11-06 saw
   nothing. Under status `0x3x`-`0x6x` they reach the phone
   (`src/threads/threads.c:2225-2262` in the decomp). Two traps if you adopt
-  it: a `0x5x` render overlays the previous text rather than clearing it, and
-  switching into it can make the right lens emit `F5 00`, which every mode
-  treats as "close". Tracked as `single-tap-0x5x-adoption`
+  it: `0x51` from idle draws nothing and `0x71` then `0x51` overlays two
+  layouts (open with `0x31` instead), and our own clears and renders can make
+  the right lens emit `F5 00`, which every mode treats as "close". Over a
+  text surface, double tap arrives as `F5 00`, not `F5 20`. Tracked as
+  `single-tap-0x5x-adoption`
 - do not treat Python SDK labels as ground truth
 - right long-press (QuickNote) does NOT fire `F5 17`/`F5 18`; it uses the `0x21` family. Left and right long-press are not symmetric.
 
