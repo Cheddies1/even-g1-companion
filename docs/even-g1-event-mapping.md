@@ -145,9 +145,25 @@ For the full model with examples and evidence, see
 
 ### `F5 01`
 
-- Meaning: app-routed paging event in code, but not confirmed from current
-  device testing
-- Confidence: Vendor-claimed only for real firmware behaviour; the current app code does route it (see Notes)
+- Meaning: single tap, forwarded to the phone only in specific firmware states
+- Confidence: Confirmed (2026-11-06) for `0x4E` status `0x5x`; everything
+  below the 2026-11-06 note is the older negative result, true only for the
+  states it tested
+- **Corrected 2026-11-06.** The named firmware source reports a single tap as
+  `F5 01` when the `0x4E` text surface type is 7-11 (status nibble
+  `0x3x`/`0x4x`/`0x5x`/`0x6x`), during onboarding, while the teleprompter is
+  ready, while Even AI v2 is listening, or in head-up calibration
+  (`src/threads/threads.c:2225-2262`). Device run 2026-11-06 (S24 Ultra, fw
+  1.6.6): a `0x4E` render with status `0x51`, sent twice, then four single
+  taps produced four `F5 01`, each tagged with the lens tapped (R, R, L, L).
+  The surface stayed up past 16 s. Our app's `0x71` gives surface type 15,
+  which is outside the range, and the dashboard is outside it too - which is
+  why every earlier test, including the capture below, saw nothing. Caveats:
+  a `0x5x` render overlays the previous text rather than clearing it, and in
+  Glance mode the first `0x51` render made the right lens emit `F5 00`, which
+  Glance treated as close. Full table in
+  [protocol-reference.md](protocol-reference.md) § `0xF5 0x01`; adoption is
+  `single-tap-0x5x-adoption` on the worklist
 - Evidence:
   - in Flutter, [lib/ble_manager.dart](../lib/ble_manager.dart#L182)
     routes:
@@ -164,11 +180,12 @@ For the full model with examples and evidence, see
     cycled) but **no** `F5 01` (or any other F5 event) fired. This is the
     strongest possible negative result for the "firmware forwards taps when
     there's a target" hypothesis.
-  - current model: single taps are absorbed by the firmware in every observed
-    state. The companion app should not be designed around them.
+  - former model (superseded 2026-11-06, see above): single taps are
+    absorbed by the firmware in every observed state. True for the dashboard,
+    idle and `0x7x` text surfaces only.
   - `Firmware-source` (2026-09-07) corroborates this, and explains the
     mechanism. `touch_key_thread.c` classifies the gesture into a key-event
-    type (`DAT_200084f8`: 1 = single click, plus types 2-6 for the other
+    type (`key_event_type`: 1 = single click, plus types 2-6 for the other
     gestures) and `key_event_thread.c` dispatches it. The single-click branch
     goes to firmware-local actions and master→slave sync — the thread logs
     `master send calendar key single click ,timestamp = %d` and
@@ -181,7 +198,8 @@ For the full model with examples and evidence, see
     dashboard and to the other temple, not to the host. Corroboration rather
     than proof — the decompilation is only 60% labelled on app functions and
     another route out cannot be excluded — but it points the same way.
-    **Guardrail stands.**
+    The "another route out" turned out to exist (the surface-type branch
+    above), so the guardrail is lifted for `0x5x` surfaces.
 
 ### Confirmed (promoted from Suspected post-implementation)
 
@@ -242,6 +260,9 @@ For the full model with examples and evidence, see
 
 - Meaning: triple-tap silent-mode enable
 - Confidence: Confirmed
+- Also (`Firmware-source`, 2026-11-06): emitted when the fuel gauge reports
+  an abnormal temperature and the display enters its abnormal-temperature
+  mode (`src/sensors_audio/fuel_gauge.c:187`). Not every `F5 04` is a tap
 - Evidence:
   - observed during triple-tap testing
   - 2026-04-28 taps capture: `F5 04` at `14:07:48` correlates with the user's
@@ -405,6 +426,8 @@ fed from the existing F5 dispatch in
   - matched the on-screen "Case 60%" value in the official app exactly
     (`0x3c` = 60)
   - pushed alongside other cradle state events; less frequently than `F5 0A`
+  - `Firmware-source` (2026-11-06): the byte is `get_pt_level()`, a level
+    stored by `get_battery_info()`, not a live gauge read
 
 #### `F5 12 <level>`
 
@@ -551,9 +574,17 @@ BMP transfer were identified in the 2026-04-28 layouts capture — see
 These event IDs have been observed but are not yet mapped with enough confidence
 to assign a meaning:
 
-- `F5 11`
-- `F5 14`
-- `F5 15`
+- ~~`F5 11`~~ bind finished (`src/threads/threads.c:312`, `:409`)
+- ~~`F5 14`~~, ~~`F5 15`~~ onboarding step transitions (`F5 13`-`F5 16`,
+  `src/ui/ui_onboarding.c`)
+
+Resolved 2026-11-06 from the named source, along with `F5 09` (glasses
+charging state, `src/threads/threads.c:462`), `F5 0E` (case charging status,
+`:475`), `F5 10` (onboarding head-up hint) and `F5 19` (double tap during
+onboarding, `:2299`). Full list in
+[protocol-reference.md](protocol-reference.md) § "Other `0xF5` codes the
+firmware emits".
+
 - `F5 32` — note this is hex `0x32` (= 50 decimal), distinct from the newly
   identified `F5 20` (hex `0x20` = 32 decimal). `F5 32` has not been observed
   in either of the recent snoop captures.

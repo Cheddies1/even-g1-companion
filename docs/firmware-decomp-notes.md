@@ -2,14 +2,22 @@
 
 > **Document type:** G1 reference — external comparison
 > **Audience:** Anyone integrating with or reverse-engineering the Even Realities G1
-> **Evidence basis:** Ghidra decompilation of the G1 firmware binary (app core + net core). Not capture-based, not live-tested.
+> **Evidence basis:** Named C source for the G1 v1.66 firmware (app core + net core) that rebuilds byte-identical to the shipped images. Originally read as a Ghidra export. Not capture-based; items marked `Confirmed` were checked on device.
 
 Artifact:
 
 - Repo: `https://github.com/JohnRThomas/even_realities_decomp`
-- Read at commit `f571782`, "Raw Export 08/03/2026"
-- Self-reported coverage at that export: 2,948 total functions, 2,565 labelled (87%); 871 app-specific functions, 521 labelled (60%)
-- Net core is stock nRF DFU sample — no custom Even Realities code in it
+- **Current baseline:** branch `1.66_exact`, commit `435c138` (2026-11-05),
+  "Update source to compile exactly to the 1.66 FW binary". 100% of app and
+  net core functions labelled, real file and function names, and
+  `exact_build_1_66/build_repro.sh` reproduces `app_update.bin` and
+  `net_core_app_update.bin` byte for byte. Re-based 2026-11-06
+- Originally read at commit `f571782`, "Raw Export 08/03/2026" (Ghidra export,
+  87% of functions labelled, 60% of app functions). File names quoted below
+  from that export (`ble_process_put_req.c`, `touch_key_thread.c` and so on)
+  are the old export's; the named source moved them (see "Re-base onto
+  `1.66_exact`")
+- Net core is Nordic's `hci_rpmsg` controller plus the vendor's ESB code
 
 ## Why this source is different from the others
 
@@ -39,6 +47,75 @@ Two things it is not:
 The unexpectedly valuable part is that the decompiler preserved the firmware's
 `printk` format strings, so we get Even Realities' own internal names for
 fields, sub-commands and error conditions.
+
+## Re-base onto `1.66_exact` (2026-11-06)
+
+The named source changes the evidence grade. Because it compiles to the
+shipped bytes, behaviour read out of it is the shipped behaviour, not a
+decompiler's approximation. Offsets are now trustworthy; the "not byte-exact"
+caveat below applies only to claims still quoting the old export.
+
+Where the dispatch now lives: `src/ble/ble_proto.c` (the PUT/GET/POST
+handlers, formerly `ble_process_put_req.c`, `ble_process_get_req.c`,
+`ble_process_req_dispatch.c`), `src/threads/ble_req.c` (the
+master-processed subset, formerly `master_process_put_req.c`),
+`src/ble/ble_cmd.h` (every opcode and `0x26` sub-command named),
+`src/threads/threads.c` (touch, key-event and display threads).
+
+Old raw names used in our docs, and their real names:
+
+| Old (Ghidra) | Real |
+|---|---|
+| `FUN_000800ca` | `exit_running_task_keep_status` |
+| `FUN_0007ff66` | `exit_running_task` |
+| `FUN_0002da10` | `is_task_running` (spins 1 ms per iteration) |
+| `DAT_20019a6a` | `task_status_lock` |
+| `FUN_00030458` | `dmic_stream_stop` |
+| `DAT_20003052` | `dmic_stop_state` |
+| `FUN_00033d5c` | `get_pt_test_mode` |
+| `DAT_2001abc2` | `pt_test_mode` |
+| `FUN_00033760` | `get_pt_level` |
+| `FUN_00019d14` | `spim_transfer` |
+| `FUN_0007f41e` | `set_esb_up_recv_state` |
+| `FUN_0007f472` | `save_esb_snapshot` |
+| `DAT_20019a67` / `68` / `69` | `deferred_text_ack_idx` / `_total` / `_cmd` |
+| `DAT_200084f8` | `key_event_type` |
+| `DAT_20007f50` bit 2 | `dashboard_lock_requested` |
+
+What the re-base corrected or added (details in
+[protocol-reference.md](protocol-reference.md)):
+
+- **Single taps reach the phone** as `F5 01` when the `0x4E` surface type is
+  7-11 (status nibble `0x3x`-`0x6x`), plus onboarding, teleprompter ready,
+  Even AI v2 listening and head-up calibration
+  (`src/threads/threads.c:2225-2262`). `Confirmed` on device 2026-11-06 with
+  status `0x51`. The "absorbed" section below was right only for `0x71`
+- **`0x50` is a dashboard-state probe**, not a lock: it arms a 1 s window in
+  which the master pushes `50 06 00 00 01 01|02` if the dashboard is up, and
+  neither `0x0a` INIT nor `0x52` reads it (`src/ble/ble_proto.c:3933-3958`)
+- **`0x25` sub 4 is the teleprompter app-sync packet** and `0x1f` is
+  `TUTORIAL_CONTROL`; link liveness is any NUS write within 30 s on Android
+  (`src/threads/threads.c:2992-2995`)
+- **`0x0a` INIT and SYNC are acked**; only the master counts SYNC, with about
+  19 s of grace (`src/ui/ui_navigation_map.c:387-412`)
+- **`0x53` needs `53 06 00 <seq> <op> <data>`**; the bare byte we sent never
+  reset the 30 s transcribe timeout. Fixed and `Confirmed` 2026-11-06
+- **`0x4E` reassembles into a 480-byte buffer with no bounds check**, and the
+  master's final `C9` is sent after the redraw
+- **`F5 0F`** comes from `get_pt_level()`, a level stored by
+  `get_battery_info()`, not a live getter
+- **`0x07` countdown** is real but its digits render as garbage on 1.66
+  (`Confirmed`); see below
+- the source's own comment at `src/include/glasses_state.h:680` calls the
+  master "left"; the master advertises `_R_` (`src/ble/ble_ancs.c:868-891`),
+  so "right lens is master" stands. The simulator README repeats the source's
+  mislabel
+
+Companion repo: `JohnRThomas/Even-G1-Simulator` runs firmware images on two
+emulated nRF5340 lenses in Renode. Its virtual phone only writes frames (no
+pairing, no notifications back), but each lens's framebuffer is readable, so
+it is a "send these bytes, see what draws" harness and a pre-flash safety net
+for modified firmware, not a replacement for device tests.
 
 ## Confidence labels used here
 
@@ -119,16 +196,23 @@ It is driven off an internal message queue:
 `0xf5`. So "does this gesture reach the phone?" is really "does its handler
 enqueue an `0xf5` message?".
 
-**`F5 0F` is a getter-sourced value byte.** Built as `F5 0F <FUN_00033760()>`,
-same shape as `F5 0E`. Consistent with our case-battery reading.
+**`F5 0F` is a stored value byte.** Built as `F5 0F <get_pt_level()>`,
+same shape as `F5 0E`. Consistent with our case-battery reading. Corrected
+2026-11-06: `get_pt_level()` returns a level stored by `get_battery_info()`
+(`src/production_test/production_test.c:1194-1209`), not a live reading.
 
 **`F5 12 <level>` is a state-byte push.** Built as `F5 12 <byte at +0x759>` —
 a stored value, which is why it echoes the applied level rather than the
 requested one.
 
+> **Superseded 2026-11-06.** True only while the surface is the dashboard
+> or a `0x7x` text render. The named source forwards single taps as `F5 01`
+> for `0x4E` status `0x3x`-`0x6x` and a few other states, and a device run
+> confirmed it. See "Re-base onto `1.66_exact`" above.
+
 **Single taps are absorbed by the firmware**, and now we know why.
 `touch_key_thread.c` classifies each gesture into a key-event type
-(`DAT_200084f8`: 1 = single click, 2-6 = the others) and `key_event_thread.c`
+(`key_event_type`: 1 = single click, 2-6 = the others) and `key_event_thread.c`
 dispatches it. Single click goes to firmware-local actions and master→slave
 sync — `master send calendar key single click ,timestamp = %d`,
 `Click event does not respond, close Quicknote to prevent exceptions`. It does
@@ -246,7 +330,7 @@ wrong leg. A re-probe should set auto on and query both legs.
 
 One further correction: this note originally said the response is assembled by
 "forwarding the request over SPI to the **other temple**". That is more than
-the source supports. `FUN_00019d14` logs `spim tx` / `spim ret` around the call
+the source supports. `spim_transfer` logs `spim tx` / `spim ret` around the call
 and the handler is named `master_process_put_req`, but whether the struct it
 reads holds the peer's state or local state is not established. There is
 separately an ESB path for temple-to-temple traffic (`sync_to_slave`,
@@ -392,10 +476,15 @@ alongside a full `ui_teleprompter_task.c` (33 KB, one of the larger UI tasks).
 `draw_template_translate_screen.c` are the sibling modes. Three
 firmware-rendered display surfaces we have never touched.
 
-### `BLE_REQ_PUT_COUNTDOWN_TIMER`
+### `BLE_REQ_PUT_COUNTDOWN_TIMER` (`0x07`)
 
-Exists in `ble_process_put_req.c`. A firmware-native timer needs no display
-work from us.
+`07 <seconds u32 LE> <enable>`. `Confirmed` 2026-11-06: both legs ack
+`07 c9`, the firmware draws an hourglass with garbled digits, then an alarm
+bell at zero, then clears. `draw_template_countdown_page`
+(`src/notify/ui_countdown.c`) passes the raw digit 0-9 to
+`font_ascii_get_glyph`, and the zero-state string is Chinese the font cannot
+render. Unusable as shipped; a firmware-mod candidate. Quick Actions timers
+stay app-drawn.
 
 ### `spec_ble_command_hook.c` is an on-device command simulator
 
@@ -433,7 +522,7 @@ source rather than inferred from renders.
 warning: not test mode,disable setting
 ```
 
-The gate is `DAT_2001abc2`, set by `enter_into_testmode.c` / `set_test_mode.c`.
+The gate is `pt_test_mode`, set by `enter_into_testmode.c` / `set_test_mode.c`.
 Not a free win, and test mode is not somewhere to go casually. Recorded for
 completeness — skipping the LC3 decode in Capture would be nice, but not at
 this price.
@@ -449,8 +538,9 @@ firmware actually does with those 90 rows, this is where it is written down.
 
 - Does the `0x0a` error frame reach BLE, or only the inter-leg channel?
 - What is the field at brightness-context `+0xf9c` (`0x29` response byte 3)?
-- Which of `0x11` / `0x12` in `0x06 0x01` is the weather icon and which is the
-  temperature?
+- ~~Which of `0x11` / `0x12` in `0x06 0x01` is the weather icon and which is
+  the temperature?~~ Answered 2026-11-06: `0x11` icon, `0x12` temperature,
+  `0x13` unit, `0x14` 12/24 h, `0x15` persisted date format
 - Is `spec_ble_command_hook` reachable from a normal BLE session?
 - Are the `0x06` schedule / stocks / news records renderable on 1.6.6 without
   the official app having set something up first?
@@ -462,6 +552,10 @@ firmware actually does with those 90 rows, this is where it is written down.
   opcode and that should go back on the worklist as an unknown.
 
 ## How to keep using it
+
+Since 2026-11-06 the `1.66_exact` branch is named, compile-verified source:
+grep it directly (`src/ble/ble_proto.c`, `src/ble/ble_cmd.h`,
+`src/threads/`). The paragraph below describes the older raw-export workflow.
 
 The repo is actively worked on — a raw re-export every few weeks, with
 function-labelling coverage climbing. `helpers/ai/` contains their

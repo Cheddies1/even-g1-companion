@@ -27,9 +27,30 @@ over Tailscale - unmetered, and 0.34 s for 9.7 s of audio. Tailnet-only and
 unauthenticated, so no bearer is sent; there is no fallback to OpenAI, by
 choice. The reasoning call still goes to OpenAI.
 
-## Current implementation status (2026-09-08)
+## Current implementation status (2026-11-06)
 
 Recently implemented:
+- **Firmware source re-based onto `1.66_exact`; four protocol fixes**
+  (2026-11-06, branch `decomp-1.66-fixes`) - the decomp repo is now named C
+  source that rebuilds byte-identical to v1.66 (branch `1.66_exact`,
+  `435c138`), so offsets read from it are the shipped behaviour. Re-reading
+  our protocol use against it found and fixed four things: the Chat `0x53`
+  keepalive was a bare byte that failed the length check and never reset the
+  firmware's 30 s transcribe timeout (now `53 06 00 <seq> 03 00`,
+  device-confirmed: both legs reply `03 c9`, Chat reply held over 60 s);
+  `0x4E` text is capped at 480 bytes because the firmware reassembly buffer
+  has no bounds check; `0x50` goes to the right lens only (clear, streaming
+  init, nav bootstrap) because the left rejects it and it gates nothing; and
+  time sync sends only the `06 01` record, because the two frames around it
+  persisted the dashboard layout every minute (device-confirmed ack).
+  Device run the same day also confirmed **single taps reach the phone**
+  as `F5 01` under `0x4E` status `0x5x` (see Trusted behaviour), that the
+  `0x3F` readbacks work, and that the native `0x07` countdown timer renders
+  garbled digits on 1.66 and is unusable. Debug builds now carry an adb
+  protocol probe (see "Debug protocol probe" below). Details in
+  [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md) §
+  "Re-base onto `1.66_exact`" and
+  [docs/protocol-reference.md](docs/protocol-reference.md).
 - **Firmware decompilation folded in as a protocol source** (2026-09-08) —
   `JohnRThomas/even_realities_decomp` is the only reference that is the
   *receiver* rather than another sender, so it outranks the wiki, Gadgetbridge,
@@ -159,8 +180,10 @@ Recently implemented:
   missing `onMtuChanged` / `onDescriptorWrite` / `onCharacteristicWrite`
   callbacks added; `createBond()` guarded against already-bonded devices;
   bond-state `BroadcastReceiver` added to surface `bond_failed` to Flutter.
-  Deferred: Tier 2 (heartbeat cadence to match official app's 2 s `0x1f`)
-  and Tier 3 (reconnect tuning, connection priority for streaming).
+  Deferred: Tier 3 (reconnect tuning, connection priority for streaming).
+  Tier 2 (heartbeat cadence to match the official app's 2 s `0x1f`) is moot
+  as of 2026-11-06: `0x1f` is onboarding, not a heartbeat, and the firmware
+  only needs any write within 30 s.
 - **Capture v2 — live recording HUD + recordings list** (v1.2.0+10,
   2026-05-18) — `CaptureService` pushes a live `0x4E` HUD every 5 s during
   recording (idle, animated `* REC  MM:SS`, save confirmation). Tilt-up
@@ -179,8 +202,8 @@ Recently implemented:
 Under active development:
 - Navigate `0x0a` structured card — **protocol confirmed working** (full
   108-packet replay renders on the glasses). The firmware requires all three
-  sub-types (text + icon + map), a `0x50` before INIT (the dashboard lock —
-  whether it is genuinely required is untested, see `nav-0x50-necessity`), and a
+  sub-types (text + icon + map), a `0x50` before INIT in the capture (not
+  actually required - it gates nothing; sent to R only since 2026-11-06), and a
   continuous 1-second SYNC poller to keep the session alive. **Transport
   status:** interleaved per-leg fire-and-forget replay is now the stable debug
   mode; broadcast could starve a leg, and full sequential replay introduced a
@@ -212,11 +235,19 @@ Only build on event meanings we trust from live testing:
 - `F5 1E` / `30` = dashboard/state-up follow-on
 - `F5 1F` / `31` = dashboard/state-down follow-on
 - `F5 20` = double-tap delegates to host (Transcribe / Translate / Teleprompter all fire it; Dashboard and None do not)
+- `F5 01` = single tap, **only** while a `0x4E` surface sent with status
+  `0x5x` is up (`Confirmed` 2026-11-06, both lenses, tagged with the lens
+  tapped). Send the `0x5x` render twice to get a manual surface with no
+  auto-dismiss
 
 Important:
-- do not design around single taps — confirmed firmware-only in every tested
-  state, and corroborated by the firmware source (the single-click branch in
-  `touch_key_thread.c` sets a local flag and never reaches the phone-event path)
+- single taps are firmware-only under our usual `0x4E` status `0x71`, on the
+  dashboard and when idle - that is why every test before 2026-11-06 saw
+  nothing. Under status `0x3x`-`0x6x` they reach the phone
+  (`src/threads/threads.c:2225-2262` in the decomp). Two traps if you adopt
+  it: a `0x5x` render overlays the previous text rather than clearing it, and
+  switching into it can make the right lens emit `F5 00`, which every mode
+  treats as "close". Tracked as `single-tap-0x5x-adoption`
 - do not treat Python SDK labels as ground truth
 - right long-press (QuickNote) does NOT fire `F5 17`/`F5 18`; it uses the `0x21` family. Left and right long-press are not symmetric.
 
@@ -230,7 +261,7 @@ The BLE protocol is extensively documented from four HCI snoop capture sessions.
 - [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md)
 - [docs/FINDINGS-evenai-flash-on-clear.md](docs/FINDINGS-evenai-flash-on-clear.md)
   — root cause of the intermittent Even AI ghost screen on clear, and why
-  `0x50` is a dashboard lock rather than display-mode control
+  `0x50` is not display-mode control
 - [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
 - [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md)
 - [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md) — comparison with the JohnRThomas wiki
@@ -255,7 +286,10 @@ Key protocol families already mapped:
 - `0x0a` navigation structured card — requires full lifecycle: `0x50` mode
   control + INIT + SYNC + TRIP_STATUS + MAP_OVERVIEW ×13 (RLE icon, 136×136)
   + PANORAMIC_MAP ×90 (raw map, 488×136) + trailing SYNC. Plus a continuous
-  1-second SYNC poller for the entire nav session. Fire-and-forget writes.
+  1-second SYNC poller for the entire nav session. Fire-and-forget writes,
+  though INIT and SYNC are in fact acked. Only the master counts SYNC, with
+  about 19 s of grace, so the 1 s poller to both legs is more than needed.
+  The `0x50` is not required (it gates nothing) and goes to R only.
   All three sub-types required (text-only rejected). Sub-command names from
   Gadgetbridge: INIT(0x00), TRIP_STATUS(0x01), MAP_OVERVIEW(0x02),
   PANORAMIC_MAP(0x03), SYNC(0x04), EXIT(0x05), ARRIVED(0x06).
@@ -266,30 +300,44 @@ Key protocol families already mapped:
 - `0x52` / `0x53` live streaming text (`Confirmed`, 2026-05-01): line 1
   `\n` marker + line 2 all text; firmware has 3 rows, ~43 chars/row, does
   NOT auto-scroll; host manages scrolling by wrapping at word boundaries
-  and trimming to last 3 lines; `0x53` keepalive every 5 s
+  and trimming to last 3 lines; `0x53` keepalive every 5 s, which must be
+  the full `53 06 00 <seq> 03 00` frame - the firmware ends the session after
+  30 s without a valid `0x52`/`0x53`
 - `0x1e` TX dashboard data slot injection / RX quicknote post-release audio stream
-- `0x50` **dashboard lock** — master-only, does not touch the display, arms a
-  release timer. Corrected 2026-09-08; previously documented as "display mode
-  control". Still sent before `0x0a` nav and `0x52` streaming because the
-  capture did, but the requirement is now unexplained — see
-  `nav-0x50-necessity` on the worklist. Do not describe `0x50` as clearing or
-  priming the display
+- `0x50` **dashboard-state probe** (the firmware calls it a dashboard lock) -
+  master-only, does not touch the display, gates nothing. It arms a 1 s
+  window in which the master pushes `50 06 00 00 01 01|02` if the dashboard
+  is up. Sent to R only since 2026-11-06; full removal is a follow-up. Do not
+  describe `0x50` as clearing or priming the display
+- `0x25` sub 4 (our "heartbeat") is really the teleprompter app-sync packet;
+  link liveness is any write within 30 s on Android
+- `0x3F` sub 5-8 readbacks (double-tap action, brightness %, long-press,
+  head-up mic) and `0x2C 01` (firmware versions) - device-confirmed
+- do-not-send: `0x4A` with bit 0 (enters DFU), `0x26` sub `0x01` (user data
+  reset), `0x47` (unpair); see `docs/protocol-reference.md` § "Do-not-send list"
 - `0x06` **dashboard information family** — byte 4 is a content-type
   sub-command, not a transaction step: `0x01` time/date + weather,
   `0x03` schedule/calendar, `0x04` stocks, `0x05` news, `0x06` display mode,
   `0x07` citywalk. `0x03`/`0x04`/`0x05`/`0x07` are firmware-native structured
   record types we do not use yet. Corrected 2026-09-07 from the firmware
-  decomp — the old "three-step transactional wrapper" model was wrong
+  decomp — the old "three-step transactional wrapper" model was wrong. Any
+  frame with `total=1` on `0x03`/`0x04`/`0x06` persists the dashboard layout,
+  so time sync sends `06 01` alone
 - `0x22` note management ack
 - `0x4E` text rendering, `0x15/0x16/0x20` BMP transfer (legacy, still in codebase)
 
 External protocol references:
-- `JohnRThomas/even_realities_decomp` — Ghidra decompilation of the **firmware
-  itself**. Highest-ranked external source for packet structure; useless for
-  behaviour. The dispatch map (`ble_process_put_req.c` = `0x01`-`0x27`,
-  `ble_process_get_req.c` = `0x29`-`0x3f`, `ble_process_req_dispatch.c` =
-  `0x47`-`0x56`) bounds the whole protocol. See
-  `docs/firmware-decomp-notes.md`.
+- `JohnRThomas/even_realities_decomp` - source of the **firmware itself**.
+  Branch `1.66_exact` is named C that rebuilds byte-identical to v1.66, so it
+  is authoritative on structure and on what the shipped code does; live
+  testing still wins on timing and rendering. Handlers live in
+  `src/ble/ble_proto.c`, opcodes in `src/ble/ble_cmd.h`, touch and display
+  threads in `src/threads/threads.c`. See `docs/firmware-decomp-notes.md`.
+- `JohnRThomas/Even-G1-Simulator` - runs firmware images on two emulated
+  nRF5340 lenses in Renode. The virtual phone only writes frames (no pairing,
+  no notifications back), but each lens's framebuffer is readable. Useful as
+  a "send these bytes, see what draws" harness and as a pre-flash check for
+  modified firmware; not a substitute for device tests.
 - Gadgetbridge `G1Constants.java` — comprehensive named constants for all families
 - ayroblu/bazel-demo Swift implementation — decoded TRIP_STATUS prefix structure,
   confirmed icon/map dimensions and encoding. See `docs/external-protocol-wiki-notes.md`.
@@ -301,6 +349,22 @@ Two firmware rules worth internalising (both cause silent failures):
   exceeding one aborts the whole packet rather than truncating
 
 Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py` scripts. Enable HCI snoop → BT off/on → capture → `adb bugreport` → parse.
+
+## Debug protocol probe
+
+Debuggable builds register an adb-driven probe in
+`android/.../bluetooth/BleManager.kt` (not registered in release builds):
+
+```
+adb shell am broadcast -p com.eddie.evencompanion -a com.eddie.evencompanion.PROBE --es hex <hex> [--es lr L|R]
+```
+
+Omit `lr` to send to both legs. Every non-audio RX frame is logged under
+logcat tag `G1Probe` (`adb logcat -s G1Probe`); `F1` mic frames are
+rate-limited to one line per 50. The receiver only registers in
+`MainActivity.onCreate`, so after a reinstall open the app before probing.
+Use it for one-off protocol experiments; anything worth keeping belongs in
+`Proto`.
 
 ## Key files
 - [lib/ble_manager.dart](lib/ble_manager.dart) — BLE connection + F5 dispatch

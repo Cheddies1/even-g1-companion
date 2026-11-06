@@ -2,7 +2,18 @@
 
 > **Document type:** G1 reference — firmware source read
 > **Audience:** Anyone debugging single-lens / blank-eye display behaviour, or designing display verification
-> **Evidence basis:** Ghidra decompilation of the G1 firmware (`JohnRThomas/even_realities_decomp`, commit `f571782`). **No device testing.** Nothing here has been observed on hardware.
+> **Evidence basis:** Ghidra decompilation of the G1 firmware (`JohnRThomas/even_realities_decomp`, commit `f571782`), raw names re-mapped 2026-11-06 to the named, compile-verified source on branch `1.66_exact` (`435c138`). **No device testing** of the relay itself.
+
+> **Re-base notes (2026-11-06).** Code excerpts below are still the old
+> Ghidra view with real names substituted. Two corrections from the named
+> source: (1) on the master the deferred final `C9` is sent **after** the
+> redraw - the display thread calls `display_reflash_screen()` and only then
+> `report_event_to_phone(0xf2)` (`src/threads/threads.c:2170-2195`), so it is
+> a render-completion signal; the slave acks inline at handler level. (2) The
+> excerpt's `field20_0xc8[4]` is the field `esb_up_id`. Separately,
+> `report_event_to_phone` holds a single pending slot, so a deferred final ack
+> can be lost if an `F5` event is pending at the same moment
+> (`src/threads/threads.c:1047`).
 
 Companion to [firmware-decomp-notes.md](firmware-decomp-notes.md), which covers
 the source and its limits. This file answers four specific questions raised
@@ -30,7 +41,7 @@ device.
 
 ### The gate
 
-`master_process_put_req` (reached via `FUN_00019d14`) accepts three opcode
+`master_process_put_req` (reached via `spim_transfer`) accepts three opcode
 ranges. Anything outside them gets a literal ASCII `"error"` reply and the
 firmware logs `tx error req_type head->req_type %d`:
 
@@ -134,13 +145,13 @@ padded to a fixed 21-byte frame:
 | 0 | literal | `0x4E` |
 | 1 | literal | `0xC9` |
 | 2 | `field20_0xc8[4]` | echoed `textSeqNum` (see below) |
-| 3 | `DAT_20019a68` | total chunks, **zeroed on read** |
-| 4 | `DAT_20019a67` | final chunk index, **zeroed on read** |
+| 3 | `deferred_text_ack_total` | total chunks, **zeroed on read** |
+| 4 | `deferred_text_ack_idx` | final chunk index, **zeroed on read** |
 
-Byte 2 is written by `FUN_0007f41e(param_1, param_2)`:
+Byte 2 is written by `set_esb_up_recv_state(param_1, param_2)`:
 
 ```c
-void FUN_0007f41e(undefined1 param_1,undefined1 param_2)
+void set_esb_up_recv_state(undefined1 param_1,undefined1 param_2)
 {
   pGVar1 = __get_dashboard_state();
   pGVar1->field20_0xc8[6] = param_2;
@@ -165,8 +176,8 @@ In the `0x4E` handler (`ble_process_req_dispatch.c` case `0x4e`):
 if ((uint)param_3[3] == param_3[2] - 1) {
   uVar10 = 0xc9;          /* final chunk */
 } else {
-  ... FUN_0007f472(pvVar19,0x1e9,pGVar6->field20_0xc8[4],1);
-      FUN_0007f41e(param_3[1],1);
+  ... save_esb_snapshot(pvVar19,0x1e9,pGVar6->field20_0xc8[4],1);
+      set_esb_up_recv_state(param_3[1],1);
   uVar10 = 0xcb;          /* intermediate chunk */
 }
 ```
@@ -191,15 +202,15 @@ something specific to `0x4E`.
 bVar5 = __is_master();
 if (bVar5) {
   if ((uint)bVar16 == bVar12 - 1) {
-    DAT_20019a69 = 0x4e;
-    DAT_20019a67 = bVar16;
-    DAT_20019a68 = bVar12;
-    FUN_0007f41e(param_3[1],0);
+    deferred_text_ack_cmd = 0x4e;
+    deferred_text_ack_idx = bVar16;
+    deferred_text_ack_total = bVar12;
+    set_esb_up_recv_state(param_3[1],0);
     return 0;                    /* no synchronous reply */
   }
 }
 else if ((uint)bVar16 == bVar12 - 1) {
-  FUN_0007f41e(param_3[1],0);    /* falls through to the normal inline reply */
+  set_esb_up_recv_state(param_3[1],0);    /* falls through to the normal inline reply */
 }
 ```
 
@@ -211,7 +222,7 @@ to the event path above. The non-master replies inline. So the deferred
 
 All of it means "accepted by the text handler". That is one layer above a GATT
 ACK and still below render. The closest thing to a render-phase flag is
-`FUN_0007f41e`'s second argument (`field20_0xc8[6]` — `1` on the `0xCB` path,
+`set_esb_up_recv_state`'s second argument (`field20_0xc8[6]` — `1` on the `0xCB` path,
 `0` on completion), and it is **not** carried in the ack frame. It is internal
 state only.
 
@@ -251,7 +262,7 @@ relay, so it reports the queried lens's own state.**
 ### Full `0x29`–`0x3F` map
 
 Names are the firmware's own, from its `printk` strings. "Via relay" means the
-case calls `FUN_00019d14`.
+case calls `spim_transfer`.
 
 | Opcode | Content | Answered |
 |--------|---------|----------|
@@ -283,7 +294,7 @@ status byte is:
 - otherwise `field20_0xc8[0xd]` — the current running app / screen id
 - `0xFF` when the declared length does not match the actual packet length
 
-Crucially the case contains **no `FUN_00019d14` call**, unlike `0x29` / `0x2A` /
+Crucially the case contains **no `spim_transfer` call**, unlike `0x29` / `0x2A` /
 `0x2B` / `0x37`. It answers from local state, so it describes the lens you
 asked.
 
@@ -431,7 +442,7 @@ and `0x35` are now pinned too — see the table in §3.
 
 `firmware-decomp-notes.md` said the `0x29` readback "is answered from the other
 temple over SPI". That is more than the source supports and has been softened.
-`FUN_00019d14` logs `spim tx` / `spim ret` around the call and the handler is
+`spim_transfer` logs `spim tx` / `spim ret` around the call and the handler is
 named `master_process_put_req`, but whether the struct it reads holds the
 peer's state or local state is not established. There is separately an ESB path
 for temple-to-temple traffic (`sync_to_slave`,

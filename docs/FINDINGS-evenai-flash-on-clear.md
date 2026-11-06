@@ -2,7 +2,7 @@
 
 > **Document type:** G1 findings
 > **Audience:** Anyone working on the display clear path or the `0x4E` text renderer
-> **Evidence basis:** Ghidra decompilation of the G1 firmware (`JohnRThomas/even_realities_decomp`, commit `f571782`), read against our own clear implementation, plus three instrumented device runs on 2026-09-08 (S24 Ultra, firmware 1.6.6). The source identified the mechanism; the device runs corrected which field matters, killed three candidate fixes, and established a 2/2 predictor. No host-side fix was found — see "Fixes: what was tried".
+> **Evidence basis:** Ghidra decompilation of the G1 firmware (`JohnRThomas/even_realities_decomp`, commit `f571782`, re-checked 2026-11-06 against the named source on branch `1.66_exact` HEAD `435c138`, which compiles byte-identical to v1.66), read against our own clear implementation, plus three instrumented device runs on 2026-09-08 (S24 Ultra, firmware 1.6.6). The source identified the mechanism; the device runs corrected which field matters, killed three candidate fixes, and established a 2/2 predictor. No host-side fix was found - see "Fixes: what was tried".
 
 ## The symptom
 
@@ -28,8 +28,11 @@ Four firmware facts support a race hypothesis:
 3. **The `0x18` clear path checks screen state without holding the lock that
    protects it.** The guard waits for a non-atomic software mutex to be free,
    reads the screen id, and returns without taking it.
-4. **The clear is asynchronous.** Teardown sets a global "refresh needed" flag
-   per dirty surface; the display thread renders whenever it next runs.
+4. ~~**The clear is asynchronous.** Teardown sets a global "refresh needed" flag
+   per dirty surface.~~ Corrected 2026-11-06: the call we read as "raise a
+   redraw flag" is `dmic_stream_stop()`, which stops the microphone stream.
+   The display thread still redraws on its own schedule, keyed on screen id,
+   so the race stands; the named function just was not the mechanism.
 
 The device runs below refined this. The `0x4E` pending slot turned out to be
 the wrong field — `0x39`, `case 0x18` and `__ui_task_handler` all use the
@@ -41,8 +44,8 @@ transient re-render of that surface on the **master (right) lens** during the
 see "Fixes: what was tried".
 
 **And our existing mitigation never worked the way we documented it.** `0x50`
-is not display-mode control — it is a master-only dashboard lock that does not
-touch the display. Run 2 removed it entirely and the flash persisted, so it was
+is not display-mode control - it is a master-only dashboard-state probe (the
+firmware calls it a "dashboard lock") that does not touch the display. Run 2 removed it entirely and the flash persisted, so it was
 neither a cause nor a mitigation; the `0x50 + 0x18` combo recorded as the
 2026-05-09 ghost-screen fix was not fixing this.
 
@@ -136,22 +139,27 @@ existence of the `pending = 0x10` branch as solid.
 Both `0x18` exit routines begin with the same guard:
 
 ```c
-bool FUN_0002da10(int param_1)
+bool is_task_running(int param_1)
 {
-  while (DAT_20019a6a != '\0') { sleep_33_seconds(); }
+  while (task_status_lock != '\0') { sleep_33_seconds(); }
   return 1 < *(byte *)(param_1 + 0xd5);        /* screen_id > 1 */
 }
 ```
 
-`DAT_20019a6a` is a **hand-rolled, non-atomic mutex** around screen-state
+Correction 2026-11-06: the named source (`src/threads/task_status.c:28-34`)
+shows the spin is `k_msleep(1)`, not 33 s. Ghidra's `sleep_33_seconds` label
+was wrong. The point below - the guard waits for the flag but never takes it -
+still holds.
+
+`task_status_lock` is a **hand-rolled, non-atomic mutex** around screen-state
 transitions. `update_temp_task_status`, `update_persist_task_status` and
 `update_persist_task_status_to_idle` all follow the same pattern:
 
 ```c
-while (DAT_20019a6a != '\0') { sleep_33_seconds(); }
-DAT_20019a6a = 1;
+while (task_status_lock != '\0') { sleep_33_seconds(); }
+task_status_lock = 1;
 ...
-DAT_20019a6a = 0;
+task_status_lock = 0;
 ```
 
 Test-and-set with a gap between the test and the set — two threads can both
@@ -180,7 +188,7 @@ case 0x18:
   pGVar14 = __get_dashboard_state();
   if ((pGVar14->field20_0xc8[0xd] == 0xb) ||           /* Translate */
      (pGVar14 = __get_dashboard_state(), pGVar14->field20_0xc8[0xd] == 0x10)) {   /* EVEN AI */
-    FUN_000800ca(iVar29,0);
+    exit_running_task_keep_status(iVar29,0);
   }
   else {
     pGVar14 = __get_dashboard_state();
@@ -188,7 +196,7 @@ case 0x18:
        (pGVar14 = __get_dashboard_state(), pGVar14->field20_0xc8[0xd] == '\x06')) {
       sleep(0x32);                                     /* deliberate delay on DashBoard */
     }
-    FUN_0007ff66(iVar29,0);
+    exit_running_task(iVar29,0);
   }
   break;
 ```
@@ -198,26 +206,28 @@ other branch contains a **hardcoded `sleep(0x32)`** when the current screen is
 the DashBoard — Even Realities papered over a race here rather than fixing it,
 which is corroborating evidence that this area is racy by construction.
 
-### The clear is asynchronous
+### The clear is asynchronous (mechanism corrected 2026-11-06)
 
-Both teardown routines walk per-surface dirty flags and call `FUN_00030458()`
-for each one it finds set. That function does nothing but raise a global flag:
+Both teardown routines walk per-surface dirty flags and call `dmic_stream_stop()`
+for each one it finds set. We originally read that function as raising a global
+"redraw" flag. The named source shows it is the microphone stop
+(`src/sensors_audio/dmic_audio.c:184`): it sets `dmic_stop_state = 1` on the
+master. The excerpt below is the old Ghidra view, kept for the record:
 
 ```c
-undefined4 FUN_00030458(void)
+undefined4 dmic_stream_stop(void)
 {
-  if ((DAT_20003052 != '\x01') &&
-     ((cVar1 = FUN_00033d5c(), cVar1 == '\x01' ||
+  if ((dmic_stop_state != '\x01') &&
+     ((cVar1 = get_pt_test_mode(), cVar1 == '\x01' ||
       (pGVar2 = __get_dashboard_state(), *(char *)pGVar2 == '\x01')))) {
-    DAT_20003052 = '\x01';
+    dmic_stop_state = '\x01';
   }
   return 0;
 }
 ```
 
-So a clear is not "blank the screen". It is "mark several surfaces clean and
-ask the display thread to redraw", repeatedly, while the state it will redraw
-from is still being mutated. The display thread decides what to draw via
+What still holds: a clear is not "blank the screen". The teardown mutates screen
+state while the display thread, which redraws on its own schedule, may read it. The display thread decides what to draw via
 `__ui_task_handler`, keyed on screen id.
 
 ### The firmware also enters Even AI state on its own
@@ -230,7 +240,7 @@ So a QuickNote save or a sync from the other lens can put a lens into Even AI
 screen state with no involvement from our app. Any sighting that does not
 correlate with something we sent is likely this.
 
-## `0x50` is a dashboard lock, not display-mode control
+## `0x50` is a dashboard-state probe, not display-mode control
 
 Correction to [protocol-reference.md](protocol-reference.md),
 [FINDINGS-layouts.md](FINDINGS-layouts.md) and
@@ -251,11 +261,18 @@ Correction to [protocol-reference.md](protocol-reference.md),
   rejects it and logs an error. Our broadcast `0x50` is silently discarded on
   the left.
 - Requires `param_3[4] == 1`. Our `50 06 00 00 01 01` satisfies this.
-- On success sets `DAT_20007f50 |= 2` and starts a k_timer;
+- On success sets `dashboard_lock_requested |= 2` and starts a k_timer;
   `DashboardLockTimerExpiry_callback` clears the lock bits on expiry, logging
   `dashboard lock timeout,release`.
 - If the lock bit is already set it returns immediately — repeat sends are
   no-ops.
+- **Re-checked against the named source (2026-11-06).** The timer is 1 s
+  (`src/ble/ble_proto.c:3950`) and the master sends no ack. While the window
+  is open, if the dashboard is shown, the master pushes `50 06 00 00 01 01`
+  (head-up path, `src/imu/imu_fusion.c:104-120`) or `50 06 00 00 01 02`
+  (dashboard UI path, `src/dashboard/dashboard.c:1635-1646`, `:1776-1787`).
+  In practice it asks "tell me if the dashboard comes up in the next second".
+  Nothing else reads the lock bits: neither `0x0a` INIT nor `0x52` checks them.
 
 It does not clear the display, close a mode, or prepare for structured
 content. So the `0x50 + 0x18` combo recorded as the ghost-screen fix
@@ -265,9 +282,10 @@ of delay before `0x18`, shifting the race window. That fits the observed
 outcome: improved, never eliminated.
 
 It also means the `0x50`-before-`0x0a`-INIT and `0x50`-before-`0x52`
-requirements in our nav and streaming lifecycles are unexplained. They were
-derived from capture replay, not from a known mechanism. Worth testing whether
-either still works without it.
+requirements in our nav and streaming lifecycles were never requirements. The
+named source settles it: neither handler reads the lock bits. Since 2026-11-06
+the app sends `0x50` to the right lens only; removing it entirely is a
+follow-up (`nav-0x50-necessity`, closed on the source reading).
 
 ## Why the official app probably avoids it
 
@@ -329,7 +347,7 @@ fields. The terminator cannot change which teardown branch `0x18` takes.
 
 **Killed: the unconditional state leak.** POST-clear read `0x00` in 10 of 11,
 so the screen id does normally get reset. The original claim — that
-`FUN_000800ca` leaves it set — is wrong *as an unconditional statement*.
+`exit_running_task_keep_status` leaves it set — is wrong *as an unconditional statement*.
 
 **Confirmed: pre-clear is `0x10` on both lenses, all 11 times.** Our `0x4E`
 sends use `screenStatus 0x71` continuously, so the firmware has us parked in
@@ -376,7 +394,7 @@ several dozen switches, with none seen with the right eye closed.
 
 ### Reconciled mechanism
 
-The source finding survives, in weaker form. `FUN_000800ca` genuinely does not
+The source finding survives, in weaker form. `exit_running_task_keep_status` genuinely does not
 call `update_persist_task_status_to_idle` — it is the only `0x18` teardown path
 that omits it. But the screen id usually ends up at `0x00` anyway, so a
 secondary path must normally reset it. `low_speed_peripheral_dispatch_thread.c`
@@ -403,6 +421,13 @@ official app drives the Even AI status lifecycle (`0x30` displaying, `0x40`
 complete, `0x50` manual) and spends most of its time on other surfaces, so it
 rarely hits this teardown path at all.
 
+Related (2026-11-06): the same status nibble decides whether single taps reach
+the phone. `0x3x`/`0x4x`/`0x5x` set the text surface type to 7-9, inside the
+`F5 01` reporting range; our `0x71` sets type 15, outside it. See
+[protocol-reference.md](protocol-reference.md) § `0xF5 0x01` and the
+`single-tap-0x5x-adoption` worklist item. A switch to `0x5x` would also change
+which teardown path this flash depends on, so retest the flash alongside it.
+
 MentraOS logged the same symptom as unsolvable. That is right in practice; this
 document is the "why".
 
@@ -419,8 +444,9 @@ document is the "why".
 **Left unfixed deliberately.** `Proto.clearDisplay()` is back to its original
 `0x50 + 0x18` sequence. `0x50` was left in place despite being inert here,
 because removing it showed no measured benefit and this path has regressed
-before (`worklist-history.md`, 2026-05-09). The broader question is tracked as
-`nav-0x50-necessity`.
+before (`worklist-history.md`, 2026-05-09). The broader question
+(`nav-0x50-necessity`) was closed 2026-11-06 on the named source: `0x50` gates
+nothing, and it now goes to the right lens only.
 
 Two things were kept from the investigation:
 
@@ -447,7 +473,7 @@ instrument can observe the predicted event before trusting a negative.
 
 - Why do most flashes show a clean `00/00` POST read? Presumed transient
   shorter than the ~700 ms sample delay, but unconfirmed.
-- Which path normally resets the screen id after `FUN_000800ca`, and is it
+- Which path normally resets the screen id after `exit_running_task_keep_status`, and is it
   really the low-speed periodic thread?
 - Would driving the `0x30`/`0x40` Even AI status lifecycle keep us off screen
   `0x10` entirely?

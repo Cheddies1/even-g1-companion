@@ -57,12 +57,12 @@ Working, but still needs real-world observation:
 - **Status**: Closed 2026-09-08 — root cause characterised, no host-side fix. Not a regression risk; nothing shipped.
 - **Findings**: [FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md) — full device results
 - **Brief**: [evenai-flash-fix-brief.md](evenai-flash-fix-brief.md) — retired, kept as the record of what was planned
-- **Outcome**: The flash is a transient re-render of the firmware's Even AI surface (screen id `0x10`, `ui_even_ai_task`) on the **master/right lens** during the `0x18` teardown. `FUN_000800ca` — the only `0x18` teardown path that omits `update_persist_task_status_to_idle` — leaves the screen id set; a secondary path normally resets it within a few hundred ms, and when that is slow on the master a redraw renders the Even AI surface for one frame.
+- **Outcome**: The flash is a transient re-render of the firmware's Even AI surface (screen id `0x10`, `ui_even_ai_task`) on the **master/right lens** during the `0x18` teardown. `exit_running_task_keep_status` — the only `0x18` teardown path that omits `update_persist_task_status_to_idle` — leaves the screen id set; a secondary path normally resets it within a few hundred ms, and when that is slow on the master a redraw renders the Even AI surface for one frame.
 - **Why us and not the official app**: our `0x4E` sends use `screenStatus 0x71` for everything, so `0x39` reads `0x10` on *every* clear — we always tear down out of the Even AI surface. The official app drives the `0x30`/`0x40`/`0x50` Even AI status lifecycle and rarely hits that path. MentraOS logged the same symptom as unsolvable.
 - **Disproved on device** (3 runs, S24 Ultra, fw 1.6.6): terminal `0x4E` status `0x41` (writes the pending slot, not the live id); gating the clear on `0x39` (pre-clear is `0x10` on every clear, flashing or not); removing `0x50` (no effect). Confirmed predictor: POST-clear `R=0x10` → flash, 2/2.
 - **Kept**: the `readScreenState` byte-offset fix (was reading index 1, the echoed request length, instead of index 5) with the response layout documented inline; and `Proto.postClearStateProbe`, default `false`, retaining the three-point `0x39` sampling for future runs.
 - **Deliberately not done**: detect-and-repair (re-sending `0x18` when POST-clear reports `0x10`) catches only ~1/3 of events and costs two BLE round trips per clear — not proportionate to a one-frame cosmetic glitch. Driving the full Even AI status lifecycle (`0x31` renders + `0x41` terminator) is the only remaining avenue and would change every text render in the app.
-- **Notes**: `Proto.clearDisplay()` is back to its original `0x50 + 0x18`. `0x50` was left in despite being inert here, because removing it showed no benefit and this path regressed once before (`worklist-history.md`, 2026-05-09). Cross-ref `nav-0x50-necessity` (Next) for the broader `0x50` question.
+- **Notes**: `Proto.clearDisplay()` is back to its original `0x50 + 0x18`. `0x50` was left in despite being inert here, because removing it showed no benefit and this path regressed once before (`worklist-history.md`, 2026-05-09). Cross-ref `nav-0x50-necessity` (closed 2026-11-06, Recently Done) for the broader `0x50` question.
 
 ### 4. Navigate cleanup (composite)
 - **Status**: Now
@@ -126,18 +126,23 @@ Working, but still needs real-world observation:
 
 ## Next — Prioritised
 
-### nav-0x50-necessity: Establish whether `0x50` is actually required before `0x0a` INIT and `0x52`
+### single-tap-0x5x-adoption: Use single taps now that `0x4E` status `0x5x` forwards them
 - **Status**: Next
-- **Priority**: Medium — cheap test, removes an unexplained step from two lifecycles
-- **Effort**: ~1h
-- **Context**: Our nav and streaming lifecycles both send `0x50` first, documented as "display mode control required before INIT". The firmware decompilation shows `0x50` is a master-only dashboard lock that does not touch the display and arms a release timer. The requirement was derived from replaying the official app's capture, not from any known mechanism — so it may be incidental. It also cannot be doing anything on the left lens, which rejects it.
-- **Scope**: Run Navigate through a full `0x0a` bootstrap with the `0x50` removed, and a Chat `0x52` session likewise. Record whether either breaks.
+- **Priority**: High - removes the biggest input constraint the app has been designed around
+- **Effort**: ~1 day design + implementation, plus a device session
+- **Context**: Device run 2026-11-06 (S24 Ultra, fw 1.6.6) confirmed that with a `0x4E` surface sent with status `0x51` (twice), single taps reach the phone as `F5 01`, tagged with the lens tapped (R, R, L, L in four taps). Under our usual `0x71`, on the dashboard and when idle they stay firmware-only, which is why every earlier test said "absorbed". Source: `src/threads/threads.c:2225-2262` in the `1.66_exact` decomp. Full status-nibble table in [protocol-reference.md](protocol-reference.md) § `0xF5 0x01`.
+- **Traps found on device**:
+  - a `0x5x` render overlays whatever text was already on screen (the Capture idle prompt showed through) rather than clearing it, so clear or fully repaint first
+  - in Glance mode the first `0x51` render made the right lens emit `F5 00`, which the Glance close handler acted on and cleared the screen. Every mode treats `F5 00` as close, so a self-inflicted `F5 00` after our own render must be ignored
+  - the first `0x5x` send sets a 16 s auto-dismiss; the second makes it manual
+  - `0x5x` is in the Even AI surface family, so retest the Even AI flash on clear ([FINDINGS-evenai-flash-on-clear.md](FINDINGS-evenai-flash-on-clear.md)) alongside it
+- **Candidate uses**: Glance carousel paging (left previous, right next), Quick Actions Next/Done on a displayed list item (`router-v1-glance-handlers`), dismissing a Chat reply.
 - **Acceptance**:
-  - [ ] Navigate `0x0a` bootstrap tested with and without the preceding `0x50`; result recorded.
-  - [ ] Chat `0x52` session tested with and without; result recorded.
-  - [ ] `protocol-reference.md` and `AGENTS.md` updated to either state the requirement is real (and note we still do not know why) or drop it.
-- **Notes**: Keep separate from `evenai-flash-fix`, which removes `0x50` from the *clear* path only. Cross-ref `docs/FINDINGS-evenai-flash-on-clear.md` § "`0x50` is a dashboard lock".
-- **Blocked by**: nothing, but do not run it concurrently with `navigate-cleanup` device sessions — one variable at a time.
+  - [ ] Decide which surfaces switch from `0x71` to `0x5x`, and the left/right tap semantics per mode, in `CompanionController` (mode ownership stays there).
+  - [ ] Self-inflicted `F5 00` after a `0x5x` render does not close the surface; a real double-tap close still works.
+  - [ ] No overlay artefacts when moving between `0x71` and `0x5x` surfaces.
+  - [ ] Even AI flash rate on clear not worse than before.
+  - [ ] AGENTS.md trusted-behaviour and `even-g1-event-mapping.md` updated with the shipped behaviour.
 
 ### cartographer-frame-prototype: Spike 1 — rendering feasibility: three pathological scenes
 - **Status**: Next
@@ -260,6 +265,7 @@ Working, but still needs real-world observation:
 - **Depends on**: `router-v1-glance-handlers` command routing and controller-owned display restoration. Agreed 2026-09-09 to ship in the same slice, not as a later increment; the 2026-09-09 grooming pass split them and that split was wrong.
 - **Scope (2026-09-09)**: "Timer for ten minutes" displays a countdown that incoming notifications may cover, then restores the correct remaining time. "Focus for 25 minutes" adds suppression of ordinary glasses interruptions for that duration. "Remind me in an hour to call Paul" saves the text and surfaces it when due; support explicit relative/absolute times without calendar access. Cancel and remaining-time queries are supporting commands.
 - **Boundaries**: deadlines run independently of display visibility. Focus changes this app's glasses interruptions, with phone notification/DND changes outside this scope. Ending or cancelling Focus restores the prior glasses policy. Decide overlapping timers, reminder delivery during Focus, urgent-call exceptions and mode conflicts before implementation; suggested exceptions are not settled policy.
+- **Firmware note (2026-11-06)**: the firmware has a native countdown, `0x07`, but on 1.66 it renders garbled digits and a Chinese end string (device-tested). Timers stay app-drawn. See `firmware-mod-spike`.
 - **Acceptance**:
   - [ ] On device, a normal notification covers a timer and dismissal restores a countdown based on the original deadline. Switching mode or disconnecting the glasses does not reset it.
   - [ ] Focus suppresses ordinary glasses notifications and restores the previous policy on expiry/cancel. Exercise the chosen call/reminder exception policy explicitly.
@@ -349,7 +355,7 @@ Working, but still needs real-world observation:
   2. **WRONG, corrected - we are not discarding a render-status byte, and our ack handling is already right.** Byte 2 of the `4E C9 <seq> <total> <final>` frame is an echoed `textSeqNum`, not a received-vs-rendered discriminator. The real signal is byte 1: `0xCB` means "chunk accepted, more expected" and `0xC9` means "final chunk accepted". Our code already matches that - `_requestList` accepts both `0xc9` and `0xcB` for the non-final packets (`lib/ble_manager.dart:1226`) and `sendBoth` requires `0xC9` for the last one (`:1088`), which is the correct split. Nothing to fix here. Note the trap for future work though: anything that treats non-`0xC9` as failure on a chunked send will fail every intermediate chunk.
   3. **NEW - byte 2 is directly useful to `request-correlation-seq`.** The echoed `textSeqNum` is exactly the correlation token that item wants. Bytes 3-4 (total chunks, final chunk index) are zeroed on read, so they are one-shot.
   4. **NEW and load-bearing - the legs are not interchangeable, and left-only is the worse degradation.** Master advertises as `_R_`, non-master as `_L_` (`bt_start.c`), so **left is the slave**. On the final chunk the master stashes counters and returns 0 with no synchronous reply, deferring to the `0xF2` event path - so the deferred `4E C9 ...` completion frame is **master-only**. A right-only write fails to propagate text to the left lens; a left-only write does that *and* misses the completion-event path entirely. Consistent with the observed symptom: the reply appeared in the right eye, meaning broadcast had degraded to the master leg alone. `_targetLegsForBroadcast` currently treats L and R as symmetric, which this says is wrong.
-  5. **NEW - there is a real per-lens verification primitive.** `0x39` (system status) is answered from local state with no `FUN_00019d14` relay call, unlike `0x29`/`0x2A`/`0x2B`/`0x37`, so it describes the lens you asked. It returns the current running app / screen id, `0x00` when idle, `0xFF` on a declared-length mismatch. This is the closest thing in the protocol to "what is this lens showing" and the only readback that would let the host verify a display push instead of trusting a GATT ACK. Caveat: the screen ids are not yet enumerated (they are compared against `0x00`, `0x04`, `0x06`, `0x07` and `0x09`-`0x14` across six firmware files), and that enumeration is a prerequisite for using it as a verification signal.
+  5. **NEW - there is a real per-lens verification primitive.** `0x39` (system status) is answered from local state with no `spim_transfer` relay call, unlike `0x29`/`0x2A`/`0x2B`/`0x37`, so it describes the lens you asked. It returns the current running app / screen id, `0x00` when idle, `0xFF` on a declared-length mismatch. This is the closest thing in the protocol to "what is this lens showing" and the only readback that would let the host verify a display push instead of trusting a GATT ACK. Caveat: the screen ids are not yet enumerated (they are compared against `0x00`, `0x04`, `0x06`, `0x07` and `0x09`-`0x14` across six firmware files), and that enumeration is a prerequisite for using it as a verification signal.
   6. **Still worth ruling out.** Bytes 1-2 are a little-endian total length the firmware validates, dropping the packet entirely on mismatch. Per-packet rather than per-lens, so it does not explain a one-eyed render on its own, but it is the other known silent-drop path here.
 - **Latent risk surfaced by the same read (may deserve its own item)**: `requestList` sends the final packet via `sendBoth(lastPack, timeoutMs: timeoutMs ?? 250)`, and on the master leg the final-chunk ack is *deferred* to the `0xF2` event path rather than replied inline. That 250 ms budget therefore has to cover an asynchronous completion event on one leg but a synchronous reply on the other. It evidently usually holds, but it is an asymmetric timing dependency nobody designed on purpose.
 - **Acceptance**:
@@ -375,7 +381,7 @@ Working, but still needs real-world observation:
   - [ ] Heartbeat write failures treated as silent (no retry queued).
   - [ ] Normal (non-heartbeat) request retry behaviour unchanged.
   - [ ] Verified by logcat inspection during a simulated leg-drop scenario.
-- **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / Heartbeat — robustness patterns" point 1.
+- **Notes**: Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / Heartbeat — robustness patterns" point 1. **2026-11-06**: the premise does not hold for us. Our `0x25` sub 4 is the teleprompter app-sync packet and the firmware echoes it (seen live as `25 06 00 <seq> 04 <seq>`); any write within 30 s keeps the link up, so this is about queue hygiene only. Re-assess priority before doing it.
 
 ### heartbeat-counter-echo-verify: Heartbeat counter echo verification in ACK check
 - **Status**: Next
@@ -387,7 +393,7 @@ Working, but still needs real-world observation:
   - [ ] Extend the ACK check in `lib/services/proto.dart:209-211` (and equivalent paths) to also verify that the counter byte in the response matches the most recently sent counter value (consult project memory `heartbeat-regime` for the exact byte positions in the response).
   - [ ] Wrong-counter responses logged and treated as missed heartbeats.
   - [ ] No regression in normal heartbeat ACK rate (still ~100% in steady-state).
-- **Notes**: Cross-ref project memory `heartbeat-regime` for the existing 6-byte heartbeat payload structure. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / Heartbeat" section.
+- **Notes**: 2026-11-06: the firmware echoes the 6-byte `0x25` sub 4 frame verbatim (`src/ble/ble_proto.c:1830-1844`), so the counter check is sound; but `0x25` is the teleprompter app-sync packet, not a heartbeat, and liveness needs only any write within 30 s. Cross-ref project memory `heartbeat-regime` for the existing 6-byte heartbeat payload structure. Cross-ref: `docs/g1-companion-apps-comparison-notes.md` → "MentraOS / Heartbeat" section.
 
 ### mic-right-side-only-spike: Microphone right-side-only firmware quirk spike
 - **Status**: Next
@@ -758,6 +764,12 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
 
 ## Parked
 
+### firmware-mod-spike: Custom app-core firmware (single tap under `0x71`, Even AI flash, `0x07` digits)
+- **Status**: Parked 2026-11-06 - stock-protocol wins first
+- **Context**: `JohnRThomas/even_realities_decomp` branch `1.66_exact` rebuilds byte-identical to v1.66 via `exact_build_1_66/build_repro.sh`. The app core is signed with MCUboot's public default RSA-2048 key, and MCUmgr SMP over BLE is unauthenticated, so a modified app image would be accepted. The net core uses the vendor's b0n key and cannot be changed (not needed). Three one-line candidates: forward single taps outside `0x5x` surfaces; make the `0x18` teardown for modes `0xb`/`0x10` reset the screen id (the Even AI flash path, `exit_running_task_keep_status` at `src/ble/ble_proto.c:2896`); pass character codes rather than raw digits to `font_ascii_get_glyph` in `src/notify/ui_countdown.c` so the native `0x07` timer renders.
+- **Risk**: MCUboot is built `CONFIG_BOOT_UPGRADE_ONLY` (overwrite, no revert). An image that boots but breaks BLE or SMP can only be recovered over SWD. Build only via `build_repro.sh` with the vendor SDK patches (a plain `west build` behaves differently, including ESB taking MPSL's interrupt); leave BLE, ESB and mcumgr untouched; run every image in `JohnRThomas/Even-G1-Simulator` (Renode) first; flash one lens at a time. Unchecked: whether the official Even app would overwrite custom firmware, and whether a modded lens tolerates a stock partner over ESB.
+- **Unpark when**: `single-tap-0x5x-adoption` proves insufficient, or the Even AI flash becomes worth a firmware fix.
+
 ### calendar-integration-outlook: Calendar actions and meeting-linked reminders
 
 - **Status**: Parked (2026-09-09)
@@ -797,6 +809,14 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
 ---
 
 ## Recently Done
+
+### decomp-1.66-fixes: Re-base on the `1.66_exact` firmware source; four protocol fixes (2026-11-06, branch `decomp-1.66-fixes`)
+- **Outcome**: Docs re-based onto named, byte-identical firmware source (`1.66_exact`, `435c138`); raw Ghidra names replaced throughout. Four fixes in `lib/services/proto.dart`: (1) Chat `0x53` keepalive now `53 06 00 <seq> 03 00` - the bare byte failed the length check and never reset the firmware's 30 s transcribe timeout; **device-confirmed** (both legs reply `53 07 00 <seq> 03 c9 00`, Chat reply held over 60 s untouched); (2) `0x4E` text capped at 480 bytes on a UTF-8 boundary (firmware reassembly buffer has no bounds check); (3) `0x50` sent to R only on clear, streaming init and nav bootstrap (stripped from the replay list and sent once to R); (4) time sync sends only the `06 01` record - the two frames around it persisted the dashboard layout every minute; **device-confirmed** ack `06 16 00 <seq> 01 00` on both legs. Also added a debug-only adb protocol probe (AGENTS.md § "Debug protocol probe").
+- **Device findings the same day**: single taps forward under `0x5x` (now `single-tap-0x5x-adoption`); `0x3F` readbacks work (`3f08` -> `00`, head-up mic not disabled; `3f05` -> `05`; `3f07` -> `00`); no head-up `F1` audio seen in Glance; native `0x07` countdown renders garbled digits and is unusable (see `firmware-mod-spike`).
+- **Not done**: removing `0x50` entirely; master-only SYNC at ~5 s for Navigate; single-packet `0x52` (`total=1`). All source-backed, none device-tested.
+
+### nav-0x50-necessity: Is `0x50` required before `0x0a` INIT and `0x52`? (closed 2026-11-06)
+- **Outcome**: Answered by the named source rather than a device A/B: no. `0x50` is a dashboard-state probe - it arms a 1 s window in which the master pushes `50 06 00 00 01 01|02` if the dashboard is up (`src/ble/ble_proto.c:3933-3958`, `src/dashboard/dashboard.c:1635-1646`) - and neither the `0x0a` INIT handler nor `0x52` reads the lock bits. Device run 2026-11-06 saw the `50 06 00 00 01 01` push from R. The app now sends it to R only; full removal is a small follow-up to do with the next Navigate device session.
 
 ### stt-local-whisper: Speech-to-text moved to the local whisper-server (2026-09-08, commit 4348774, main)
 - **Status**: Done

@@ -71,13 +71,43 @@ renders nothing:
   - single tap
   - page up/down control in manual mode
   - dashboard QuickNote / notification detail interactions
-- Observed reality:
-  - `Vendor-claimed only` for firmware behaviour
-  - current Flutter code can route `F5 01` as paging
-  - live testing has **not** confirmed reliable app-visible single taps in the flows we care about
+- Observed reality (corrected 2026-11-06):
+  - `Confirmed` - single taps **do** reach the phone as `F5 01`, but only
+    while the firmware is in a state that forwards them. Device run
+    2026-11-06 (S24 Ultra, fw 1.6.6): a `0x4E` render with `screenStatus`
+    `0x51`, sent twice, then four single taps produced four `F5 01` frames,
+    each tagged with the lens tapped (R, R, L, L).
+  - `Firmware-source` - `key_event_thread` reports a single click
+    (`key_event_type` 1) only when one of these holds
+    (`src/threads/threads.c:2225-2262`): onboarding active; the `0x4E` text
+    surface type is 7-11; head-up calibration mode is on; Even AI v2 is
+    listening (`evenai state 1, sub 3`); or the teleprompter is ready.
+    Otherwise the tap stays firmware-local.
+  - The surface type comes from the high nibble of the final `0x4E` chunk's
+    `screenStatus` (`src/ble/ble_proto.c:3854-3890`):
 
-Important:
-- do not document or build product behaviour as if `F5 01` is a proven single-tap input for this app
+    | Status nibble | Surface type | Single tap forwarded | Auto-dismiss |
+    |---|---|---|---|
+    | `0x3x` | 7 | yes | 16 s |
+    | `0x4x` | 8 | yes | 8 s |
+    | `0x5x` | 9 if the surface is already type 7+, otherwise 7 | yes | none once type 9 (16 s on the first send) |
+    | `0x6x` | 10, and stops the mic | yes | - |
+    | `0x7x` | 15 | **no** | - |
+
+    Our app sends `0x71` everywhere, which is why every earlier test said
+    "firmware-only". Sending `0x5x` twice gives a manual surface that stayed
+    up well past 16 s on device.
+
+Caveats from the 2026-11-06 run:
+- a `0x5x` render **overlays** whatever text was already on screen (the
+  Capture idle prompt showed through) rather than clearing it; clear first
+- in Glance mode the first `0x51` render made the right lens emit `F5 00`,
+  and our Glance close handler acted on it and cleared the screen. Any app
+  use of `0x5x` must tolerate this self-inflicted `F5 00`
+- the `0x5x` surface types 7-11 are the Even AI surface family, so retest the
+  Even AI flash on clear (`FINDINGS-evenai-flash-on-clear.md`) alongside any
+  adoption
+- tracked as `single-tap-0x5x-adoption` on the worklist
 
 ### `0xF5 0x02`
 
@@ -102,6 +132,26 @@ Important:
 - Observed reality:
   - `Suspected`
   - aligns with user-observed triple-tap silent-mode behaviour
+  - `Firmware-source` (2026-11-06): `F5 04` is also emitted when the fuel
+    gauge reports an abnormal temperature (60-120 C or -50 to -20 C) and the
+    display enters its abnormal-temperature mode
+    (`src/sensors_audio/fuel_gauge.c:187`). Do not treat every `F5 04` as a
+    user gesture
+
+### Other `0xF5` codes the firmware emits (`Firmware-source`, 2026-11-06)
+
+From every `report_event_to_phone` call site in the named source. None
+of these is handled by the app yet; listed so they are not mistaken for
+gestures.
+
+| Code | Trigger | Source |
+|---|---|---|
+| `F5 09` | glasses charging state change | `src/threads/threads.c:462` |
+| `F5 0E` | case charging status (frame built at `src/ble/ble_proto.c:3630`) | `src/threads/threads.c:475` |
+| `F5 10` | onboarding head-up hint | `src/ui/ui_onboarding.c:322` |
+| `F5 11` | bind finished (`EVENT_GLASS_HAS_FINISH_BIND`) | `src/threads/threads.c:312`, `:409` |
+| `F5 13`-`F5 16` | onboarding step transitions | `src/ui/ui_onboarding.c` |
+| `F5 19` | double tap during onboarding | `src/threads/threads.c:2299` |
 
 ### `0xF5 0x17`
 
@@ -302,9 +352,26 @@ returns zeros. Byte 2 is the echoed `textSeqNum` from header byte 1, not a
 render status. The deferred frame is **master-only** (right leg); the
 non-master replies inline.
 
-None of this proves the pixels changed — it means "accepted by the text
-handler", one layer above the GATT ACK. For an actual per-lens display check,
-use `0x39` (see "Readback opcodes" below).
+Corrected 2026-11-06 from the named source: on the master, the deferred final
+`C9` is sent **after** the redraw. The display thread calls
+`display_reflash_screen()` and only then `report_event_to_phone(0xf2)`
+(`src/threads/threads.c:2170-2195`), so the master's final ack is a
+render-completion signal, not just "accepted by the handler". The slave's
+inline ack is still handler-level only. For a per-lens display check on the
+slave, use `0x39` (see "Readback opcodes" below).
+
+One known loss path (`Firmware-source`, inferred): `report_event_to_phone`
+holds a single pending slot, so a deferred final ack can be dropped if an
+`F5` event is pending at the same moment (`src/threads/threads.c:1047`). A
+rare missing right-leg final ack is a firmware race, not necessarily our bug.
+
+**Reassembly buffer: 480 bytes, no bounds check** (`Firmware-source`,
+2026-11-06). Chunks are appended into `dash_buf->data`, which is `0x1e0` =
+480 bytes (`src/include/glasses_state.h:223`), with no length check on the
+append (`src/ble/ble_proto.c:3844`); `dash_buf->len` sits straight after it.
+A text body over 480 bytes overruns into the length field. Since 2026-11-06
+`Proto.sendEvenAIData` truncates the UTF-8 body to 480 bytes on a character
+boundary and logs an error.
 
 **Display constants** (firmware 1.6.6, confirmed via pixel-width measurements):
 - `DISPLAY_WIDTH = 488` pixels
@@ -351,11 +418,26 @@ Observed reality (`Confirmed`, 2026-05-01):
 ### Wire protocol
 
 - `0x50 06 00 00 01 01` — sent before the first `0x52`. Labelled "display
-  mode init" here originally; it is actually the **dashboard lock** (see that
-  section) and why `0x52` needs it is unexplained — `nav-0x50-necessity`
+  mode init" here originally; it is actually a dashboard-state probe (see
+  "Dashboard lock" below) and `0x52` does not need it. Sent to the right lens
+  only since 2026-11-06
   frame (see "Display mode control" below)
 - `0x52 06 00 00 01 01` — streaming text mode init
-- `0x53` — keepalive, sent every 5 seconds to prevent firmware timeout
+- `0x53` — keepalive, sent every 5 seconds to prevent firmware timeout.
+  **Corrected 2026-11-06:** the app used to send a bare 1-byte `0x53`, which
+  fails the handler's length check (`src/ble/ble_proto.c:4165`) and never
+  resets the timeout. The handler wants `53 06 00 <seq> <op> <data>`; ops
+  0-3 all reset the timer, and op 3 also replies `PKCS7_PACK_DONE` or
+  `PKCS7_PACK_ERR` according to whether the transcribe session is still
+  running (`src/ble/ble_proto.c:4165-4177`). The app now sends
+  `53 06 00 <seq> 03 00`
+- Session timeout (`Firmware-source`): on the master, 30 one-second ticks
+  without a valid `0x52`/`0x53` set `transcribe_buf->running = 0` and stop
+  the mic (`src/gui/ui_transcribe_info.c:111-118`). With the old bare `0x53`
+  this meant any Chat pause over 30 s (a slow assistant reply) could silently
+  end the session. `Confirmed` 2026-11-06: with the new keepalive both legs
+  reply `53 07 00 <seq> 03 c9 00` every 5 s (session running), and a Chat
+  reply stayed on screen for over 60 s untouched
 - Text update packet:
   ```
   52 <len> 00 <seq> 02 02 00 <line> 00 <flags> 00 00 <text_utf8> 0a
@@ -364,6 +446,16 @@ Observed reality (`Confirmed`, 2026-05-01):
   `0x00` during normal updates, `0x01` at session start and paragraph
   transitions (not required for basic operation). Each update re-sends the
   full current line content (not a delta).
+
+Firmware view of the same frames (`Firmware-source`, 2026-11-06,
+`src/ble/ble_proto.c:4024-4140`): the text packet is a fragmented message,
+not a "line" model. Bytes 5-6 are `total` (u16 LE), 7-8 `idx`, 9 `status`,
+10 a flag, 11 `dark_lines`, 12 onward text. Our cursor packet is fragment 1
+of 2 (carrying `\n\n`) and our text packet fragment 2; the firmware joins
+them. Our "confirmed" byte lands in `status`. Fragment 2 alone hits the order
+check (`:4120`). A single `total=1` packet should be accepted and would halve
+packets per tick - not yet tried on device. The reassembly cap is `0x20c`
+bytes (`:4074`).
 
 ### Official app line model (`Confirmed`, 2026-05-01)
 
@@ -554,15 +646,28 @@ Notes:
 - all three sub-types (TRIP_STATUS + MAP_OVERVIEW + PANORAMIC_MAP) are
   **required** for the firmware to render a card — text-only or dummy-data
   cards are rejected with "Navigation service lost"
-- the firmware requires a **continuous 1-second SYNC poller** (`0x04`)
-  running for the entire navigation session. Without it, the firmware
-  times out after a few seconds. The official app sends 86 SYNC packets
-  over a 70-second nav session at exactly 1-second intervals.
-- `0x50` is sent before the first INIT. "Required" is from capture replay
-  only — it is the **dashboard lock**, master-only, and does not touch the
-  display, so the requirement is unexplained. See `nav-0x50-necessity`
-- fire-and-forget writes (`sendData`) are the correct transport — there is no
-  positive ack for `0x0a`. There **is** a negative path: the parser posts an
+- the firmware requires a **continuous SYNC poller** (`0x04`) running for the
+  entire navigation session. The official app sends 86 SYNC packets over a
+  70-second nav session at exactly 1-second intervals. `Firmware-source`
+  (2026-11-06): only the **master** counts SYNC. Each SYNC bumps
+  `nav_app_sync_count` (`src/ble/ble_proto.c:2619-2630`); the master's nav task
+  resets its countdown to 19 when it sees one and decrements it once a second,
+  and at zero tells the slave to stop navigation
+  (`src/ui/ui_navigation_map.c:387-412`). So a master-only SYNC every ~5 s is
+  safe; the 1 s poller to both legs is overkill. Not yet changed in the app
+- RUNNING needs both `nav_overview_map_ready` and `nav_panoramic_map_ready`
+  (`src/ui/ui_navigation_map.c:371-374`), which is why text-only cards are
+  rejected
+- `0x50` is sent before the first INIT because the capture did. The named
+  source shows neither `0x0a` INIT nor `0x52` reads the lock bits, so it is
+  not required. Since 2026-11-06 the bootstrap strips it from the replay and
+  sends it to the right lens only
+- fire-and-forget writes (`sendData`) are the transport we use, but `0x0a` is
+  **acked** (corrected 2026-11-06): INIT replies with a 6-byte echo, byte 5 =
+  0, queued on the master and posted straight away on the slave
+  (`src/ble/ble_proto.c:2204-2221`); SYNC echoes 6 bytes, with byte 5 forced
+  to 0 when navigation is not running (`:2622-2630`), which is a free
+  liveness check. There **is** also a negative path: the parser posts an
   error frame carrying `<sub-command> | error flag` on a length mismatch and
   on every oversize-string case (`Firmware-source`). Whether that reaches BLE
   or only the inter-leg IPC channel is unresolved — the same `post_to_host`
@@ -620,7 +725,7 @@ Notes:
 - the `0x06` family is a separate content channel, not transactional framing
   around `0x1e`. See "`0x06` dashboard information family" above.
 
-## Dashboard lock: `0x50`
+## Dashboard lock: `0x50` (really a dashboard-state probe)
 
 > **Corrected 2026-09-08.** This section previously read "Display mode
 > control", with the guess that `0x50` means "clear display and prepare for
@@ -648,20 +753,30 @@ What the firmware does with it (`Firmware-source`), by its own log strings —
   broadcast `0x50` is silently discarded on the left.
 - Byte 4 must be `0x01`, else `received error dashboard lock action command`.
   Our packet satisfies this.
-- On success sets `DAT_20007f50 |= 2` and starts a k_timer.
+- On success sets `dashboard_lock_requested |= 2` and starts a k_timer.
   `DashboardLockTimerExpiry_callback` releases the lock bits on expiry,
   logging `dashboard lock timeout,release`.
 - If the lock bit is already set, it returns immediately — repeat sends are
   no-ops.
+
+Re-checked against the named source (2026-11-06): `0x50` is a
+**dashboard-state probe**, not a lock that gates anything. The master sends no
+ack (`src/ble/ble_proto.c:3933-3958`). It arms a 1 s window
+(`:3950`); if the dashboard is shown inside it, the master pushes
+`50 06 00 00 01 01` (head-up path, `src/imu/imu_fusion.c:104-120`) or
+`50 06 00 00 01 02` (dashboard UI path, `src/dashboard/dashboard.c:1635-1646`,
+`:1776-1787`). Device run 2026-11-06: a `0x50` to the right lens produced a
+`50 06 00 00 01 01` push from the right lens, consistent with this.
 
 Consequences for our code:
 
 - The `0x50 + 0x18` clear combo recorded as the ghost-screen fix
   (`worklist-history.md`, 2026-05-09) cannot work by the mechanism we wrote
   down. Most likely it only added wire delay ahead of `0x18`.
-- The `0x50`-before-`0x0a`-INIT and `0x50`-before-`0x52` requirements below are
-  now **unexplained**. They came from capture replay, not a known mechanism.
-  Tracked as `nav-0x50-necessity` on the worklist.
+- The `0x50`-before-`0x0a`-INIT and `0x50`-before-`0x52` "requirements" were
+  never requirements: neither handler reads the lock bits. Since 2026-11-06
+  the app sends `0x50` to the right lens only (clear, streaming init, nav
+  bootstrap). Removing it entirely is a follow-up.
 
 ## Battery and wear state: `0xF5`
 
@@ -675,7 +790,11 @@ Observed reality (`Confirmed`):
 - `F5 06` — wearing
 - `F5 07` — transitioning
 - `F5 08` — in cradle, lid open
-- `F5 0A <pct>` — glasses battery percentage push (byte 2, range 0..100)
+- `F5 0A <pct>` — glasses battery percentage push (byte 2, range 0..100).
+  `Firmware-source` (2026-11-06): values above 92 are remapped for display
+  smoothing - 93 becomes 94 or 95, 94 becomes 96 or 97, 95 becomes 98, 96
+  becomes 99, and anything higher reports 100
+  (`src/ble/ble_proto.c:3640-3659`). Treat the top of the range as coarse
 - `F5 0B` — in cradle, lid closed
 - `F5 0F <pct>` — case (cradle) battery percentage push (byte 2, range 0..100)
 
@@ -749,8 +868,33 @@ Observed reality (`Confirmed` for the double-tap sub-key):
 - byte 3 `<seq>` is a transaction sequence the official app increments
   monotonically per change; the firmware appears to accept any value
 - baseline traces show writes with sub-keys `0x02` and `0x08` at byte 4
-  (different lengths, different shapes); these are likely triple-tap or
-  long-press configurations and are not yet isolated
+  (different lengths, different shapes). Resolved from the named source
+  (2026-11-06): they are display height/depth and head-up mic, see the
+  sub-command table below
+
+All `0x26` sub-commands (`Firmware-source`, enum `ble_hw_sub` in
+`src/ble/ble_cmd.h:104-111`, handler `src/ble/ble_proto.c:2920-3020`):
+
+| Sub (byte 4) | Name | Payload / range | Notes |
+|---|---|---|---|
+| `0x01` | user data reset | - | **do not send** (sets `user_data_reset_pending`) |
+| `0x02` | display height / depth | `data[5]=1`, `[6]` height 0-8, `[7]` depth 0-9; out of range -> `PKCS7_PACK_ERR` | relayed to the slave; read back with `0x3b`. Settings-page candidate |
+| `0x03` | give mic semaphore | production-test only | ignore |
+| `0x04` | brightness max gear | - | |
+| `0x05` | double-tap action | 0-5; above 5 -> `PKCS7_PACK_ERR` | verified values above |
+| `0x06` | brightness coefficient | calibration mode | |
+| `0x07` | long-press enable | `0`/`1` | read back `3f 07`; device returned `00` |
+| `0x08` | head-up mic disabled | `1` disables, anything else enables | see below |
+
+Head-up mic (`Firmware-source` + device, 2026-11-06): whenever the dashboard
+is shown on the master while connected, the firmware calls
+`request_dmic_stream_start()` unless `head_up_mic_disabled` is set
+(`src/dashboard/dashboard.c:322`, `src/threads/message_task.c:369`). The flag
+defaults to 0 and is not persisted. Device readback `3f 08` returned `00`
+(not disabled). In Glance mode two tilt-ups produced **no** `F1` frames,
+most likely because the app renders its own `0x4E` on `F5 02` and pre-empts
+the dashboard task. Untested in modes that leave the native dashboard on
+screen. `26 06 00 <seq> 08 01` disables it if that ever matters.
 
 This is the wire-level explanation for the F5 20 matrix in
 [even-g1-event-mapping.md](even-g1-event-mapping.md): values `0x02`,
@@ -791,6 +935,26 @@ types with their own multi-packet assembly and index management — a separate
 mechanism from the `0x1e` note slots. See
 [firmware-decomp-notes.md](firmware-decomp-notes.md) §
 "`0x06` has native structured widget types".
+
+Record formats (`Firmware-source`, 2026-11-06, not yet tried on device):
+
+- **Schedule, sub `0x03`** (`src/ble/ble_proto.c:476-560`). Bytes 5-6
+  `total` (u16 LE), 7-8 `idx`. With `total=1`: `[9]` display mode, `[10]`
+  area, `[11]` `sched_mode` (records are parsed only when it is `3`), `[12]`
+  record count (max 8, more is rejected), then per record three TLVs in
+  order: `01 <len> title` (64 max), `02 <len> time` (32 max),
+  `03 <len> location` (64 max). Over-length fields are truncated with a
+  warning; a missing or out-of-order tag rejects the packet. Larger lists use
+  the `total`/`idx` multi-packet path.
+- **Stocks, sub `0x04`** (`src/ble/ble_proto.c:688` onward). Same header,
+  with `[11]` `stocks_mode` (records parsed when it is `2`) and `[12]` count;
+  up to 4 items, each a TLV set of code (32 max), company (64 max) and
+  price / change / rate (16 max each). Could double as a generic five-field
+  slot.
+- Every frame with `total=1` also writes `disp_mode` and `area`, i.e. it
+  persists the dashboard layout. Send them deliberately, not as filler.
+- A single tap on the native dashboard cycles the pane index on the firmware
+  side (`src/threads/threads.c:2265-2280`).
 
 Two variants have been observed on the wire.
 
@@ -860,17 +1024,20 @@ Source:
 
 Observed reality (`Confirmed`, shipped code):
 
-- the companion app sends a three-step `0x06` transaction to both legs on
-  connect to sync the wall-clock time with the glasses:
+- since 2026-11-06 the companion app sends **one** frame to both legs, on
+  connect and every 60 s:
   ```
-  TX  06 07 00 <seq1>   06 00 00                              — request
-  TX  06 16 00 <seq2>   01 <epoch32-LE> <epoch64-LE> <4 bytes>  — payload (22 bytes total)
-  TX  06 0c 00 <seq3>   03 01 00 01 00 00 00 01               — finalise
+  TX  06 16 00 <seq>   01 <epoch32-LE> <epoch64-LE> 00 00 00 00 02   (22 bytes)
+  RX  06 16 00 <seq>   01 00                                         (both legs)
   ```
-- the `seq` counter increments across all three steps
-- the `0x22` ack observed for note management has not been confirmed for
-  time-set (no capture evidence; behaviour consistent with note-management
-  framing)
+  `Confirmed` 2026-11-06: both legs ack `06 16 00 <seq> 01 00`.
+- until 2026-11-06 it wrapped that frame in two more (`06 07 00 <seq> 06 00 00`
+  before, `06 0c 00 <seq> 03 01 00 01 00 00 00 01` after). Both of those
+  **persist the dashboard layout** (`0x06` PANE_MODE writes `disp_mode` and
+  `area`, `src/ble/ble_proto.c:458-473`; the `0x03` frame with `total=1`
+  writes `disp_mode`, `area` and `sched_mode`, `:479-484`), so every minute
+  we were overwriting whatever layout the user had chosen in the official
+  app. Dropped
 
 **Epoch encoding (important):** both `epoch32` and `epoch64` carry
 **local wall-clock time encoded as if it were UTC** — i.e. the UTC epoch
@@ -887,13 +1054,12 @@ final localSec     = (now.millisecondsSinceEpoch + localOffsetMs) ~/ 1000;  // e
 final localMs      = now.millisecondsSinceEpoch + localOffsetMs;             // epoch64
 ```
 
-**What the three frames actually are** (`Firmware-source`, corrected
-2026-09-07): the sequence `Proto.setTimeAndWeather()` sends is not
-begin / payload / commit. It is three unrelated pushes — set dashboard display
-mode (byte 4 = `0x06`), sync the clock (`0x01`), then push a **schedule list
-with zero records** (`0x03`). The third frame
-(`06 0c 00 <seq> 03 01 00 01 00 00 00 01`) is harmless but does nothing;
-removing it would not affect the clock sync.
+**What the old three frames actually were** (`Firmware-source`, corrected
+2026-09-07, revised 2026-11-06): not begin / payload / commit, but three
+unrelated pushes - set dashboard display mode (byte 4 = `0x06`), sync the
+clock (`0x01`), then a schedule header with zero records (`0x03`). The 2026-09
+note called the third frame harmless; it was not, because both it and the
+first persist the dashboard layout. See above.
 
 This also explains why the `0x22` ack observed for note management never
 appeared for time-set: there is no transaction to ack.
@@ -906,10 +1072,15 @@ appeared for time-set: there is no transaction to ack.
 | `0x11` | weather icon | `0x00` |
 | `0x12` | temperature | `0x00` |
 | `0x13` | temperature unit (C/F) | `0x00` |
-| `0x14` | 12/24-hour time format | `0x00` |
-| `0x15` | read only when total length > `0x15`; triggers a firmware redraw when the value changes | `0x02` |
+| `0x14` | `time_disp_mode`, non-zero = 12-hour | `0x00` |
+| `0x15` | `date_format`; read only when total length > `0x15`, and a change is persisted to storage (`storage_commit_request`), not a redraw trigger | `0x02` |
 
-`Suspected`, high confidence — three-way triangulation. The JohnRThomas wiki
+`Firmware-source` (2026-11-06, `src/ble/ble_proto.c:417-446`): the named
+source stores `0x11` weather icon, `0x12` temperature, `0x13` `temp_unit`,
+`0x14` `time_disp_mode`, `0x15` `date_format`. Its own log line wrongly uses
+`time_disp_mode` for both the clock and the unit, which is what made the
+earlier read ambiguous. Previously `Suspected`, high confidence, on a
+three-way triangulation. The JohnRThomas wiki
 gives the order as `<weather_icon> <temp_c> <c_f_flag> <24h_flag> 00`;
 fahrplan (`models/g1/time_weather.dart:158-185`) builds the same four fields
 with a firmware-native `WeatherIcons` enum; and the firmware parser stores
@@ -917,9 +1088,9 @@ those four offsets into four distinct fields, with the two it puts at `+0x5d`
 / `+0x5e` being exactly the region its display log branches on for
 `centigrade degree` / `Fahrenheit` and 24/12-hour.
 
-Note the wiki has byte `0x15` as `0x00` where we send `0x02`, and that byte
-triggers a firmware redraw when it changes. Worth resolving before extending
-the packet. See the `time-weather-0x06-extend` worklist item.
+Note the wiki has byte `0x15` as `0x00` where we send `0x02`. It is the
+persisted date format, so changing it only costs a storage commit. Worth
+deciding which format we want before extending the packet. See the `time-weather-0x06-extend` worklist item.
 
 Notes:
 - the `0x06` framing is shared with note management (Variant A above) because
@@ -928,6 +1099,60 @@ Notes:
 - prior to the 2026-05-18 fix, the app sent `now.millisecondsSinceEpoch`
   (true UTC) which caused the glasses clock to display UTC time rather than
   local time
+
+## Native countdown timer: `0x07`
+
+Source: named firmware source plus device run 2026-11-06 (S24 Ultra, fw
+1.6.6).
+
+- TX `07 <seconds u32 LE> <enable>` (6 bytes, no length field;
+  `src/ble/ble_proto.c:391-403`, `src/threads/ble_req.c:216`). `enable=0`
+  cancels
+- `Confirmed`: both legs ack `07 c9`
+- the firmware draws it itself as task 2 (`draw_template_countdown_page`,
+  `src/notify/ui_countdown.c`) and persists it as setting `countdown_ts`, so
+  it should survive a disconnect
+- `Confirmed` on device: an hourglass icon plus a block of garbled glyphs,
+  then an alarm bell at zero, then the screen clears. The digits are garbage
+  because the page passes the raw digit value 0-9 to `font_ascii_get_glyph`
+  instead of a character code; the zero-state text is a hard-coded Chinese
+  "time's up" string the font cannot render
+- **unusable as shipped.** Quick Actions timers stay app-drawn. Fixing the
+  glyph call is a firmware-mod candidate (`firmware-mod-spike`)
+
+## Notification auto-display: `0x4F`
+
+`Firmware-source` (`src/threads/ble_req.c:431-439`): `data[0]` =
+`message_mode`, `data[1]` = `message_stay_time` in seconds. Firmware-side
+dwell time for its own notification rendering. Unused by the app; possible
+Glance tuning. Not tried on device.
+
+## Debug control: `0x05`
+
+`Firmware-source` (`src/threads/ble_req.c:201-215`, replies `"Good"`):
+
+| Sub (`data[0]`) | Effect |
+|---|---|
+| `1` | simulate head up (`arg != 0`) or head down. Useful for automated dashboard tests |
+| `2` | set firmware `LOG_LEVEL` |
+| `3` | set `dashboard_mode` directly. Experiments only |
+
+Not tried on device.
+
+## Do-not-send list
+
+Commands that are destructive or put a lens somewhere we cannot easily
+recover from (`Firmware-source`, 2026-11-06):
+
+| Command | Effect | Source |
+|---|---|---|
+| `0x4A` with bit 0 set | calls `switch_to_dfu_cb` - puts the lens into DFU. `src/ble/ble_cmd.h` labels it "display refresh", which is wrong | `src/threads/ble_req.c:399-413` |
+| `0x26` sub `0x01` | user data reset | `src/ble/ble_proto.c:2931` |
+| `0x47` | Bluetooth unpair | `src/ble/ble_proto.c:3799` |
+
+Tap counts with side effects (`src/threads/threads.c:2721-2748`): 5 taps
+reboot the lens (not during onboarding), 6 force a rebind (unpair), 10 and
+11 reset user data, 15 switch ESB to the high band.
 
 ## Brightness: `0x01 <level> <auto>` and `F5 12 <level>`
 
@@ -999,7 +1224,7 @@ Source:
 firmware's own, taken from its `printk` strings; only the first three are
 pinned to a specific opcode so far.
 
-Fully mapped 2026-09-08. "Via relay" means the case calls `FUN_00019d14`;
+Fully mapped 2026-09-08. "Via relay" means the case calls `spim_transfer`;
 "local" means it answers from the queried leg's own state.
 
 | Opcode | Firmware name | Answered | Status |
@@ -1018,7 +1243,8 @@ Fully mapped 2026-09-08. "Via relay" means the case calls `FUN_00019d14`;
 | `0x37` | unnamed, 5 bytes back | via relay | unexplored |
 | `0x38` | ANCS enable state | local | unexplored |
 | **`0x39`** | **system status / current running app** | **local** | **per-lens display state — see below** |
-| `0x3a`–`0x3f` | unnamed | — | unexplored |
+| `0x3a`-`0x3e` | wear detection, raster config, notif auto-display, language, burial-point telemetry | - | named in `src/ble/ble_cmd.h`, unexplored |
+| `0x3f` | `BLE_CMD_HARDWARE_GET` | local | sub 5 double-tap action, 6 brightness %, 7 long-press enable, 8 head-up mic disabled. **Confirmed** 2026-11-06: `3f08` -> `3f 08 c9 00`, `3f05` -> `3f 05 c9 05`, `3f07` -> `3f 07 c9 00` (`src/ble/ble_proto.c:3428-3445`) |
 
 `0x2f`, `0x30` and `0x31` have no cases.
 
@@ -1048,9 +1274,28 @@ raw_data[1] == 2  ->  iOS
 
 The firmware stores this and branches on it. Unverified whether the companion
 app sends it at all; if the firmware's default is the iOS branch it may be
-waiting on ANCS-shaped behaviour we never provide. Worth a check.
+waiting on ANCS-shaped behaviour we never provide. Worth a check. One concrete
+branch: the 30 s idle-link disconnect below applies only when the phone is
+not iOS.
+
+Response (`Firmware-source`, `src/ble/ble_proto.c:3238-3268`):
+`2c 66 <charger x5> <master fw x3> <slave fw x3> <ble fw x2>`. Device run
+2026-11-06 returned `2c 66 18 1a b7 5f 23 01 06 06 01 06 06 00 00 ...` -
+master and slave both v1.6.6. The charger bytes are not decoded.
 
 ## Heartbeat: `0x25`
+
+> **Corrected 2026-11-06.** `0x25` is not a heartbeat opcode. It is
+> `BLE_CMD_TELEPROMPTER_POSITION_SET`; the sub-command 4 we send is the
+> teleprompter "app sync packet", which the firmware echoes and counts in
+> `tp_app_sync_count` (`src/ble/ble_proto.c:1830-1844`). `0x1f`, which we had
+> down as the official app's heartbeat, is `BLE_CMD_TUTORIAL_CONTROL`
+> (onboarding). Link liveness comes from **any** NUS write: `ble_nus.c:83`
+> updates `last_rx_time`, and on Android the firmware drops the link after
+> 30 s with no RX (`src/threads/threads.c:2992-2995`; not applied to iOS).
+> So the cadence only has to stay under 30 s, and the deferred Tier 2
+> heartbeat-cadence work is moot. `0x25` is harmless today but could
+> interfere if we ever drive the firmware teleprompter.
 
 Vendor/demo reference:
 - not clearly described in the old README excerpt
@@ -1059,8 +1304,7 @@ Observed reality:
 - `Confirmed`
 - `0x25` is the active heartbeat request/response family in the current app logs
 - the official Even Realities app uses a different periodic exchange
-  (`0x1f`) at ~2 s cadence; firmware accepts both, so the `0x25` heartbeat in
-  this app remains valid
+  (`0x1f`) at ~2 s cadence; both work as keepalives because any write does
 - the companion app sends `0x25` per leg every 2 seconds (matching the
   official app's observed p50 cadence), starting a per-leg timer immediately
   on connect rather than sharing a single broadcast timer
