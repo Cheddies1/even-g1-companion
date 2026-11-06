@@ -1,21 +1,19 @@
 # Walking navigation v1: cartographer tiles on deepthought, navigator on the phone
 
-**Status:** IN PROGRESS - phases 1-3 done (gates A, B and C passed); next is phase 4
+**Status:** IN PROGRESS - phases 1-3 done (gates A, B and C passed); phase 4 delegated to Codex, awaiting its return
 **Created:** 2026-11-06   **Last updated:** 2026-11-06   **Completed:** -
 
-## Start here (next session: phase 4)
-- **Code state (2026-11-06):** phases 1-3 live on local branch `nav-marker-harness` (committed,
-  working tree clean; **not pushed, not merged** to `main`). Decide with Eddie whether to push or
-  merge before starting phase 4 code.
-- **Cartographer state:** `/home/eddie/projects/personal/cartographer/` holds the gate B renderer
-  (`prepare.py`, `render.py`, `make_itinerary.py`, `validate.py`, `data/`, `fixtures/`) and is
-  **not a git repo**. Phase 4 builds on it; Codex owns it and the box.
-- **Area:** the home extract below (Hanwell / Ealing bbox), confirmed by Eddie 2026-11-06 as the
-  v1 area. Travel coverage stays out of v1.
-- **First step of phase 4:** resolve the open arrow question (meanings of built-in arrows
-  0x0c-0x23) so manoeuvres can map onto the table, then brief Codex with phase 4 below, the
-  gate B renderer defaults (Decisions), the bitmap format (Decisions) and
-  `docs/FINDINGS-nav-marker-tiles.md`.
+## Start here (next session: phase 4 review)
+- **Code state (2026-11-06):** phases 1-3 merged to `main` and pushed (fast-forward, no PR, by
+  Eddie's call). Work on `main` or a fresh branch from it.
+- **Phase 4 in flight:** Codex (`codex_home`, gpt-6.1-sol) is building the service from a full
+  brief. It writes `docs/cartographer-contract.md` here but does not commit in this repo.
+- **Next step:** when Codex returns, review the contract against
+  `docs/FINDINGS-nav-marker-tiles.md` (bitmap format, marker clamp, arrow table), commit it,
+  check the done-when (one real route downloads once, hashes and dimensions validate, works
+  offline), then tick phase 4.
+- **Cartographer state:** `/home/eddie/projects/personal/cartographer/`, Codex-owned; Codex is
+  putting it under git in this phase.
 
 ## Goal
 A working v1 walking navigation mode. At trip start, a `cartographer` service on deepthought
@@ -111,7 +109,7 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   size on disk), even though v1 has only the home region, so the region-sync follow-on below is
   an addition, not a rework. Record measured per-region disk use (extract, geometry cache,
   routing graph) in the contract doc.
-  Prerequisite: arrow meanings 0x0c-0x23 (open question) for the manoeuvre mapping.
+  Arrow table: `docs/FINDINGS-nav-marker-tiles.md` "Built-in arrows" (resolved 2026-11-06).
 - **Deliverable:** the service + `docs/cartographer-contract.md` in this repo.
 - **Done when:** one real home-area route downloads once, hashes and dimensions validate, and the
   bundle stays usable with Tailscale disconnected.
@@ -210,6 +208,9 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
 - 2026-11-06 - Region sync is the first follow-on after v1: Navigate-area "Sync current location",
   region list on the phone, pinned vs auto-expiring unpinned regions, large transient downloads
   accepted. Phase 4 stores regions by id with a manifest so this is additive.
+- 2026-11-06 - Arrows 0x0c-0x23 named from the decomp resource table and spot-rendered from the
+  firmware bitmaps: roundabout cw/ccw pairs 0x0c-0x1d, merge L/R, ramp R/L, fork R/L. UK
+  roundabouts use `cw` (odd values). Walking needs 0x02-0x0a, 0x22/0x23 and the `cw` set.
 
 ## Follow-on after v1: region sync (own plan when v1 ships)
 Eddie's design, 2026-11-06:
@@ -247,9 +248,6 @@ size); v1 still ships with the home region only.
 ## Open questions
 - Valhalla vs GraphHopper - Codex, phase 4, on pedestrian route quality.
 - Tile spacing and overlap - phase 2 found ~190 m / ~50 m fine when static; confirm on phase 5 walks.
-- Per-value meaning of built-in arrows 0x0c-0x23 (all render; only 0x01-0x0b are named).
-  Needed before phase 4 maps manoeuvres onto the table: photograph them or read the bitmaps
-  via the Even-G1-Simulator.
 
 ## Progress log
 - 2026-11-06 - phase 1 - `docs/FINDINGS-nav-marker-tiles.md`, harness `tool/nav_harness.py` +
@@ -270,3 +268,6 @@ size); v1 still ships with the home region only.
   walking 1 Hz, zero gaps, moving p95 14.4 m; all gaps and poor accuracy were stationary
   indoors; no doze, no OS kill; battery 11.4 %/h. Deviation: one run, fused provider only.
   Carry into phase 5: filter fixes by `acc_m`, not by rate.
+- 2026-11-06 - phase 4 (part) - arrow table in `docs/FINDINGS-nav-marker-tiles.md` (from decomp
+  bitmaps, no device session); phases 1-3 merged to `main` and pushed; Codex delegated to build
+  the service and `docs/cartographer-contract.md`. Not ticked until the contract is reviewed.
