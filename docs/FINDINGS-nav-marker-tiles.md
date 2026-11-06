@@ -118,12 +118,12 @@ once. Use L's acks for transfer timing and progress.
 under the road text. All 35 rendered on both lenses and all were legible and distinct ("odd
 roundabouts, U-turns and partial turns, all rendered wonderfully").
 
-| Value | Arrow (names from ayroblu `DirectionTurn`, see `protocol-reference.md`) |
+| Value | Arrow |
 |---|---|
-| 0x01 | straight (dot) |
+| 0x01 | straight, dashed tail ("straight (dot)") |
 | 0x02 | straight |
-| 0x03 | right |
-| 0x04 | left |
+| 0x03 | turn right |
+| 0x04 | turn left |
 | 0x05 | slight right |
 | 0x06 | slight left |
 | 0x07 | sharp right |
@@ -131,11 +131,42 @@ roundabouts, U-turns and partial turns, all rendered wonderfully").
 | 0x09 | U-turn left |
 | 0x0a | U-turn right |
 | 0x0b | merge |
-| 0x0c-0x23 | roundabout and other variants: all render; **per-value meaning not recorded** |
+| 0x0c | roundabout sharp right, ccw |
+| 0x0d | roundabout sharp right, cw |
+| 0x0e | roundabout right, ccw |
+| 0x0f | roundabout right, cw |
+| 0x10 | roundabout slight right, ccw |
+| 0x11 | roundabout slight right, cw |
+| 0x12 | roundabout straight, ccw |
+| 0x13 | roundabout straight, cw |
+| 0x14 | roundabout slight left, ccw |
+| 0x15 | roundabout slight left, cw |
+| 0x16 | roundabout left, ccw |
+| 0x17 | roundabout left, cw |
+| 0x18 | roundabout sharp left, ccw |
+| 0x19 | roundabout sharp left, cw |
+| 0x1a | roundabout U-turn, ccw |
+| 0x1b | roundabout U-turn, cw |
+| 0x1c | roundabout enter, ccw |
+| 0x1d | roundabout enter, cw |
+| 0x1e | merge left |
+| 0x1f | merge right |
+| 0x20 | ramp right |
+| 0x21 | ramp left |
+| 0x22 | fork right |
+| 0x23 | fork left |
 
-Per-value naming of 0x0c-0x23 was not captured in this session. It is needed before phase 4
-maps routing manoeuvres onto this table: photograph each one, or read the bitmaps out of the
-firmware image with the Even-G1-Simulator.
+Names come from the decomp's resource table: `resource_manager.c:700-871` maps ids
+`0x61`-`0x83` in order onto `icon_nav_*` bitmaps in `src/gui/resource_bitmaps.h` (50x50,
+4 bpp, bright route path over a dim context ring). 0x01-0x0b agree with ayroblu
+`DirectionTurn`. Spot-rendered from the bitmaps to confirm the names (2026-11-06,
+`roundabout_right_ccw`/`_cw`, `roundabout_enter_cw`, `merge_left`, `fork_right`): `cw` is
+clockwise circulation, the path going round the ring as in the UK; `ccw` is right-hand
+traffic, so a right turn takes the short path inside the ring. UK roundabouts use the `cw`
+(odd) values; Czechia and Germany use `ccw` (even).
+
+Walking v1 needs 0x02-0x0a, fork 0x22/0x23 and the UK roundabout set; merge and ramp are
+driving manoeuvres.
 
 `0x00` and values above `0x23` draw no arrow (`navigation_direction_img_display` bounds check).
 

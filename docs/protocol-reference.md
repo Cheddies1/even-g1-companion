@@ -643,9 +643,10 @@ Observed reality (`Confirmed`):
   DirectionTurn enum values (from ayroblu Swift implementation, 0x01–0x23):
   StraightDot=0x01, Straight=0x02, Right=0x03, Left=0x04,
   SlightRight=0x05, SlightLeft=0x06, SharpRight=0x07, SharpLeft=0x08,
-  UTurnLeft=0x09, UTurnRight=0x0a, Merge=0x0b, plus roundabout variants
-  (0x0c–0x23). Full list in
-  [external-protocol-wiki-notes.md](external-protocol-wiki-notes.md).
+  UTurnLeft=0x09, UTurnRight=0x0a, Merge=0x0b, then roundabout cw/ccw pairs
+  (0x0c-0x1d; UK is cw, the odd values), merge left/right, ramp right/left and fork
+  right/left (0x1e-0x23). Full table, confirmed from the firmware bitmaps, in
+  [FINDINGS-nav-marker-tiles.md](FINDINGS-nav-marker-tiles.md).
   The companion app classifies manoeuvres via `classifyManoeuvre()` in
   `nav_icon_generator.dart`, parsing both `navIconSource` and instruction
   text for direction keywords.
