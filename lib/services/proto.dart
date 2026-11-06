@@ -60,6 +60,7 @@ class Proto {
   static const Duration _navReplayInterleavedPairDelay =
       Duration(milliseconds: 20);
   static const Duration _streamingKeepAliveInterval = Duration(seconds: 5);
+  static int _streamKeepAliveSeq = 0;
 
   static int _streamTextSeq = 0;
   static Timer? _streamingKeepAliveTimer;
@@ -146,6 +147,7 @@ class Proto {
 
   /// Even AI
   static int _evenaiSeq = 0;
+  static const int _evenaiMaxTextBytes = 480;
   // AI result transmission (also compatible with AI startup and Q&A status synchronization)
   static Future<bool> sendEvenAIData(String text,
       {int? timeoutMs,
@@ -154,6 +156,19 @@ class Proto {
       required int current_page_num,
       required int max_page_num}) async {
     var data = utf8.encode(text);
+    // The firmware reassembles 0x4E chunks into a 480-byte buffer with no
+    // bounds check (dash_buf->data, glasses_state.h:223; append at
+    // ble_proto.c:3844). Anything longer overruns into its length field.
+    if (data.length > _evenaiMaxTextBytes) {
+      var end = _evenaiMaxTextBytes;
+      while (end > 0 && (data[end] & 0xC0) == 0x80) {
+        end--; // do not split a UTF-8 sequence
+      }
+      AppLog.error(
+          'sendEvenAIData: text ${data.length} bytes exceeds firmware buffer, truncated to $end',
+          tag: 'BLE');
+      data = data.sublist(0, end);
+    }
     var syncSeq = _evenaiSeq & 0xff;
 
     List<Uint8List> dataList = EvenaiProto.evenaiMultiPackListV2(0x4E,
@@ -298,25 +313,18 @@ class Proto {
         .buffer
         .asUint8List();
 
-    final seq1 = _timeSeq % 0xff;
+    // Only the 0x01 time/weather record. The 0x06 PANE_MODE and 0x03
+    // schedule packets we used to wrap it in each persist the dashboard
+    // layout (ble_proto.c:458-484), so sending them every minute overwrote
+    // whatever layout the user had chosen.
+    final seq = _timeSeq % 0xff;
     _timeSeq++;
-    final seq2 = _timeSeq % 0xff;
-    _timeSeq++;
-    final seq3 = _timeSeq % 0xff;
-    _timeSeq++;
-
-    await BleManager.sendData(Uint8List.fromList(
-        [0x06, 0x07, 0x00, seq1, 0x06, 0x00, 0x00]));
 
     await BleManager.sendData(Uint8List.fromList([
-      0x06, 0x16, 0x00, seq2, 0x01,
+      0x06, 0x16, 0x00, seq, 0x01,
       ...epoch32,
       ...epoch64,
       0x00, 0x00, 0x00, 0x00, 0x02,
-    ]));
-
-    await BleManager.sendData(Uint8List.fromList([
-      0x06, 0x0c, 0x00, seq3, 0x03, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
     ]));
 
     AppLog.info(
@@ -331,7 +339,7 @@ class Proto {
   /// Prime the glasses display for navigation card mode.
   ///
   /// Sends three frames in order:
-  /// 1. `0x50 06 00 00 01 01` — display mode control (clear + prepare)
+  /// 1. `0x50 06 00 00 01 01` — dashboard-state probe, master only
   /// 2. `0x0a 06 00 <seq> 00 01` — enter navigation display mode
   /// 3. `0x0a 06 00 <seq> 04 01` — ready for card data
   ///
@@ -340,7 +348,8 @@ class Proto {
   /// control".
   static Future<void> sendNavModeEnter() async {
     // INIT (sub-cmd 0x00) — enter navigation display mode.
-    // Fire-and-forget: firmware does not ack 0x0a (confirmed by timeout logs).
+    // Fire-and-forget. The firmware does ack INIT and SYNC with a 6-byte echo
+    // (ble_proto.c:2216, :2622); we just do not wait for it.
     final enterSeq = _navSeq & 0xff;
     _navSeq++;
     await BleManager.sendData(
@@ -455,6 +464,17 @@ class Proto {
   static Future<void> sendNavBootstrap() async {
     final replayPackets =
         navBootstrapHexPackets.map(_decodeHexPacket).toList();
+    // The captured lifecycle opens with 0x50, which is master-only (the left
+    // lens rejects it, ble_proto.c:3956). Send it to R alone rather than
+    // replaying it to both legs.
+    final lockPackets =
+        replayPackets.where((p) => p.isNotEmpty && p[0] == 0x50).toList();
+    replayPackets.removeWhere((p) => p.isNotEmpty && p[0] == 0x50);
+    if (BleManager.get().isLegAvailable('R')) {
+      for (final p in lockPackets) {
+        await BleManager.sendData(p, lr: 'R');
+      }
+    }
     final dynamicTripStatus = _pendingBootstrapPayload;
     _pendingBootstrapPayload = null;
     final tripStatusReplaced = dynamicTripStatus == null
@@ -642,6 +662,7 @@ class Proto {
       );
       await BleManager.sendData(
         Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]),
+        lr: 'R',
       );
     } else {
       AppLog.info(
@@ -749,8 +770,10 @@ class Proto {
   static Future<void> startStreamingText() async {
     await stopStreamingText(sendFinalFrame: false);
 
+    // 0x50 is master-only; the left lens rejects it (ble_proto.c:3956).
     await BleManager.sendData(
       Uint8List.fromList([0x50, 0x06, 0x00, 0x00, 0x01, 0x01]),
+      lr: 'R',
     );
     await BleManager.sendData(
       Uint8List.fromList([0x52, 0x06, 0x00, 0x00, 0x01, 0x01]),
@@ -950,7 +973,13 @@ class Proto {
       if (!_streamingTextActive) {
         return;
       }
-      await BleManager.sendData(Uint8List.fromList([0x53]));
+      // A bare 0x53 fails the firmware's length check and never resets the
+      // 30 s transcribe timeout (ble_proto.c:4165, ui_transcribe_info.c:111).
+      // Op 3 resets it and replies DONE/ERR by whether the session runs.
+      final seq = _streamKeepAliveSeq & 0xff;
+      _streamKeepAliveSeq = (_streamKeepAliveSeq + 1) & 0xff;
+      await BleManager.sendData(
+          Uint8List.fromList([0x53, 0x06, 0x00, seq, 0x03, 0x00]));
       AppLog.info('${DateTime.now()} keepalive sent', tag: 'Chat');
     });
   }

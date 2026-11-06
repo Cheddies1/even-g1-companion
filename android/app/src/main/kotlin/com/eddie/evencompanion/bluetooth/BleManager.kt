@@ -39,6 +39,7 @@ class BleManager private constructor() {
         // Literal, not BleManager::class.simpleName — R8 obfuscates the class
         // name in release builds, which would tag every native log line as "k".
         const val LOG_TAG = "BleManager"
+        const val PROBE_TAG = "G1Probe"
 
         private const val SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
         private const val WRITE_CHARACTERISTIC_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -210,12 +211,55 @@ class BleManager private constructor() {
         val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
         context.applicationContext.registerReceiver(bondStateReceiver, filter)
         Log.v(LOG_TAG, "BleManager init success, bond-state receiver registered")
+        registerProbeReceiver(context)
+    }
+
+    // ---- Debug-only protocol probe -------------------------------------------------
+    // Debuggable builds only. Send raw frames from adb and see every non-audio RX
+    // frame in logcat under the PROBE_TAG tag:
+    //   adb shell am broadcast -a com.eddie.evencompanion.PROBE --es hex 2c01 --es lr R
+    // lr is L, R or omitted for both legs.
+    private var probeEnabled = false
+    private var probeMicFrames = 0
+    private val probeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val hex = intent.getStringExtra("hex")?.replace(" ", "") ?: return
+            val lr = intent.getStringExtra("lr")
+            val data = try {
+                ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+            } catch (e: NumberFormatException) {
+                Log.e(PROBE_TAG, "bad hex: $hex"); return
+            }
+            Log.i(PROBE_TAG, "TX ${lr ?: "both"} $hex")
+            senData(mapOf("data" to data, "lr" to lr)) { ok -> Log.i(PROBE_TAG, "TX done ok=$ok") }
+        }
+    }
+
+    private fun registerProbeReceiver(context: Activity) {
+        val debuggable = (context.applicationInfo.flags and
+            android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (!debuggable || probeEnabled) return
+        val filter = IntentFilter("com.eddie.evencompanion.PROBE")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.applicationContext.registerReceiver(probeReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            context.applicationContext.registerReceiver(probeReceiver, filter)
+        }
+        probeEnabled = true
+        Log.i(PROBE_TAG, "protocol probe receiver registered")
     }
 
     /**
      * Unregister receivers and release resources. Call from MainActivity.onDestroy.
      */
     fun deinit() {
+        if (probeEnabled) {
+            try {
+                weakActivity.get()?.applicationContext?.unregisterReceiver(probeReceiver)
+            } catch (e: IllegalArgumentException) {
+            }
+            probeEnabled = false
+        }
         try {
             weakActivity.get()?.applicationContext?.unregisterReceiver(bondStateReceiver)
         } catch (e: IllegalArgumentException) {
@@ -618,6 +662,14 @@ class BleManager private constructor() {
                 val isMicData = value[0] == 0xF1.toByte()
                 if (isMicData && value.size != 202) {
                     return@launch
+                }
+                if (probeEnabled) {
+                    val side = if (isLeft) "L" else "R"
+                    if (isMicData) {
+                        if (probeMicFrames++ % 50 == 0) Log.i(PROBE_TAG, "RX $side F1 mic frames=$probeMicFrames")
+                    } else {
+                        Log.i(PROBE_TAG, "RX $side ${value.joinToString("") { "%02x".format(it) }}")
+                    }
                 }
                 //  eg. LC3 to PCM
                 if (isMicData) {
