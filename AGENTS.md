@@ -108,6 +108,12 @@ On the master (R) many responses are queued and arrive late; use L acks for
 timing. Anything worth keeping belongs in `Proto`. While a batch runs the probe
 holds back `F5 00/02/03` from Dart (every mode acts on tilt; close kills nav).
 
+Walking-nav desk test (debug): `am start -n com.eddie.evencompanion/.MainActivity` first (Android
+14 refuses a background location FGS), then `am broadcast ... -a com.eddie.evencompanion.NAV_TRIP
+--es dest "lat,lon" [--es replay <trace.csv from files/gps>] [--ef speed 4]` (`--es cmd stop` ends
+it). Logs: logcat `[WalkNav]` and `G1Nav`. Real-trace replay test: `NAV_BUNDLE=... NAV_TRACE=...
+flutter test test/services/walknav/real_trace_replay_test.dart` (skips without both).
+
 GPS trace recorder (debug): `am broadcast ... -a com.eddie.evencompanion.GPS_TRACE --es cmd
 start|stop`, app foregrounded to start; CSVs hold real coordinates, keep them in gitignored
 `logs/gps/`. See [docs/FINDINGS-screen-off-gps.md](docs/FINDINGS-screen-off-gps.md).
@@ -122,6 +128,9 @@ reboot it needs USB `adb tcpip 5555` first).
 - `lib/services/<feature>_service.dart` - per-feature logic (glance, capture,
   phone_capture, navigate, chat, device_status, recordings)
 - `lib/services/glance_carousel.dart` - pure, unit-tested carousel paging
+- `lib/services/walknav/` - walking navigator: pure cores (geometry, bundle, manoeuvre
+  filter, route tracker, tile selector, `0x0a` wire) + `walk_navigator_service.dart`;
+  Android side `service/NavLocationService.kt` (location FGS, replay, `NavBridge`)
 - `lib/services/g1_text_layout.dart` - pixel-accurate `0x4E` wrapping from the
   firmware glyph-width table
 - `lib/services/streaming_render_queue.dart` - paced `0x52` queue for Chat

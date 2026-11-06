@@ -13,6 +13,8 @@ import 'package:even_companion/services/notification_policy.dart';
 import 'package:even_companion/services/notification_settings_store.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
+import 'package:even_companion/services/walknav/nav_geo.dart';
+import 'package:even_companion/services/walknav/walk_navigator_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -54,6 +56,7 @@ class CompanionController extends ChangeNotifier {
       GlanceService.get.isVisible ||
       CaptureService.get.isDisplayVisible ||
       NavigateService.get.isVisible ||
+      WalkNavigatorService.get.isActive ||
       ChatService.get.isDisplayVisible;
 
   String get _activeDisplayOwner {
@@ -88,6 +91,13 @@ class CompanionController extends ChangeNotifier {
       notifyListeners();
     };
     await NotificationSettingsStore.get.init();
+    WalkNavigatorService.get
+      ..onTripRequested = _startWalkTrip
+      ..onTripEnded = (reason) {
+        _statusMessage = 'Walk ended: $reason';
+        notifyListeners();
+      }
+      ..init();
     await _refreshNotificationAccess();
     await _hydrateNotifications();
     _notificationSubscription = _notificationChannel
@@ -265,6 +275,12 @@ class CompanionController extends ChangeNotifier {
       AppLog.info(
         '${DateTime.now()} Transport: Reconnected flash skipped — QuickNote capture active',
       );
+      return;
+    }
+
+    // A walking trip puts its own card back; a title card would clobber it.
+    if (WalkNavigatorService.get.isActive) {
+      await WalkNavigatorService.get.resyncAfterReconnect();
       return;
     }
 
@@ -506,7 +522,45 @@ class CompanionController extends ChangeNotifier {
     }
   }
 
+  /// A walking trip (share or debug broadcast) switches to Navigate first, so
+  /// mode ownership stays here, then hands over to the walking navigator.
+  bool _walkTripStarting = false;
+
+  Future<void> _startWalkTrip(LatLon dest,
+      {LatLon? origin, String? replay, double speed = 1.0}) async {
+    _walkTripStarting = true;
+    try {
+      _cancelPendingTiltUpIntent(reason: 'walk-trip');
+      if (_activeMode == AppMode.navigate) {
+        await NavigateService.get.leaveMode();
+      } else {
+        await setMode(AppMode.navigate, source: 'WalkTrip', passive: true);
+      }
+    } finally {
+      _walkTripStarting = false;
+    }
+    _statusMessage = 'Walk: starting';
+    notifyListeners();
+    await WalkNavigatorService.get
+        .start(dest, origin: origin, replay: replay, speed: speed);
+    notifyListeners();
+  }
+
+  Future<void> stopWalkTrip() async {
+    await WalkNavigatorService.get.stop(reason: 'stopped from phone');
+    notifyListeners();
+  }
+
   Future<void> _handleNavigateGesture(int eventId) async {
+    if (WalkNavigatorService.get.isActive) {
+      // The firmware switches the nav pages on tilt by itself; only a double
+      // tap (F5 00 over the card) ends the trip.
+      if (eventId == 0) {
+        await WalkNavigatorService.get.stop(reason: 'double tap');
+        _statusMessage = 'Walk ended';
+      }
+      return;
+    }
     switch (eventId) {
       case 0:
         await NavigateService.get.close();
@@ -671,6 +725,9 @@ class CompanionController extends ChangeNotifier {
           '${DateTime.now()} DisplayState: source=ModeSwitchClose service=Navigate currentMode=${_activeMode.label}',
         );
         await NavigateService.get.leaveMode();
+        if (WalkNavigatorService.get.isActive) {
+          await WalkNavigatorService.get.stop(reason: 'left Navigate mode');
+        }
         break;
       case AppMode.chat:
         AppLog.debug(
@@ -714,6 +771,9 @@ class CompanionController extends ChangeNotifier {
         }
         break;
       case AppMode.navigate:
+        if (_walkTripStarting || WalkNavigatorService.get.isActive) {
+          return; // the walking navigator owns the display
+        }
         if (NavigateService.get.hasInstruction) {
           await NavigateService.get.showLatest();
         } else {
@@ -766,7 +826,8 @@ class CompanionController extends ChangeNotifier {
       classification: classification,
       routing: 'candidate',
     );
-    final navigateEligible =
+    // Google Maps turn notifications are ignored while a walking trip runs.
+    final navigateEligible = !WalkNavigatorService.get.isActive &&
         NavigateService.get.acceptsNotification(notification);
     if (navigateEligible) {
       await NavigateService.get.ingestNotification(notification);

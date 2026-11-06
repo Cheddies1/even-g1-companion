@@ -1,16 +1,17 @@
 # Walking navigation v1: cartographer tiles on deepthought, navigator on the phone
 
-**Status:** IN PROGRESS - phases 1-4 done (gates A, B and C passed; cartographer live); next is phase 5
+**Status:** IN PROGRESS - phases 1-4 done; phase 5 implemented and desk-verified on the glasses, live walk pending
 **Created:** 2026-11-06   **Last updated:** 2026-11-06   **Completed:** -
 
-## Start here (next session: phase 5)
-- **Code state (2026-11-06):** phases 1-4 on `main`, pushed. Branch from `main` for phase 5.
-- **Cartographer:** live at `https://deepthought.tail082c0b.ts.net:9446/v1/route` (Valhalla
-  pedestrian, home region only). Schema, tile model, marker transform and arrow mapping:
-  `docs/cartographer-contract.md`. Codex owns the service and its repo
-  (`/home/eddie/projects/personal/cartographer/`, now under git).
-- **First step of phase 5:** read the contract, then design the navigator around the two open
-  questions below that phase 5 owns (manoeuvre noise, mini-map position cue).
+## Start here (next session: finish phase 5)
+- **Code state (2026-11-06):** phase 5 code on local branch `walk-navigator` (from `main`),
+  **uncommitted** unless Eddie asked otherwise. Installed debug build on the phone matches it.
+- **Done:** navigator built and replayed through the real glasses (4x replay of the Dodo trace:
+  route fetch, boot, 14 tile swaps, 7 reroutes, turns, arrival - all clean, Eddie confirmed).
+- **Share start works** (2026-11-06): Google Maps route share -> "Walk with Even G1" resolved,
+  routed and rendered on the glasses.
+- **Left for phase 5:** a live walk with real GPS (Eddie, planned 2026-11-07). Then tick phase 5.
+- **Desk test recipe:** AGENTS.md "Walking-nav desk test".
 
 ## Goal
 A working v1 walking navigation mode. At trip start, a `cartographer` service on deepthought
@@ -128,6 +129,12 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
 - **Done when:** a real walk shows per-second marker moves, tile switches at intended points,
   correct turn text/arrows, and arrival.
 - **Delegate:** inline.
+- **Built (2026-11-06):** `lib/services/walknav/` - `nav_geo` (contract maths), `nav_bundle`
+  (parse + sha256/size validation), `maneuver_plan` (noise filter), `route_tracker`
+  (map-matching), `tile_selector` (+ `TripText`), `nav_wire` (packet builders), `maps_share`
+  (share parsing), `walk_navigator_service` (orchestration); `NavLocationService.kt` + `NavBridge`
+  (live/replay fixes, share intent, debug `NAV_TRIP`); controller wiring; 30 unit tests + an
+  env-gated real-trace replay test.
 
 ### [ ] 6 - Protocol hardening and de-replay
 - **Objective:** production-grade `0x0a` lifecycle.
@@ -247,13 +254,30 @@ Size estimate (measured where marked):
 Phase 4 lays the groundwork (region id + manifest incl. `pinned` and `last_used`, measured
 size); v1 still ships with the home region only.
 
+- 2026-11-06 - Phase 5 manoeuvre filter: cluster manoeuvres <15 m apart; net heading change
+  over 25 m either side (15 m for a lone manoeuvre); drop under 30 deg; arrow from the net
+  change (slight <45, normal <135, sharp <165, U-turn); roundabouts and arrival always kept.
+  Acceptance route: 14 raw -> 6 turns, matching what a walker needs.
+- 2026-11-06 - Phase 5 behaviour: fixes worse than 25 m ignored; 20 m corridor; off-route after
+  10 s sustained; reroute from the current fix with a 30 s cooldown, keeping the old bundle if
+  the fetch fails; marker on the matched route point when on route, raw GPS (clamped) when off;
+  TRIP_STATUS paused during the ~1.6 s tile transfers; SYNC to R every 5 s; arrival = within
+  15 m of the end, then ARRIVED status 2 ("You have arrived"), EXIT after 6 s.
+- 2026-11-06 - Mini-map position: v1 accepts the stale baked tile-start cue (no extra
+  mini-map refreshes). Revisit only if a live walk shows it misleads.
+- 2026-11-06 - Trips must start with the app in the foreground (Android 14 location FGS rule).
+  The Google Maps share does this naturally; debug starts need `am start` first.
+- 2026-11-06 - `MainActivity` is `singleTask`: with Flutter's default `singleTop` + empty task
+  affinity, every share spawned a new task and Flutter engine (mode reset, red flash, fixes sent
+  to the wrong engine). Share links are resolved with a browser User-Agent; the resolved route
+  link carried a `!3d/!4d` destination pin. Trip origin: first fix <=25 m, else best <=150 m
+  after 15 s (routing snaps it); walking still gates fixes at 25 m.
+
 ## Open questions
-- Manoeuvre noise: the 724 m acceptance route yields 14 manoeuvres, including pavement and
-  crossing micro-turns and two fork-right (0x22). Phase 5 likely needs to suppress or merge
-  short-spaced manoeuvres before they drive the arrow and text.
-- Mini-map position: it has no firmware marker; the baked cue sits at tile start (68,112), so
-  it goes stale over a ~190 m tile. Phase 5 to decide on more frequent mini-map refreshes
-  (0.3-0.65 s each) versus a cartographer change to shorter mini-map intervals.
+- Tile orientation flips: each tile faces its own first 20 m, so consecutive panoramic tiles can
+  jump between north-south and east-west (seen in the 4x replay). Ask Codex for heading
+  hysteresis in cartographer (keep the previous tile's heading unless the route genuinely
+  turns, or snap to 45 deg). Not blocking.
 - Roundabout exit mapping is unit-tested only; no real route with a roundabout yet.
 - Tile spacing and overlap - phase 2 found ~190 m / ~50 m fine when static; confirm on phase 5 walks.
 
@@ -283,3 +307,7 @@ size); v1 still ships with the home region only.
   git) and `docs/cartographer-contract.md`; Claude reviewed it against gate A findings and
   re-fetched the acceptance route live (6 tiles, hashes and sizes verified). Deviation: no
   roundabout route tested.
+- 2026-11-06 - phase 5 (part) - navigator built (`lib/services/walknav/`, `NavLocationService.kt`)
+  and desk-verified via a 4x replay on the glasses. Deviations: verified by replay, not yet a
+  live walk; fixed an Android 14 background-FGS crash on the debug path, and a share bug (new
+  task + engine per share) via `singleTask`; share start then verified on device.

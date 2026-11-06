@@ -76,6 +76,14 @@ object BleChannelHelper {
         EventChannel(binaryMessenger, EVENT_BLE_SPEECH_RECOGNIZE).setStreamHandler(context)
         EventChannel(binaryMessenger, EVENT_NOTIFICATIONS).setStreamHandler(context)
         EventChannel(binaryMessenger, EVENT_TELEPHONY).setStreamHandler(context)
+        EventChannel(binaryMessenger, com.eddie.evencompanion.service.NavBridge.EVENT_NAV)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventSink?) =
+                    com.eddie.evencompanion.service.NavBridge.attach(events)
+                override fun onCancel(arguments: Any?) {
+                    com.eddie.evencompanion.service.NavBridge.detach()
+                }
+            })
     }
 
     /**
@@ -132,6 +140,19 @@ class BleMethodChannel(
             "stopEvenAI" -> stopEvenAI(call, result)
             "getRecentNotifications" -> getRecentNotifications(call, result)
             "dismissNotification" -> dismissNotification(call, result)
+            "navLocationStart" -> {
+                com.eddie.evencompanion.service.NavLocationService.start(
+                    context,
+                    call.argument<String>("replay"),
+                    call.argument<Double>("speed") ?: 1.0,
+                    call.argument<String>("title"),
+                )
+                result.success(true)
+            }
+            "navLocationStop" -> {
+                com.eddie.evencompanion.service.NavLocationService.stop(context)
+                result.success(true)
+            }
             "isNotificationAccessEnabled" -> isNotificationAccessEnabled(call, result)
             "openNotificationAccessSettings" -> openNotificationAccessSettings(call, result)
             "startCompanionService" -> startCompanionService(call, result)

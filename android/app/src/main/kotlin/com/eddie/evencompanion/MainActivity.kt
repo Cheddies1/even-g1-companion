@@ -21,6 +21,14 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
         BleManager.instance.initBluetooth(this)
         BlePermissionUtil.ensureNotificationPermission(this)
         GpsTraceService.registerDebugReceiver(this)
+        com.eddie.evencompanion.service.NavBridge.registerDebugReceiver(this)
+        com.eddie.evencompanion.service.NavBridge.handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        com.eddie.evencompanion.service.NavBridge.handleIntent(intent)
     }
 
     override fun onDestroy() {

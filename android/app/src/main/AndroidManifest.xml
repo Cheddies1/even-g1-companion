@@ -47,6 +47,12 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+        <!-- Walking navigation location source (plan navigate-v1-cartographer, phase 5). -->
+        <service
+            android:name=".service.NavLocationService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location" />
         <service
             android:name=".service.GpsTraceService"
             android:enabled="true"
@@ -64,7 +70,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -81,6 +87,12 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Google Maps "Share" -> start a walking trip. -->
+            <intent-filter android:label="Walk with Even G1">
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

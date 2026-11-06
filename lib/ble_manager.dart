@@ -494,6 +494,10 @@ class BleManager {
       _recordHeartbeatSuccess(res.lr);
     }
 
+    if (res.getCmd() == 0x0a) {
+      navFrames.add(res);
+    }
+
     if (res.data[0].toInt() == 0xF5) {
       final notifyIndex = res.data[1].toInt();
       final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -1094,6 +1098,11 @@ class BleManager {
     }
     return allSucceeded;
   }
+
+  /// Every `0x0a` navigation response, for the walking navigator's ack and
+  /// liveness checks (map transfer master-last rule, SYNC running flag).
+  static final StreamController<BleReceive> navFrames =
+      StreamController<BleReceive>.broadcast();
 
   static Future sendData(Uint8List data,
       {String? lr, Map<String, dynamic>? other, int secondDelay = 100}) async {
