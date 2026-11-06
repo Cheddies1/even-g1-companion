@@ -114,19 +114,22 @@ class BleManager private constructor() {
     private val scanCallback: ScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
-            val device = result?.device
+            val device = result?.device ?: return
+            // Read the name once: BluetoothDevice.getName() can return null on a
+            // later call even after a non-null first read (crashed 2026-11-06 with
+            // "getName(...) must not be null" while scanning near unnamed devices).
             //  eg. G1_45_L_92333
-            if (device == null ||
-                device.name.isNullOrEmpty() ||
-                !device.name.contains("G\\d+".toRegex()) ||
-                device.name.split("_").size != 4 ||
+            val name: String? = device.name
+            if (name.isNullOrEmpty() ||
+                !name.contains("G\\d+".toRegex()) ||
+                name.split("_").size != 4 ||
                 bleDevices.firstOrNull { it.address == device.address } != null) {
                 return
             }
-            Log.i(LOG_TAG, "ScanCallback - Result: CallbackType = $callbackType, DeviceName = ${device.name}")
+            Log.i(LOG_TAG, "ScanCallback - Result: CallbackType = $callbackType, DeviceName = $name")
             //  1. Get same channel num device,and make pair
-            val channelNum = device.name.split("_")[1]
-            bleDevices.add(BleDevice.createByDevice(device.name, device.address, channelNum))
+            val channelNum = name.split("_")[1]
+            bleDevices.add(BleDevice.createByDevice(name, device.address, channelNum))
             val pairDevices = bleDevices.filter { it.name.contains("_$channelNum" + "_") }
             if (pairDevices.size <= 1) {
                 return
