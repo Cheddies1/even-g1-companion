@@ -105,6 +105,10 @@ On the master (R) many responses are queued and arrive late; use L acks for
 timing. Anything worth keeping belongs in `Proto`. While a batch runs the probe
 holds back `F5 00/02/03` from Dart (every mode acts on tilt; close kills nav).
 
+GPS trace recorder (debug): `am broadcast ... -a com.eddie.evencompanion.GPS_TRACE --es cmd
+start|stop`, app foregrounded to start; CSVs hold real coordinates, keep them in gitignored
+`logs/gps/`. See [docs/FINDINGS-screen-off-gps.md](docs/FINDINGS-screen-off-gps.md).
+
 Device access: adb over Tailscale at `100.89.74.113:5555` (after a phone
 reboot it needs USB `adb tcpip 5555` first).
 

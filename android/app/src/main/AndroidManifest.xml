@@ -20,6 +20,9 @@
          recording would produce a silent WAV with no error. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- GpsTraceService (debug gate C recorder): keeps fixes flowing with the
+         screen off. ACCESS_FINE_LOCATION above is already granted for BLE. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
    
     <application
         android:label="Even Companion"
@@ -44,6 +47,11 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+        <service
+            android:name=".service.GpsTraceService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location" />
         <service
             android:name=".notifications.RecentNotificationsListenerService"
             android:exported="true"

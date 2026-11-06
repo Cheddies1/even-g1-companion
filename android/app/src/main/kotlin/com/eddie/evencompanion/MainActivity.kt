@@ -8,6 +8,7 @@ import com.eddie.evencompanion.bluetooth.BleMethodChannel
 import com.eddie.evencompanion.bluetooth.BlePermissionUtil
 import com.eddie.evencompanion.cpp.Cpp
 import com.eddie.evencompanion.service.CompanionForegroundService
+import com.eddie.evencompanion.service.GpsTraceService
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -19,6 +20,7 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
         Cpp.init()
         BleManager.instance.initBluetooth(this)
         BlePermissionUtil.ensureNotificationPermission(this)
+        GpsTraceService.registerDebugReceiver(this)
     }
 
     override fun onDestroy() {
