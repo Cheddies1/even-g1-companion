@@ -1,19 +1,16 @@
 # Walking navigation v1: cartographer tiles on deepthought, navigator on the phone
 
-**Status:** IN PROGRESS - phases 1-3 done (gates A, B and C passed); phase 4 delegated to Codex, awaiting its return
+**Status:** IN PROGRESS - phases 1-4 done (gates A, B and C passed; cartographer live); next is phase 5
 **Created:** 2026-11-06   **Last updated:** 2026-11-06   **Completed:** -
 
-## Start here (next session: phase 4 review)
-- **Code state (2026-11-06):** phases 1-3 merged to `main` and pushed (fast-forward, no PR, by
-  Eddie's call). Work on `main` or a fresh branch from it.
-- **Phase 4 in flight:** Codex (`codex_home`, gpt-6.1-sol) is building the service from a full
-  brief. It writes `docs/cartographer-contract.md` here but does not commit in this repo.
-- **Next step:** when Codex returns, review the contract against
-  `docs/FINDINGS-nav-marker-tiles.md` (bitmap format, marker clamp, arrow table), commit it,
-  check the done-when (one real route downloads once, hashes and dimensions validate, works
-  offline), then tick phase 4.
-- **Cartographer state:** `/home/eddie/projects/personal/cartographer/`, Codex-owned; Codex is
-  putting it under git in this phase.
+## Start here (next session: phase 5)
+- **Code state (2026-11-06):** phases 1-4 on `main`, pushed. Branch from `main` for phase 5.
+- **Cartographer:** live at `https://deepthought.tail082c0b.ts.net:9446/v1/route` (Valhalla
+  pedestrian, home region only). Schema, tile model, marker transform and arrow mapping:
+  `docs/cartographer-contract.md`. Codex owns the service and its repo
+  (`/home/eddie/projects/personal/cartographer/`, now under git).
+- **First step of phase 5:** read the contract, then design the navigator around the two open
+  questions below that phase 5 owns (manoeuvre noise, mini-map position cue).
 
 ## Goal
 A working v1 walking navigation mode. At trip start, a `cartographer` service on deepthought
@@ -93,7 +90,7 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   gaps or OS kills that settings cannot fix.
 - **Delegate:** implementation can go to a subagent; the walk and verdict are inline.
 
-### [ ] 4 - Route-bundle API on deepthought
+### [x] 4 - Route-bundle API on deepthought
 - **Objective:** a versioned `cartographer` endpoint returning a cacheable trip bundle.
 - **Steps:** Codex imports the home-area extract, stands up a pedestrian routing engine (Valhalla
   or GraphHopper, chosen on walking quality), and returns `{polyline, maneuvers, tiles[]}` where
@@ -208,6 +205,11 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
 - 2026-11-06 - Region sync is the first follow-on after v1: Navigate-area "Sync current location",
   region list on the phone, pinned vs auto-expiring unpinned regions, large transient downloads
   accepted. Phase 4 stores regions by id with a manifest so this is additive.
+- 2026-11-06 - Phase 4 engine is Valhalla 3.9.1, pedestrian costing (walkway and sidewalk factor
+  0.9), chosen on capability; GraphHopper not benchmarked. Bundles are self-contained JSON with
+  base64 bitmaps, cached on the phone by `bundle_id`; each tile carries its own marker transform.
+  Phase 5 must clamp TRIP_STATUS strings itself (contract text is not pre-truncated) and hold the
+  marker at the tile end while swapping, never extrapolate.
 - 2026-11-06 - Arrows 0x0c-0x23 named from the decomp resource table and spot-rendered from the
   firmware bitmaps: roundabout cw/ccw pairs 0x0c-0x1d, merge L/R, ramp R/L, fork R/L. UK
   roundabouts use `cw` (odd values). Walking needs 0x02-0x0a, 0x22/0x23 and the `cw` set.
@@ -246,7 +248,13 @@ Phase 4 lays the groundwork (region id + manifest incl. `pinned` and `last_used`
 size); v1 still ships with the home region only.
 
 ## Open questions
-- Valhalla vs GraphHopper - Codex, phase 4, on pedestrian route quality.
+- Manoeuvre noise: the 724 m acceptance route yields 14 manoeuvres, including pavement and
+  crossing micro-turns and two fork-right (0x22). Phase 5 likely needs to suppress or merge
+  short-spaced manoeuvres before they drive the arrow and text.
+- Mini-map position: it has no firmware marker; the baked cue sits at tile start (68,112), so
+  it goes stale over a ~190 m tile. Phase 5 to decide on more frequent mini-map refreshes
+  (0.3-0.65 s each) versus a cartographer change to shorter mini-map intervals.
+- Roundabout exit mapping is unit-tested only; no real route with a roundabout yet.
 - Tile spacing and overlap - phase 2 found ~190 m / ~50 m fine when static; confirm on phase 5 walks.
 
 ## Progress log
@@ -271,3 +279,7 @@ size); v1 still ships with the home region only.
 - 2026-11-06 - phase 4 (part) - arrow table in `docs/FINDINGS-nav-marker-tiles.md` (from decomp
   bitmaps, no device session); phases 1-3 merged to `main` and pushed; Codex delegated to build
   the service and `docs/cartographer-contract.md`. Not ticked until the contract is reviewed.
+- 2026-11-06 - phase 4 - Codex built `cartographer` (Valhalla, `:9446/v1/route`, region manifest,
+  git) and `docs/cartographer-contract.md`; Claude reviewed it against gate A findings and
+  re-fetched the acceptance route live (6 tiles, hashes and sizes verified). Deviation: no
+  roundabout route tested.

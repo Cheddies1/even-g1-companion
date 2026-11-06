@@ -27,6 +27,9 @@ generic SDK or cross-device release.
 Speech-to-text is the self-hosted Speaches `whisper-server` on `deepthought`
 (`http://deepthought:56478/v1`) over Tailscale: unauthenticated, no bearer, no
 OpenAI fallback by choice. The reasoning call goes to OpenAI.
+Walking-nav route bundles come from `cartographer` on deepthought
+(`https://deepthought.tail082c0b.ts.net:9446/v1/route`, tailnet only, Codex-owned); schema in
+[docs/cartographer-contract.md](docs/cartographer-contract.md).
 
 For what each mode does today see [docs/current-behaviour.md](docs/current-behaviour.md);
 for what is in flight see [docs/current-worklist.md](docs/current-worklist.md).
