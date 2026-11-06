@@ -377,7 +377,9 @@ logcat tag `G1Probe` (`adb logcat -s G1Probe`); `F1` mic frames are
 rate-limited to one line per 50. The receiver only registers in
 `MainActivity.onCreate`, so after a reinstall open the app before probing.
 Use it for one-off protocol experiments; anything worth keeping belongs in
-`Proto`.
+`Proto`. `--es batch <file>` runs a timed packet script from the app's
+external `files/probe/` dir; `tool/nav_harness.py` generates and pushes the
+`0x0a` nav ones (see `docs/FINDINGS-nav-marker-tiles.md`).
 
 ## Key files
 - [lib/ble_manager.dart](lib/ble_manager.dart) — BLE connection + F5 dispatch

@@ -226,6 +226,8 @@ class BleManager private constructor() {
     private var probeMicFrames = 0
     private val probeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            intent.getStringExtra("batch")?.let { runProbeBatch(context, it); return }
+            if (intent.getStringExtra("stop") != null) { probeBatchStop = true; return }
             val hex = intent.getStringExtra("hex")?.replace(" ", "") ?: return
             val lr = intent.getStringExtra("lr")
             val data = try {
@@ -236,6 +238,63 @@ class BleManager private constructor() {
             Log.i(PROBE_TAG, "TX ${lr ?: "both"} $hex")
             senData(mapOf("data" to data, "lr" to lr)) { ok -> Log.i(PROBE_TAG, "TX done ok=$ok") }
         }
+    }
+
+    // Batch mode, for timed multi-packet experiments (the nav marker/tile harness,
+    // tool/nav_harness.py). Reads <externalFiles>/probe/<name>, one command per line:
+    //   L|R|B <hex>   send to one leg or both (B: both legs in parallel), wait for
+    //                 the write to complete before the next line
+    //   sleep <ms>    pause
+    //   mark <label>  log a timestamped marker
+    // Lines starting with # are ignored. --es stop 1 aborts a running batch.
+    //   adb shell am broadcast -p com.eddie.evencompanion -a com.eddie.evencompanion.PROBE --es batch sweep.txt
+    @Volatile private var probeBatchStop = false
+    @Volatile private var probeBatchRunning = false
+
+    private fun runProbeBatch(context: Context, name: String) {
+        val file = java.io.File(context.getExternalFilesDir("probe"), name)
+        if (!file.isFile) { Log.e(PROBE_TAG, "batch: no file ${file.absolutePath}"); return }
+        if (probeBatchRunning) { Log.e(PROBE_TAG, "batch: already running"); return }
+        probeBatchRunning = true
+        probeBatchStop = false
+        Thread {
+            val lines = file.readLines()
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            var sent = 0
+            var failed = 0
+            fun ms() = android.os.SystemClock.elapsedRealtime() - t0
+            Log.i(PROBE_TAG, "batch start $name lines=${lines.size}")
+            try {
+                for (raw in lines) {
+                    if (probeBatchStop) { Log.i(PROBE_TAG, "batch stopped at ${ms()}ms"); break }
+                    val line = raw.trim()
+                    if (line.isEmpty() || line.startsWith("#")) continue
+                    val parts = line.split(Regex("\\s+"), limit = 2)
+                    when (parts[0]) {
+                        "sleep" -> Thread.sleep(parts[1].toLong())
+                        "mark" -> Log.i(PROBE_TAG, "batch mark t=${ms()}ms ${parts.getOrElse(1) { "" }}")
+                        "L", "R", "B" -> {
+                            val hex = parts[1].replace(" ", "")
+                            val data = ByteArray(hex.length / 2) {
+                                hex.substring(it * 2, it * 2 + 2).toInt(16).toByte()
+                            }
+                            val latch = java.util.concurrent.CountDownLatch(1)
+                            var ok = false
+                            val lr = if (parts[0] == "B") null else parts[0]
+                            senData(mapOf("data" to data, "lr" to lr)) { ok = it; latch.countDown() }
+                            if (!latch.await(3, java.util.concurrent.TimeUnit.SECONDS) || !ok) failed++
+                            sent++
+                        }
+                        else -> Log.e(PROBE_TAG, "batch: bad line: $line")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(PROBE_TAG, "batch error: $e")
+            } finally {
+                probeBatchRunning = false
+                Log.i(PROBE_TAG, "batch end $name sent=$sent failed=$failed t=${ms()}ms")
+            }
+        }.start()
     }
 
     private fun registerProbeReceiver(context: Activity) {

@@ -684,6 +684,19 @@ Notes:
 - RUNNING needs both `nav_overview_map_ready` and `nav_panoramic_map_ready`
   (`src/ui/ui_navigation_map.c:371-374`), which is why text-only cards are
   rejected
+- `Confirmed` 2026-11-06 ([FINDINGS-nav-marker-tiles.md](FINDINGS-nav-marker-tiles.md)):
+  head level shows the **overview page** (built-in arrow, text, 136x136
+  `MAP_OVERVIEW` mini-map); tilt-up shows the **panoramic page** (488x136 map
+  plus the `x`/`y` position marker). The marker exists only on the panoramic
+  page. Both maps are two 1-bit layers, dim then bright; the panoramic map is
+  raw only, the mini-map is raw at exactly 4,624 B and RLE otherwise
+- **clear first:** INIT does not take over a live `0x4E` text surface. Send
+  `0x18`, wait ~400 ms, then INIT
+- **master last:** send the right lens's final `PANORAMIC_MAP` packet only
+  after the left has finished its maps, or the left can stay on "route is
+  being generated" at head level until the next tilt
+- keep the marker 6 px inside the map (`x` 6..482, `y` 6..130); the part of
+  the circle outside the map is never cleared
 - `0x50` is sent before the first INIT because the capture did. The named
   source shows neither `0x0a` INIT nor `0x52` reads the lock bits, so it is
   not required. Since 2026-11-06 the bootstrap strips it from the replay and
