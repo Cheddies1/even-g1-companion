@@ -13,6 +13,13 @@ library;
 
 class G1TextLayout {
   static const int displayWidth = 488;
+
+  /// Wrap width for the firmware's Even AI layout (0x4E status 0x3x-0x5x,
+  /// the tap-enabled surface). That layout draws text from x 0x58 to 0x230,
+  /// 472 px of the 576 px the full-width (0x7x) layout uses
+  /// (`src/ui/ui_even_ai.c:247` vs `:325` in the 1.66 decomp), so scale
+  /// [displayWidth] by 472/576.
+  static const int evenAiLayoutWidth = 400;
   static const int linesPerScreen = 5;
   static const int _defaultGlyphWidth = 6;
 

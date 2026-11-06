@@ -63,6 +63,49 @@ class Proto {
   static int _streamKeepAliveSeq = 0;
 
   static int _streamTextSeq = 0;
+
+  // ---- Tap-enabled 0x4E text surface ------------------------------------
+  //
+  // The firmware forwards single taps (`F5 01`) only while the 0x4E surface
+  // is in the Even AI family (types 7-11, `src/threads/threads.c:2254`).
+  // Device-confirmed recipe (docs/protocol-reference.md, "Recipe:
+  // tap-enabled text surface"): open with status 0x3x, pin by re-sending with
+  // 0x5x, page with 0x5x updates. 0x5x from idle draws nothing, and mixing a
+  // 0x7x surface with 0x5x overlays two layouts, so we track which family is
+  // on the lenses.
+  static bool _tapSurfaceOpen = false;
+
+  /// True while a pinned (status 0x5x) text surface is on the lenses, so the
+  /// next 0x4E render must also be 0x5x to stay in the same layout.
+  static bool get isTapSurfaceOpen => _tapSurfaceOpen;
+
+  // Our own `0x18` clears, and opening a tap surface over another surface,
+  // can make the right lens emit `F5 00`, which every mode reads as "close".
+  // Seen on device 2026-11-06 within ~150 ms of the TX.
+  static const Duration selfCloseWindow = Duration(milliseconds: 800);
+  static DateTime? _selfCloseRiskUntil;
+
+  /// True if an `F5 00` arriving now is likely our own doing rather than a
+  /// user double tap.
+  static bool get isInSelfCloseWindow {
+    final until = _selfCloseRiskUntil;
+    return until != null && DateTime.now().isBefore(until);
+  }
+
+  static void _noteSelfCloseRisk() {
+    _selfCloseRiskUntil = DateTime.now().add(selfCloseWindow);
+  }
+
+  /// Forget the surface state without any BLE IO, e.g. on transport loss.
+  static void resetTextSurfaceState() {
+    _tapSurfaceOpen = false;
+  }
+
+  static void _noteTextSurfaceCleared() {
+    _tapSurfaceOpen = false;
+    _noteSelfCloseRisk();
+  }
+
   static Timer? _streamingKeepAliveTimer;
   static bool _streamingTextActive = false;
   static bool get isStreamingTextActive => _streamingTextActive;
@@ -170,6 +213,10 @@ class Proto {
       data = data.sublist(0, end);
     }
     var syncSeq = _evenaiSeq & 0xff;
+    final statusFamily = newScreen & 0xF0;
+    if (statusFamily == 0x30 && !_tapSurfaceOpen) {
+      _noteSelfCloseRisk();
+    }
 
     List<Uint8List> dataList = EvenaiProto.evenaiMultiPackListV2(0x4E,
         data: data,
@@ -193,6 +240,13 @@ class Proto {
     if (!isSuccess) {
       AppLog.error("${DateTime.now()} sendEvenAIData failed");
       return false;
+    }
+    if (statusFamily == 0x50) {
+      _tapSurfaceOpen = true;
+    } else if (statusFamily != 0x30 && statusFamily != 0x40) {
+      // 0x3x/0x4x keep the Even AI layout; anything else (0x7x full width,
+      // 0x6x) leaves it.
+      _tapSurfaceOpen = false;
     }
     return true;
   }
@@ -678,6 +732,7 @@ class Proto {
     await BleManager.sendData(
       Uint8List.fromList([0x18]),
     );
+    _noteTextSurfaceCleared();
 
     // Diagnostic: the firmware's `0x18` teardown for screen id 0x10 (Even AI)
     // and 0x0b (Translate) is the only path that does not call
@@ -742,6 +797,7 @@ class Proto {
   static Future<bool> exit() async {
     AppLog.debug("send exit all func");
     var data = Uint8List.fromList([0x18]);
+    _noteTextSurfaceCleared();
 
     var retL = await BleManager.request(data, lr: "L", timeoutMs: 1500);
     AppLog.debug('${DateTime.now()} exit----L----ret---${retL.data}--');

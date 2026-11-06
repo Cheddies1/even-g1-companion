@@ -30,6 +30,17 @@ choice. The reasoning call still goes to OpenAI.
 ## Current implementation status (2026-11-06)
 
 Recently implemented:
+- **Glance tap paging** (2026-11-06, `single-tap-0x5x-adoption`, device test
+  pending) - tilt-up recall renders on the tap-enabled `0x4E` surface
+  (`0x31` open, `0x51` pin and page). Right tap = read, next; left tap = back;
+  an end card follows the oldest notification. Phone dismissals are deferred
+  to carousel close so back works. Paging state lives in the pure, unit-tested
+  `GlanceCarousel` (`lib/services/glance_carousel.dart`); `Proto` tracks
+  whether a tap surface is open (`isTapSurfaceOpen`) so every `TextService`
+  render stays in the same layout, and marks an 800 ms window after our own
+  `0x18`/tap open in which `F5 00` is ignored as self-inflicted. Text on that
+  surface wraps to `G1TextLayout.evenAiLayoutWidth` (472 of 576 px). Kill
+  switch: `GlanceService.tapPagingEnabled`.
 - **Firmware source re-based onto `1.66_exact`; four protocol fixes**
   (2026-11-06, branch `decomp-1.66-fixes`) - the decomp repo is now named C
   source that rebuilds byte-identical to v1.66 (branch `1.66_exact`,
@@ -373,6 +384,7 @@ Use it for one-off protocol experiments; anything worth keeping belongs in
 - [lib/services/companion_controller.dart](lib/services/companion_controller.dart) — mode ownership + gesture routing
 - [lib/services/device_status_service.dart](lib/services/device_status_service.dart) — battery, wear, brightness, settings state
 - [lib/services/glance_service.dart](lib/services/glance_service.dart)
+- [lib/services/glance_carousel.dart](lib/services/glance_carousel.dart) - pure carousel paging + deferred-dismissal state (unit-tested)
 - [lib/services/capture_service.dart](lib/services/capture_service.dart) — Capture session, live HUD, start/stop/save
 - [lib/services/phone_capture_service.dart](lib/services/phone_capture_service.dart) — phone-mic recording session, RECORD_AUDIO permission, mutual exclusion with the glasses mic
 - [lib/services/recordings_service.dart](lib/services/recordings_service.dart) — MediaStore platform-channel wrapper for recordings list

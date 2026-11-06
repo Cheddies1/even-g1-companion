@@ -532,6 +532,9 @@ class BleManager {
             } else {
               EvenAI.get.nextPageByTouchpad();
             }
+          } else {
+            // Single tap on a tap-enabled 0x4E surface (status 0x5x).
+            CompanionController.get.handleGlassesGesture(notifyIndex, res.lr);
           }
           break;
         case 2:

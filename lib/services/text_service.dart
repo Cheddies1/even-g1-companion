@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/evenai.dart';
+import 'package:even_companion/services/g1_text_layout.dart';
 import 'package:even_companion/services/proto.dart';
 
 class TextService {
@@ -14,15 +15,28 @@ class TextService {
   static List<String> list = [];
   static List<String> sendReplys = [];
   static String? _lastSentText;
+  static bool _tapLayout = false;
+  static const Duration _tapOpenSettle = Duration(milliseconds: 1000);
 
   TextService._(); 
 
-  Future startSendText(String text) async {
+  /// Render [text] as a 0x4E page.
+  ///
+  /// With [tapSurface], or whenever a tap-enabled surface is already on the
+  /// lenses, the page goes out on the Even AI layout so single taps reach the
+  /// phone: open with 0x30 then pin with 0x50, or a plain 0x50 update if the
+  /// surface is already pinned. Otherwise it is the usual full-width 0x70.
+  /// See [Proto.isTapSurfaceOpen].
+  Future startSendText(String text, {bool tapSurface = false}) async {
     isRunning = true;
     _lastSentText = text;
+    _tapLayout = tapSurface || Proto.isTapSurfaceOpen;
 
     _currentLine = 0;
-    list = EvenAIDataMethod.measureStringList(text);
+    list = EvenAIDataMethod.measureStringList(
+      text,
+      _tapLayout ? G1TextLayout.evenAiLayoutWidth.toDouble() : null,
+    );
    
     if (list.length < 4) {
       String startScreenWords =
@@ -30,7 +44,7 @@ class TextService {
       String headString = '\n\n';
       startScreenWords = headString + startScreenWords;
 
-      await doSendText(startScreenWords, 0x01, 0x70, 0);
+      await _sendFirstScreen(startScreenWords);
       return;
     }
 
@@ -39,19 +53,19 @@ class TextService {
           list.sublist(0, 4).map((str) => '$str\n').join();
       String headString = '\n';
       startScreenWords = headString + startScreenWords;
-      await doSendText(startScreenWords, 0x01, 0x70, 0);
+      await _sendFirstScreen(startScreenWords);
       return;
     }
 
     if (list.length == 5) {
       String startScreenWords =
           list.sublist(0, 5).map((str) => '$str\n').join();
-      await doSendText(startScreenWords, 0x01, 0x70, 0);
+      await _sendFirstScreen(startScreenWords);
       return;
     }
 
     String startScreenWords = list.sublist(0, 5).map((str) => '$str\n').join();
-    bool isSuccess = await doSendText(startScreenWords, 0x01, 0x70, 0);
+    bool isSuccess = await _sendFirstScreen(startScreenWords);
     if (isSuccess) {
       _currentLine = 0;
       await updateReplyToOSByTimer();
@@ -59,6 +73,30 @@ class TextService {
       clear(); 
     }
   }
+
+  Future<bool> _sendFirstScreen(String words) async {
+    if (!_tapLayout) {
+      return doSendText(words, 0x01, 0x70, 0);
+    }
+    if (!Proto.isTapSurfaceOpen) {
+      final opened = await doSendText(words, 0x01, 0x30, 0);
+      if (!opened) {
+        return false;
+      }
+      // The left (slave) lens acks 0x4E on receipt, before it has drawn the
+      // Even AI entry screen. A pin sent ~300 ms after the open was lost on
+      // the left lens on device (stuck on "Even AI Listening"), while ~1 s
+      // apart worked on both. Let the entry transition finish first.
+      await Future<void>.delayed(_tapOpenSettle);
+      if (!isRunning) {
+        return false;
+      }
+    }
+    return doSendText(words, 0x01, 0x50, 0);
+  }
+
+  /// Status for timer-driven follow-on pages of the current text.
+  int get _pageStatus => _tapLayout ? 0x50 : 0x70;
 
   int retryCount = 0;
   Future<bool> doSendText(String text, int type, int status, int pos) async {
@@ -109,11 +147,11 @@ class TextService {
               .join();
 
           if (_currentLine >= list.length - 5) {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
+            await doSendText(mergedStr, 0x01, _pageStatus, 0);
             _timer?.cancel();
             _timer = null;
           } else {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
+            await doSendText(mergedStr, 0x01, _pageStatus, 0);
           }
         } else {
           var mergedStr = sendReplys
@@ -122,11 +160,11 @@ class TextService {
               .join();
 
           if (_currentLine >= list.length - 5) {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
+            await doSendText(mergedStr, 0x01, _pageStatus, 0);
             _timer?.cancel();
             _timer = null;
           } else {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
+            await doSendText(mergedStr, 0x01, _pageStatus, 0);
           }
         }
       }

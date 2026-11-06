@@ -190,12 +190,30 @@ It deliberately does not use the bitmap dashboard path because text is much fast
 - proactive auto-pop does not dismiss the phone notification
 - deliberate tilt-up shows the most recent notification
 - the first tilt-up from true idle into Glance recall is intent-gated for `500ms`
-- repeated tilt-up cycles through the feed
-- when cycling deliberately:
-  - normal notifications are dismissed on the phone
-  - normal notifications are also removed from the local app queue
-  - protected notifications stay visible on the phone and are only advanced locally
-- `F5 00` closes the active Glance item
+- tilt-up recall renders on the tap-enabled surface (`0x4E` status `0x31`
+  then `0x51`, see `protocol-reference.md` "Recipe: tap-enabled text
+  surface"); auto-pops and the call HUD stay on the full-width `0x71` surface.
+  Opening the recall shows the firmware's "Even AI Listening" screen briefly.
+  `GlanceService.tapPagingEnabled = false` restores the old full-width recall
+- while the recall is up (implemented 2026-11-06, device test pending):
+  - right single tap = read, next
+  - left single tap = back one
+  - repeated tilt-up advances like a right tap
+  - past the oldest notification an "End of notifications" card shows; a
+    further right tap or tilt-up closes
+  - a notification only auto-popped is claimed by the first advance rather
+    than skipped
+- dismissal is deferred: normal notifications shown during the recall are
+  dismissed on the phone (and dropped from the local queue) only when the
+  carousel closes - double tap (`F5 00`), tilt-down timeout, end card or mode
+  switch - so left tap can return to anything paged past in that session.
+  Protected and ongoing notifications are never dismissed, as before. A
+  transport drop forgets the read state without dismissing anything
+- new notifications arriving while the recall is up are queued at the front
+  without moving the user off the item being read
+- `F5 00` closes the active Glance item, except within 800 ms of our own
+  `0x18` clear or tap-surface open, where it is treated as self-inflicted and
+  ignored (all modes)
 - timeout clears the active display after a short interval — unless a call is
   active, in which case the display transitions to the call HUD rather than
   going blank (see "Call HUD" in "Display format" above)

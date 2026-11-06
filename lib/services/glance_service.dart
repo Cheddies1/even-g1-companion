@@ -4,6 +4,7 @@ import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/models/companion_notification.dart';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/device_status_service.dart';
+import 'package:even_companion/services/glance_carousel.dart';
 import 'package:even_companion/services/notification_policy.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
@@ -17,17 +18,32 @@ class GlanceService {
   static GlanceService get get => _instance ??= GlanceService._();
 
   static const _displayDuration = Duration(seconds: 3);
+
+  /// Tilt-up recall renders on the tap-enabled 0x4E surface so single taps
+  /// page the carousel: right = read, next; left = back. Auto-pops and the
+  /// call HUD stay on the usual full-width surface. Flip to false to get the
+  /// pre-2026-11-06 behaviour back (no taps, no "Even AI Listening" flash on
+  /// open).
+  static const bool tapPagingEnabled = true;
+
+  /// Line budget in characters for the time line. The tap surface's Even AI
+  /// layout is 472 px wide against 576 for the full-width one.
+  static const _lineBudgetFullWidth = 43;
+  static const _lineBudgetTapLayout = 35;
   static const _maxNotifications = 20;
   static const _mediaTimeout = Duration(seconds: 60);
 
-  final List<CompanionNotification> _notifications = [];
+  final GlanceCarousel<CompanionNotification> _carousel =
+      GlanceCarousel<CompanionNotification>(
+    keyOf: (n) => n.key,
+    isDismissible: NotificationPolicy.canDismissFromGlance,
+    maxItems: _maxNotifications,
+  );
   Timer? _clearTimer;
   Timer? _mediaTimeoutTimer;
   Timer? _callTimer;
-  int _currentIndex = 0;
   bool _isVisible = false;
   bool _isIdleSurfaceActive = false;
-  String? _pendingDismissKey;
   Future<void> _renderChain = Future<void>.value();
   CompanionNotification? _currentMedia;
   CompanionNotification? _currentCall;
@@ -41,23 +57,24 @@ class GlanceService {
   bool get _hasActiveCall => _callPhase != null || _currentCall != null;
 
   bool get isVisible => _isVisible;
-  int get notificationCount => _notifications.length;
+
+  /// True when the carousel is up on the tap-enabled surface, so `F5 01`
+  /// should page it.
+  bool get isTapPagingActive =>
+      tapPagingEnabled &&
+      _isVisible &&
+      !_isIdleSurfaceActive &&
+      Proto.isTapSurfaceOpen;
+  int get notificationCount => _carousel.length;
   bool get isInActiveRecall => _isVisible;
 
   List<CompanionNotification> get notifications =>
-      List<CompanionNotification>.unmodifiable(_notifications);
+      _carousel.items;
 
   void hydrateNotifications(List<CompanionNotification> notifications) {
-    _notifications
-      ..clear()
-      ..addAll(notifications.take(_maxNotifications));
-    if (_notifications.isEmpty) {
-      _currentIndex = 0;
-    } else if (_currentIndex >= _notifications.length) {
-      _currentIndex = 0;
-    }
+    _carousel.hydrate(notifications);
     AppLog.debug(
-      '${DateTime.now()} hydrated notifications -> count=${_notifications.length}',
+      '${DateTime.now()} hydrated notifications -> count=${_carousel.length}',
       tag: 'Glance',
     );
   }
@@ -248,12 +265,7 @@ class GlanceService {
     CompanionNotification notification, {
     bool autoPop = true,
   }) async {
-    _notifications.removeWhere((item) => item.key == notification.key);
-    _notifications.insert(0, notification);
-    if (_notifications.length > _maxNotifications) {
-      _notifications.removeRange(_maxNotifications, _notifications.length);
-    }
-    _currentIndex = 0;
+    _carousel.ingest(notification, keepPosition: _isVisible);
     AppLog.debug(
       '${DateTime.now()} notification received -> ${notification.source}',
       tag: 'Glance',
@@ -271,20 +283,10 @@ class GlanceService {
   }
 
   Future<void> removeNotificationByKey(String key) async {
-    var shouldRefresh = false;
-    final current = _currentNotification();
-    if (current?.key == key) {
-      shouldRefresh = _isVisible;
-    }
-    _notifications.removeWhere((item) => item.key == key);
-    if (_notifications.isEmpty) {
-      _currentIndex = 0;
-    } else if (_currentIndex >= _notifications.length) {
-      _currentIndex = 0;
-    }
+    final wasCurrent = _carousel.remove(key);
+    final shouldRefresh = wasCurrent && _isVisible;
     if (shouldRefresh) {
-      if (_currentNotification() == null) {
-        _pendingDismissKey = null;
+      if (_carousel.isEmpty) {
         if (_hasActiveCall) {
           _isIdleSurfaceActive = true;
           await _enqueueRender(autoHide: false, markInteracted: false);
@@ -318,15 +320,42 @@ class GlanceService {
       _callTimer = null;
     }
     if (!_isVisible) {
-      _currentIndex = 0;
-    } else if (_notifications.isNotEmpty) {
-      await _advanceFromCurrentInteraction();
-      if (_notifications.isEmpty) {
-        _currentIndex = 0;
-      } else if (_currentIndex >= _notifications.length) {
-        _currentIndex = 0;
-      }
+      _carousel.resetToStart();
+    } else if (_carousel.atEnd) {
+      // Tilt-up on the end card: everything has been read, close and commit.
+      await close();
+      return;
+    } else {
+      _carousel.advance();
     }
+    await _enqueueRender(autoHide: false, markInteracted: true);
+  }
+
+  /// Right tap: this one is read, show the next. Past the last notification
+  /// shows an end card; a further right tap closes and commits dismissals.
+  Future<void> showNext() async {
+    if (!_isVisible) {
+      return;
+    }
+    if (_carousel.atEnd) {
+      await close();
+      return;
+    }
+    _carousel.advance();
+    _restartClearTimerIfRunning();
+    await _enqueueRender(autoHide: false, markInteracted: true);
+  }
+
+  /// Left tap: go back one. Nothing is dismissed until the carousel closes,
+  /// so anything paged past in this session is still there.
+  Future<void> showPrevious() async {
+    if (!_isVisible) {
+      return;
+    }
+    if (!_carousel.back()) {
+      return;
+    }
+    _restartClearTimerIfRunning();
     await _enqueueRender(autoHide: false, markInteracted: true);
   }
 
@@ -350,7 +379,7 @@ class GlanceService {
     _clearTimer = null;
     _mediaTimeoutTimer?.cancel();
     _mediaTimeoutTimer = null;
-    await _dismissPendingNotificationOnPhone();
+    await _commitSeenDismissals();
     if (_hasActiveCall) {
       _isIdleSurfaceActive = true;
       await _enqueueRender(autoHide: false, markInteracted: false);
@@ -383,7 +412,11 @@ class GlanceService {
     _callTimer = null;
     _isVisible = false;
     _isIdleSurfaceActive = false;
-    _pendingDismissKey = null;
+    // Never dismiss on the phone without the user closing the carousel.
+    _carousel
+      ..clearSeen()
+      ..resetToStart();
+    Proto.resetTextSurfaceState();
     AppLog.info(
       '${DateTime.now()} transport lost — display flags cleared',
       tag: 'Glance',
@@ -425,17 +458,15 @@ class GlanceService {
     required bool markInteracted,
   }) async {
     final now = DateTime.now();
-    final text = _buildDisplayText(now);
+    final tapSurface = tapPagingEnabled && markInteracted;
+    final text = _buildDisplayText(
+      now,
+      tapLayout: tapSurface || Proto.isTapSurfaceOpen,
+    );
     _isVisible = true;
-    await TextService.get.startSendText(text);
+    await TextService.get.startSendText(text, tapSurface: tapSurface);
     if (markInteracted) {
-      final current = _currentNotification();
-      _pendingDismissKey =
-          current != null && NotificationPolicy.canDismissFromGlance(current)
-              ? current.key
-              : null;
-    } else {
-      _pendingDismissKey = null;
+      _carousel.markSeen();
     }
     if (autoHide) {
       _restartClearTimer();
@@ -445,12 +476,12 @@ class GlanceService {
     // enqueuing. Content-refresh renders (media, call) must not kill a
     // running auto-dismiss timer.
     AppLog.debug(
-      '${DateTime.now()} render -> index=$_currentIndex count=${_notifications.length}',
+      '${DateTime.now()} render -> index=${_carousel.currentIndex} end=${_carousel.atEnd} count=${_carousel.length}',
       tag: 'Glance',
     );
   }
 
-  String _buildDisplayText(DateTime now) {
+  String _buildDisplayText(DateTime now, {bool tapLayout = false}) {
     if (_isIdleSurfaceActive && _callPhase != null) {
       return _buildTelephonyCallText(now);
     }
@@ -460,9 +491,15 @@ class GlanceService {
     final timeLine = batteryLabel == null
         ? '$hour:$minute'
         : '$hour:$minute  |  $batteryLabel';
-    final mediaSuffix = _buildMediaSuffix(timeLine);
+    final mediaSuffix = _buildMediaSuffix(
+      timeLine,
+      tapLayout ? _lineBudgetTapLayout : _lineBudgetFullWidth,
+    );
     final line1 = mediaSuffix != null ? '$timeLine  |  $mediaSuffix' : timeLine;
-    final current = _currentNotification();
+    if (_carousel.atEnd) {
+      return '$line1\n--\nEnd of notifications';
+    }
+    final current = _carousel.current;
     if (current == null) {
       return '$line1\n--\nNo notifications';
     }
@@ -500,15 +537,16 @@ class GlanceService {
   /// Builds the `> Artist - Track` suffix for the time line, or returns
   /// `null` if there is no current media or the available width is too narrow.
   ///
-  /// Line-1 budget is 43 characters. The separator `  |  ` costs 5 characters
-  /// and the `> ` prefix costs 2, leaving:
-  ///   available = 43 - timeLine.length - 5 - 2
-  String? _buildMediaSuffix(String timeLine) {
+  /// Line-1 budget is [lineBudget] characters (43 full width, 35 on the tap
+  /// layout). The separator `  |  ` costs 5 characters and the `> ` prefix
+  /// costs 2, leaving:
+  ///   available = lineBudget - timeLine.length - 5 - 2
+  String? _buildMediaSuffix(String timeLine, int lineBudget) {
     final media = _currentMedia;
     if (media == null) {
       return null;
     }
-    final available = 43 - timeLine.length - 5 - 2;
+    final available = lineBudget - timeLine.length - 5 - 2;
     if (available < 5) {
       return null;
     }
@@ -526,63 +564,36 @@ class GlanceService {
     return '> $truncated';
   }
 
-  CompanionNotification? _currentNotification() {
-    if (_notifications.isEmpty) {
-      return null;
-    }
-    return _notifications[_currentIndex];
-  }
-
-  Future<void> _dismissPendingNotificationOnPhone() async {
-    final key = _pendingDismissKey;
-    _pendingDismissKey = null;
-    if (key == null || key.isEmpty) {
-      return;
-    }
-    try {
-      await BleManager.invokeMethod(
-        'dismissNotification',
-        {'key': key},
-      );
-      _notifications.removeWhere((item) => item.key == key);
-      if (_notifications.isEmpty) {
-        _currentIndex = 0;
-      } else if (_currentIndex >= _notifications.length) {
-        _currentIndex = 0;
+  /// Dismiss on the phone every notification read in this session, then
+  /// drop them from the carousel. Protected and ongoing notifications are
+  /// never marked read, so are never dismissed here.
+  Future<void> _commitSeenDismissals() async {
+    final keys = _carousel.takeSeenKeys();
+    for (final key in keys) {
+      try {
+        await BleManager.invokeMethod(
+          'dismissNotification',
+          {'key': key},
+        );
+        _carousel.remove(key);
+        AppLog.info(
+          '${DateTime.now()} dismissed notification on phone -> $key',
+          tag: 'Glance',
+        );
+      } catch (e) {
+        AppLog.error(
+          '${DateTime.now()} dismiss notification failed -> $e',
+          tag: 'Glance',
+        );
       }
-      AppLog.info(
-        '${DateTime.now()} dismissed notification on phone -> $key',
-        tag: 'Glance',
-      );
-    } catch (e) {
-      AppLog.error(
-        '${DateTime.now()} dismiss notification failed -> $e',
-        tag: 'Glance',
-      );
     }
+    _carousel.resetToStart();
   }
 
-  Future<void> _advanceFromCurrentInteraction() async {
-    final current = _currentNotification();
-    if (current == null) {
-      _pendingDismissKey = null;
-      return;
+  void _restartClearTimerIfRunning() {
+    if (_clearTimer?.isActive ?? false) {
+      _restartClearTimer();
     }
-
-    if (NotificationPolicy.canDismissFromGlance(current)) {
-      await _dismissPendingNotificationOnPhone();
-      return;
-    }
-
-    _pendingDismissKey = null;
-    if (_notifications.length <= 1) {
-      return;
-    }
-    _currentIndex = (_currentIndex + 1) % _notifications.length;
-    AppLog.debug(
-      '${DateTime.now()} advanced protected notification without dismiss -> ${current.packageName}',
-      tag: 'Glance',
-    );
   }
 
   void _restartClearTimer() {

@@ -166,6 +166,17 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> handleGlassesGesture(int eventId, String side) async {
+    if (eventId == 0 && Proto.isInSelfCloseWindow) {
+      // Our own 0x18 clear, or opening a tap surface, can make the right lens
+      // emit F5 00 within ~150 ms. Treating it as a close would tear down the
+      // surface we just drew.
+      AppLog.info(
+        '${DateTime.now()} GestureF500: ignored as self-inflicted '
+        '(within ${Proto.selfCloseWindow.inMilliseconds} ms of our own clear/open) side=$side',
+        tag: 'Companion',
+      );
+      return;
+    }
     if (eventId == 0) {
       final activeBefore = hasActiveDisplay;
       final ownerBefore = _activeDisplayOwner;
@@ -187,7 +198,7 @@ class CompanionController extends ChangeNotifier {
 
     switch (_activeMode) {
       case AppMode.glance:
-        await _handleGlanceGesture(eventId);
+        await _handleGlanceGesture(eventId, side: side);
         break;
       case AppMode.capture:
         await _handleCaptureGesture(eventId);
@@ -344,8 +355,28 @@ class CompanionController extends ChangeNotifier {
     );
   }
 
-  Future<void> _handleGlanceGesture(int eventId) async {
+  Future<void> _handleGlanceGesture(int eventId, {String? side}) async {
     switch (eventId) {
+      case 1:
+        // Single tap. Only forwarded by the firmware while a tap-enabled
+        // surface is up (see Proto.isTapSurfaceOpen).
+        if (GlanceAssistantService.get.isDisplayVisible ||
+            !GlanceService.get.isTapPagingActive) {
+          AppLog.debug(
+            '${DateTime.now()} F5 01 ignored in Glance -> side=$side '
+            'tapPaging=${GlanceService.get.isTapPagingActive}',
+            tag: 'Glance',
+          );
+          break;
+        }
+        if (side == 'L') {
+          await GlanceService.get.showPrevious();
+          _statusMessage = 'Glance back';
+        } else {
+          await GlanceService.get.showNext();
+          _statusMessage = 'Glance next';
+        }
+        break;
       case 0:
         _cancelPendingTiltUpIntent(reason: 'glance-close');
         if (GlanceAssistantService.get.isDisplayVisible) {
