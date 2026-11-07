@@ -455,7 +455,8 @@ glasses-side lifecycle owner, `NavCardSession`
   action builds a region there with the app closed, named from the shared
   place (Samsung hides the action until the notification is expanded). A walk
   spanning two regions shows "Walk: spans two areas"; a build already running
-  shows "Walk: area still syncing". Plan:
+  shows "Walk: area still syncing". A reroute that gets `no_region` mid-walk
+  (walked out of the region) keeps the current route and only logs it. Plan:
   [plans/region-sync.md](plans/region-sync.md).
 - **Google Maps notification fallback.** With Navigate active and no trip
   started from a share, real turn-by-turn Google Maps notifications are

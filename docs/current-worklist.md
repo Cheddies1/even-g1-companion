@@ -439,13 +439,6 @@ Working, but still needs real-world observation:
 
 ## Backlog — Unprioritised
 
-### region-sync-followups: Region sync loose ends
-
-- **Status**: Backlog
-- **Context (2026-11-07)**: left over from [plans/region-sync.md](plans/region-sync.md) phase 5.
-  - [ ] Device-check offer naming: a share outside every region should build a region named from the share's place line (`MapsShare.placeName`), not the coordinate id. Unit-tested only.
-  - [ ] Reroute `no_region` mid-walk (review G2, accepted nit): today it logs and keeps the current route. Decide whether to tell the user or offer a sync.
-
 ### capture-meeting-cue-cards: Prepared meeting points attached to a recording
 
 - **Status**: Backlog

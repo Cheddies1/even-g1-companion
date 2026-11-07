@@ -157,12 +157,11 @@ trip); Wi-Fi-only or indoor positioning.
 ## Artefacts
 - cartographer `3ea1af3`, `f584161` (multi-region + lifecycle API); `docs/cartographer-contract.md`
 - App: `lib/services/walknav/region_model.dart`, `region_service.dart`, `lib/views/regions_page.dart`,
-  `service/RegionSync.kt`, walk navigator region gating; follow-ups in the worklist as
-  `region-sync-followups`
+  `service/RegionSync.kt`, walk navigator region gating
 
 ## Progress log
 - 2026-11-07 - phase 1 done (Codex): cartographer `3ea1af3`, service 1.1.0; `docs/cartographer-contract.md` updated; home and `richmond-test` acceptance passed. Deviation: handedness dropped mid-task (Eddie).
 - 2026-11-07 - phase 2 done (Codex): cartographer `f584161` (no remote, not pushed); regions section of `docs/cartographer-contract.md` rewritten; four acceptance checks passed, 12 tests. Deviation: none.
 - 2026-11-07 - phase 3 code done: regions page, `region_service.dart`/`region_model.dart` (13 unit tests), `RegionSync.kt` poller; debug sync of Greenwich (`greenwich-dd341f95`, unpinned, left in place for the UI check) built in ~65 s, polled through to done, notification posted, Dart refreshed. Eddie then pinned, unpinned, renamed and deleted it from the page; all four round-tripped (logcat `[Regions]`, server list back to home + Prague). Phase done. Deviation: one-shot fix instead of the FGS. `test/widget_test.dart` was already failing on main (sqflite + missing "Permissions" card).
 - 2026-11-07 - phase 4 done: walk navigator + `tripCoverage` (6 new tests, 89 pass in `test/services`), Android offer receiver/worker. Device: debug trip to Windsor Castle was refused and offered; the action built a Berkshire-sourced region in 24.8 s and notified; a re-run routed in it (659 m, 5 tiles) and ran; test region deleted. Deviation: `region_id` omitted rather than sent.
-- 2026-11-07 - phase 5 done: review-loop (loop, GPT `gpt-5.6-sol`, 2 rounds, approved; G1/G3/G4 fixed, G2 parked); behaviour, architecture, worklist and AGENTS.md updated; merged to `main` and pushed. Deviation: offer naming added before review (open question), not device-tested.
+- 2026-11-07 - phase 5 done: review-loop (loop, GPT `gpt-5.6-sol`, 2 rounds, approved; G1/G3/G4 fixed, G2 accepted as is); behaviour, architecture, worklist and AGENTS.md updated; merged to `main` and pushed. Deviation: offer naming added before review (open question). No follow-ups: Eddie renames regions and handles mid-walk `no_region` by hand.
