@@ -17,6 +17,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import android.widget.Toast
 import com.eddie.evencompanion.cpp.Cpp
@@ -62,6 +63,14 @@ class BleManager private constructor() {
 
     //  Context
     private lateinit var weakActivity: WeakReference<Activity>
+
+    // Screen off, the CPU suspends ~25 s later and Dart timers stop firing until
+    // the next BLE RX wakes it. Gesture handling chains timers (tilt intent,
+    // tap-surface open settle, glance clear), so a tilt-up stalled on "Even AI
+    // is listening" until tilt-down woke the CPU (device log 2026-11-07).
+    // Hold the CPU briefly after each F5 so those chains run on time.
+    private var gestureWakeLock: PowerManager.WakeLock? = null
+    private val gestureWakeMs = 5_000L
     //  Scan，Connect，Disconnect，Send
     private lateinit var bluetoothManager: BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter
@@ -213,6 +222,9 @@ class BleManager private constructor() {
         }
         val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
         context.applicationContext.registerReceiver(bondStateReceiver, filter)
+        gestureWakeLock = context.getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "evencompanion:gesture")
+            ?.apply { setReferenceCounted(false) }
         Log.v(LOG_TAG, "BleManager init success, bond-state receiver registered")
         registerProbeReceiver(context)
     }
@@ -712,6 +724,10 @@ class BleManager private constructor() {
             value: ByteArray
         ) {
             super.onCharacteristicChanged(gatt, characteristic, value)
+            if (value.isNotEmpty() && value[0] == 0xF5.toByte()) {
+                // Re-arms the timeout; non-reference-counted, so repeats extend it.
+                gestureWakeLock?.acquire(gestureWakeMs)
+            }
             mainScope.launch {
                 val isLeft = gatt.device.address == connectedDevice?.leftDevice?.address
                 val isRight = gatt.device.address == connectedDevice?.rightDevice?.address
