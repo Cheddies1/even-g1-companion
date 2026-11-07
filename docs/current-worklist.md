@@ -345,28 +345,6 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
   - [ ] Step 2: BLE + engine moved to service context; `connectGatt` no longer uses Activity context; `CompanionForegroundService` is no longer a placebo. Gated on a future joint design pass.
 - **Notes**: Step 1 is done. 4-hour field test on 2026-06-13 under the swipe-kill scenario revealed no new requirement to escalate to step 2 — the honest notification covers the UX problem adequately for now. Step 2 remains available if a genuine background-connectivity use case emerges (e.g. BLE must stay alive with the app backgrounded). Do not implement option 1 until that case is clear.
 
-### heartbeat-suspend-is-noop: `suspendHeartbeats`/`resumeHeartbeats` is a no-op — wire or delete (Tier 1, small)
-- **Status**: Backlog
-- **Priority**: Medium
-- **Effort**: ~1 h including doc fix.
-- **Context**: `suspendHeartbeats`/`resumeHeartbeats` (`lib/ble_manager.dart`, ~line 1760) increment a depth counter that nothing reads; there are zero call sites in `lib/`. Updated 2026-11-07: the 108-packet replay burst it was meant to cover was removed in nav phase 6, so no consumer remains. `docs/current-architecture.md` (~line 673) still says `BleManager` can temporarily suspend `0x25` heartbeats and points back at this item, so the doc/code drift persists. Leaning delete, but the decision is Eddie's.
-- **Acceptance**:
-  - [ ] Either wire it (timer checks depth, Navigate wraps the burst with `suspend`/`resume` calls) OR delete the dead code and correct `docs/current-architecture.md` to remove the false claim.
-  - [ ] `docs/current-architecture.md` heartbeat-pause claim corrected either way.
-  - [ ] If wired: Navigate bootstrap burst wrapped and no `0x25` heartbeat contention confirmed in logcat during an actual bootstrap.
-- **Notes**: The architecture doc claim needs fixing regardless of the wire-vs-delete decision. Small item — do not over-scope it. The wire option is largely moot now the replay burst is gone.
-
-### mtu-failure-fallthrough: MTU negotiation failure falls through to bond/ready (Tier 1, small)
-- **Status**: Backlog
-- **Priority**: Medium
-- **Effort**: Small.
-- **Context**: `onMtuChanged` (`BleManager.kt:465`) proceeds to bond/ready regardless of status. A failed negotiation leaves MTU at 23 bytes while the app sends 176–202-byte frames and receives 42-byte `0x21` frames; the fixed-offset parsers would misread frames after truncation.
-- **Acceptance**:
-  - [ ] MTU negotiation failure treated as setup failure.
-  - [ ] Connection recycled (close + reconnect) when MTU negotiation fails.
-  - [ ] No regression on the happy path — successful MTU negotiation proceeds to bond/ready as before.
-- **Notes**: Straightforward defensive guard. No protocol changes.
-
 ### reconnect-strategy-consolidation: Consolidate competing reconnect systems (Tier 2)
 - **Status**: Backlog
 - **Priority**: Medium
@@ -386,27 +364,6 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
   - [ ] `markLegReady` gated on bond resolution — does not fire until `BOND_BONDED` (or `BOND_NONE` for unpaired operation).
   - [ ] `bond_failed` legs not marked ready; failure logged and connection recycled.
 - **Notes**: Low-urgency hardening; current firmware tolerates it.
-
-### notification-listener-rebind: Notification listener — silent death and battery-string false drop (Tier 2, cheap)
-- **Status**: Backlog
-- **Priority**: Low
-- **Effort**: Cheap.
-- **Context**: `RecentNotificationsListenerService` has no `onListenerDisconnected → requestRebind`; the listener can silently die and Glance goes quiet until the user toggles notification access. Additionally, `shouldIgnoreNotification` drops any notification whose title/text contains the substrings `"charging"` or `"battery"` — this will eat real messages containing those words; it should be a package-based rule in `NotificationPolicy` instead.
-- **Acceptance**:
-  - [ ] `onListenerDisconnected` implemented with `requestRebind(componentName)` call.
-  - [ ] Battery/charging string filter moved to a package-based exclusion rule in `NotificationPolicy` (or removed if no longer needed).
-  - [ ] Glance does not silently go quiet after listener disconnect; recovers automatically.
-- **Notes**: Classic Glance-goes-quiet failure mode. The string-match filter is a latent correctness bug.
-
-### lc3-hot-path-crash: `!!` NPE on bad LC3 frame in live mic path (Tier 2, cheap)
-- **Status**: Backlog
-- **Priority**: Low
-- **Effort**: Cheap.
-- **Context**: `Cpp.decodeLC3(lc3)!!` in `onCharacteristicChanged` (`BleManager.kt:518`) NPEs the app on one bad mic frame mid-capture. The `decodeLc3Frames` channel method already does skip-and-log; the live-mic path should match.
-- **Acceptance**:
-  - [ ] `!!` removed; null result from `Cpp.decodeLC3` handled with skip-and-log, matching the `decodeLc3Frames` pattern.
-  - [ ] One bad mic frame does not crash the app or terminate the capture session.
-- **Notes**: One-liner fix; high crash-safety value for minimal effort.
 
 ### rx-frame-guards: Unguarded RX frame indexing and double-subscribe risk (Tier 2, cheap)
 - **Status**: Backlog
@@ -495,24 +452,23 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
   - [ ] Implemented and validated — no more wild swings visible in normal use.
 - **Notes**: The dashboard `system-status` widget planned in `dashboard-widgets-v1` will also show battery; coordinate so both surfaces use the same resolved value.
 
-### auto-brightness-spike: Auto brightness unreliable — spike
-- **Status**: Backlog
-- **Spike**
-- **Priority**: Unprioritised
-- **Effort**: Short investigation.
-- **Context**: Auto brightness does not behave as expected. Eddie suspects you need to explicitly set brightness to 0 (or some low value) *and* set the auto-on flag together — having auto-on active while the app's manual brightness value is high seems to let the higher manual number win and override auto. Symptom: auto brightness appears to be ignored when a non-zero manual brightness is set.
-- **Spike scope**:
-  - Review the current auto brightness command sequence — what opcodes are sent, in what order, with what values.
-  - Test whether sending brightness = 0 before setting auto-on changes behaviour.
-  - Identify whether the firmware treats manual brightness as an override that must be cleared before auto takes effect.
-  - Confirm working sequence on device.
-- **Acceptance**:
-  - [ ] Correct command sequence identified (auto-on + brightness interaction fully understood).
-  - [ ] Auto brightness behaves reliably after fix — manual brightness does not silently override it.
-  - [ ] Finding documented in `docs/protocol-reference.md` or `docs/current-behaviour.md`.
-- **Notes**: Partial answer 2026-11-07 (`docs/FINDINGS-battery+brightness.md`, commit 66e6bd9): the firmware forces `auto_brightness` to 0 while any `0x4E` text surface is up and restores it on `0x18`, so covering the sensor does nothing during Glance/Chat; our `0x01` setter is correct. Eddie's brightness-0-first hypothesis is not yet tested and the manual-override question is open. If the firmware requires a specific ordering or a brightness = 0 pre-condition, that should be captured in the protocol reference so it does not have to be re-discovered.
-
 #### App features - new captures (2026-09-07)
+
+### back-press-hero-race: Red screen on back press during a route transition
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: Seen 2026-11-07 on device. A back press while a page transition was in flight threw `Cannot get renderObject of inactive element` from `HeroController._maybeStartHeroTransition` via `NavigatorState.maybePop`; the debug build showed the red error screen and the next back press left the app. No app frame in the stack, so it is a timing issue in how a page pops (likely a `Navigator.pop` racing a push, or a `GlobalKey` reused across routes).
+- **Acceptance**:
+  - [ ] Reproduce (rapid back during a push or pop from the home page) and find the route that owns `RepaintBoundary-[GlobalKey]`.
+  - [ ] Back press during a transition no longer throws.
+
+### reconnect-attempt-while-bt-off: First reconnect attempt fires while Bluetooth is off
+- **Status**: Backlog
+- **Priority**: Low
+- **Context**: BT off/on test 2026-11-07: auto-reconnect attempt 0 fired immediately while the adapter was off, so the first real attempt was attempt 1 at +30 s; both legs were back ~22 s after BT came on. Listening for `BluetoothAdapter.ACTION_STATE_CHANGED` -> `STATE_ON` and retrying then would cut that to a couple of seconds.
+- **Acceptance**:
+  - [ ] A reconnect attempt runs on adapter `STATE_ON`, not only on the backoff schedule.
+- **Notes**: Fold into `reconnect-strategy-consolidation` or `ble-stability-tier3` if either starts first.
 
 ### recording-filename-seconds-resolution: Recording filenames collide within the same minute
 - **Status**: Backlog
@@ -564,6 +520,9 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
 ## Recently Done
 
 Entries older than about 7 days live in [worklist-history.md](worklist-history.md).
+
+### robustness-smalls: LC3 null decode, listener rebind, MTU failure, dead heartbeat suspend, auto brightness (2026-11-07, branch `robustness-smalls`)
+- **Outcome**: Closes `lc3-hot-path-crash`, `notification-listener-rebind`, `mtu-failure-fallthrough`, `heartbeat-suspend-is-noop` and `auto-brightness-spike`. Device-checked: capture saves, a "battery" message reaches Glance while the charging card stays hidden, BT off/on reconnects both legs. Brightness: the manual level is a floor under auto, so turning auto on now sends level 0 (`Proto.brightnessPayload`) and the slider is disabled under auto. One capture run froze the HUD at 00:00 (master R stopped acking mid-recording); not reproduced, not tracked. Plan: [plans/robustness-smalls.md](plans/robustness-smalls.md).
 
 ### single-tap-0x5x-adoption: Glance tap paging on the tap-enabled `0x4E` surface (2026-11-06, commits 22280ce + 3f6f5d2, main)
 - **Outcome**: Right tap next, left tap back, end card, double tap closes; deferred phone dismissals; device-verified on S24 Ultra, fw 1.6.6. Full record in `worklist-history.md`.
@@ -769,7 +728,7 @@ Good first prompt pattern:
   - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next (Medium-high)**; first `0x1E` implementation; system-status widget, calendar scope parked in `calendar-integration-outlook`; PR-B
   - Router v1 (`router-v1-glance-handlers`) — **Next**; medium priority retained; Quick Actions scope updated 2026-09-09: first slice is contextual lists, timers, reminders and passive mode switches through one router (`quick-actions-timers-reminders` is Next and ships with it), with WhatsApp replies as a separate Backlog slice; favourite outbound messaging needs a locked-phone/no-notification feasibility test; PR-A (`router-v1-chat-logging` done)
   - BLE hardening (`mic-right-side-only-spike`) - Low priority, Next; PR-C (`heartbeat-retry-suppression` and `heartbeat-counter-echo-verify` closed as moot 2026-11-07)
-  - BLE transport robustness (2026-06-09 review): remaining items in Backlog under "BLE transport - robustness review findings"; `companion-lifetime-decision` step 1 shipped and the write-queue / pending-GATT / honest-notification pass is Done (2026-06-13); open Tier 1 items are `heartbeat-suspend-is-noop` and `mtu-failure-fallthrough`; Tier 2 follow
+  - BLE transport robustness (2026-06-09 review): remaining items in Backlog under "BLE transport - robustness review findings"; `companion-lifetime-decision` step 1 shipped and the write-queue / pending-GATT / honest-notification pass is Done (2026-06-13); Tier 1 items closed by `robustness-smalls` (2026-11-07); Tier 2 follow
   - QuickNote classifier tuning — Next (bottom); not ready yet; needs more variety tested first
 - point the agent to:
   - `AGENTS.md`

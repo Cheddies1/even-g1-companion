@@ -573,15 +573,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   max: maxLevel.toDouble(),
                   divisions: maxLevel,
                   label: sliderValue.round().toString(),
-                  onChanged: (v) {
-                    setState(() => _brightnessSliderValue = v);
-                  },
-                  onChangeEnd: (v) {
-                    DeviceStatusService.get.setBrightness(
-                      level: v.round(),
-                      auto: _autoBrightness,
-                    );
-                  },
+                  // Disabled under auto: the firmware treats the level as a
+                  // floor, so auto sends 0 and the slider keeps the manual
+                  // value to resume at when auto goes off.
+                  onChanged: _autoBrightness
+                      ? null
+                      : (v) {
+                          setState(() => _brightnessSliderValue = v);
+                        },
+                  onChangeEnd: _autoBrightness
+                      ? null
+                      : (v) {
+                          DeviceStatusService.get.setBrightness(
+                            level: v.round(),
+                            auto: false,
+                          );
+                        },
                 ),
               ),
               const Icon(Icons.brightness_high, size: 18, color: Color(0xFF9AB7C8)),

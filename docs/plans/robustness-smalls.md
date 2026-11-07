@@ -1,6 +1,6 @@
 # Robustness smalls: four backlog fixes and the auto-brightness probe
 
-**Status:** IN PROGRESS - phase 1 done, phase 2 next
+**Status:** DONE - 2026-11-07
 **Created:** 2026-11-07   **Last updated:** 2026-11-07   **Completed:** -
 
 ## Goal
@@ -47,7 +47,7 @@ confirms firmware behaviour we cannot change, it goes on `firmware-mod-spike` (P
   versus `main`, and all tests pass (the pre-existing `widget_test` failure excepted).
 - **Delegate:** `local-dev` for fixes 1 and 4 (mechanical); fixes 2 and 3 inline.
 
-### [ ] 2 - Device check, brightness probe, close-out
+### [x] 2 - Device check, brightness probe, close-out
 - **Objective:** prove no regressions on device and settle `auto-brightness-spike`.
 - **Steps:** install over Tailscale; Eddie reconnects and wears the glasses.
   1. Capture: a short glasses recording saves and plays.
@@ -78,6 +78,10 @@ confirms firmware behaviour we cannot change, it goes on `firmware-mod-spike` (P
 - 2026-11-07 - Auto brightness under `0x4E` text surfaces is a firmware limit; only the
   dashboard-state behaviour is tested here.
 
+- 2026-11-07 - Brightness answered: the manual level is a floor under auto (case A 0 + auto
+  ranged 0..12; case B 42 + auto held at 42). Recorded in `FINDINGS-battery+brightness.md`.
+  App follow-up (send 0 on auto-on, or relabel the slider) is a separate worklist item.
+
 ## Open questions
 - The package list was picked from installed packages, not a live card (none were up). Phase 2
   check 2: plug the phone in and confirm the charging card's package is in the list.
@@ -85,4 +89,5 @@ confirms firmware behaviour we cannot change, it goes on `firmware-mod-spike` (P
   title/text at `info`. Candidate worklist item.
 
 ## Progress log
+- 2026-11-07 - phase 2 device check - capture saves (first run HUD froze at 00:00: master R stopped acking `0x4E` and `0x25` mid-recording; second run clean, treated as a one-off); Glance shows a "battery" message and hides the charging card; BT off/on reconnects both legs (~22 s, first backoff attempt fires while BT is still off); brightness answered (floor). Seen in passing: red-screen `Cannot get renderObject of inactive element` from `HeroController` on a back press during a route transition (not this branch).
 - 2026-11-07 - phase 1 - branch `robustness-smalls` (uncommitted grooming landed on `main` as 6bf2668 first); fix 1 done inline (same file as fix 3), fix 4 via local-dev - `_heartbeatPauseDepth` was never read, so suspend was always a no-op; added junit `testImplementation`; analyze 39 = 39 vs main.
