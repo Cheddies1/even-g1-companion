@@ -404,6 +404,13 @@ class RegionBuildWorker(context: Context, params: WorkerParameters) : Worker(con
         // The shared place name; the server caps names at 100 characters.
         val name = inputData.getString("name")?.trim()?.take(100)?.ifEmpty { null }
         val ctx = applicationContext
+        if (runAttemptCount > 0) {
+            // A re-run after process death may follow a POST that landed; the
+            // contract says check the list rather than POST again.
+            RegionSync.post(ctx, OFFER_RESULT_ID, "Region sync: no reply",
+                "Check the regions list before trying again; the build may have started.")
+            return Result.success()
+        }
         val conn = (URL("${baseUrl.trimEnd('/')}/v1/regions").openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 30_000

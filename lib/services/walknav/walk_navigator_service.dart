@@ -240,16 +240,24 @@ class WalkNavigatorService {
     if (bundle == null) {
       if (_lastRouteError == 'no_region') {
         // The cached list said covered but the server disagrees: refresh and
-        // offer a sync where the fresh list says one is needed.
+        // offer a sync only where the fresh list says one is needed.
         AppLog.error('server says no_region', tag: _tag);
         final c = tripCoverage(await RegionService.get.regionsForTrip(),
             destLat: destination.lat,
             destLon: destination.lon,
             originLat: from.lat,
             originLon: from.lon);
-        await _offerSync(c.syncLat ?? destination.lat,
-            c.syncLon ?? destination.lon,
-            atDestination: c.syncLat == null || c.syncLat == destination.lat);
+        switch (c.kind) {
+          case CoverageKind.uncovered:
+            await _offerSync(c.syncLat!, c.syncLon!,
+                atDestination: c.syncLat == destination.lat &&
+                    c.syncLon == destination.lon);
+          case CoverageKind.split:
+            await _tell('Walk: spans two areas');
+          case CoverageKind.covered:
+          case CoverageKind.unknown:
+            await _fail('Walk: no route');
+        }
       } else {
         await _fail('Walk: no route');
       }
@@ -461,6 +469,10 @@ class WalkNavigatorService {
     AppLog.info('off route: rerouting', tag: _tag);
     try {
       final bundle = await _fetchBundle(from, dest);
+      if (bundle == null && _lastRouteError == 'no_region') {
+        // Walked out of the region: keep the old route, which leads back in.
+        AppLog.error('reroute: no_region; keeping the current route', tag: _tag);
+      }
       if (bundle == null || !isActive) return;
       // Wait for any in-flight tile transfer to finish before swapping trips.
       while (_transferring || _state == WalkTripState.booting) {

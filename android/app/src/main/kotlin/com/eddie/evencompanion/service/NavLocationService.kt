@@ -333,6 +333,7 @@ object NavBridge {
                         "dest" to intent.getStringExtra("dest"),
                         "origin" to intent.getStringExtra("origin"),
                         "replay" to intent.getStringExtra("replay"),
+                        "name" to intent.getStringExtra("name"),
                         "speed" to intent.getFloatExtra("speed", 1f).toDouble(),
                     )
                 )
