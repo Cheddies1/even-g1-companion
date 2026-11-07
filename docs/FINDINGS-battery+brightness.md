@@ -126,6 +126,32 @@ covering the left arm has no effect. This is consistent with the right-glass-
 only poll path for `0x29` — the brightness control hardware, including the
 ambient light sensor, is located on the right temple.
 
+### Auto brightness is suspended while any `0x4E` text is up (`Confirmed` - live testing 2026-11-07)
+
+Firmware source (`1.66_exact`): entering task `0x10` (Even AI, the task every
+`0x4E` render lands in) saves `auto_brightness` and forces it to `0`
+(`task_status.c`, `update_persist_task_status`); `update_persist_task_status_to_idle`
+restores it. The ramp itself (`threads.c`, display thread) runs only on the
+master, only while `panel_on`, and steps one level every fifth loop pass
+toward `opt3007_get_brightness_level`. A lux reading of exactly `0` returns
+`0xff` (no change), so covering the sensor completely can read as "no data"
+rather than "dark".
+
+Device check with the adb probe, idle -> `0x4E` status `0x71` -> `0x18`:
+
+```
+29 65 1b 01   idle: level 27, auto on
+29 65 1b 00   text up: auto forced off
+29 65 1b 01   after 0x18: restored
+```
+
+So covering the sensor while Glance, Chat or any other `0x4E` surface is up
+does nothing, by firmware design. Our `0x01` setter is correct. Risk to watch:
+some firmware exits (`message_task.c` "goto idle1",
+`process_for_wait_blow_head`) reset the task to idle without the restore; if
+auto is ever seen stuck at `0` by `0x29` while the app shows it on, re-send
+`0x01 <level> 01`.
+
 ---
 
 ## What's now wired in the app
