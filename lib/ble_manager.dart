@@ -116,7 +116,6 @@ class BleManager {
   bool _cmd21PayloadLoaded = false;
   bool _autoSyncDone = false;
   bool _resyncInFlight = false;
-  int _heartbeatPauseDepth = 0;
   bool _settingsReconcileFired = false;
   final Map<String, LegConnectionState> _legStates =
       <String, LegConnectionState>{
@@ -1755,25 +1754,6 @@ class BleManager {
       return 'Not connected';
     }
     return 'Connected:\n${describe('L', left)}\n${describe('R', right)}';
-  }
-
-  void suspendHeartbeats({required String reason}) {
-    _heartbeatPauseDepth++;
-    AppLog.info(
-      '${DateTime.now()} Transport: heartbeat paused reason=$reason depth=$_heartbeatPauseDepth',
-      tag: 'Transport',
-    );
-  }
-
-  void resumeHeartbeats({required String reason}) {
-    if (_heartbeatPauseDepth <= 0) {
-      return;
-    }
-    _heartbeatPauseDepth--;
-    AppLog.info(
-      '${DateTime.now()} Transport: heartbeat resumed reason=$reason depth=$_heartbeatPauseDepth',
-      tag: 'Transport',
-    );
   }
 }
 

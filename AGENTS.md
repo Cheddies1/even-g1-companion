@@ -92,6 +92,9 @@ Load-bearing rules (each has caused a silent failure):
 - do-not-send: `0x4A` with bit 0 (DFU), `0x26` sub `0x01` (user data reset),
   `0x47` (unpair)
 
+Kotlin unit tests (pure JVM, no Android deps): `cd android && ./gradlew :app:testDebugUnitTest`;
+results land in `build/app/test-results/`, not `android/app/build/`.
+
 Capture workflow: `logs/bluetooth/parse_btsnoop.py` + per-topic `analyze_*.py`.
 Enable HCI snoop, BT off/on, capture, `adb bugreport`, parse.
 

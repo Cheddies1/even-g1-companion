@@ -1,6 +1,7 @@
 package com.eddie.evencompanion.notifications
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -18,7 +19,6 @@ import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import com.eddie.evencompanion.bluetooth.BleChannelHelper
 import java.io.ByteArrayOutputStream
-import java.util.Locale
 
 class RecentNotificationsListenerService : NotificationListenerService() {
     private val debugTag = "MapsNotificationDump"
@@ -26,6 +26,8 @@ class RecentNotificationsListenerService : NotificationListenerService() {
         get() = Log.isLoggable(debugTag, Log.DEBUG)
 
     companion object {
+        private const val LOG_TAG = "NotificationListener"
+
         @Volatile
         private var currentInstance: RecentNotificationsListenerService? = null
 
@@ -75,6 +77,17 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             ?.mapNotNull { sbn -> sbn.toDashboardNotification() }
             .orEmpty()
         NotificationFeedStore.replaceAll(entries)
+    }
+
+    // The system unbinds listeners under memory pressure or after an app
+    // update and does not always rebind on its own; without this the Glance
+    // feed goes silent until the listener permission is toggled.
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.w(LOG_TAG, "Notification listener disconnected - requesting rebind")
+        runCatching {
+            requestRebind(ComponentName(this, RecentNotificationsListenerService::class.java))
+        }.onFailure { Log.e(LOG_TAG, "requestRebind failed", it) }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -210,7 +223,7 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             if (title.isNotBlank()) title else packageName.substringAfterLast('.')
         }
 
-        if (shouldIgnoreNotification(packageName, source, title, text, bigText)) {
+        if (NotificationExclusions.isExcluded(packageName, source)) {
             return null
         }
 
@@ -254,30 +267,6 @@ class RecentNotificationsListenerService : NotificationListenerService() {
             callType = callType,
             callIsVideo = callIsVideo,
         )
-    }
-
-    private fun shouldIgnoreNotification(
-        packageName: String,
-        source: String,
-        title: String,
-        text: String,
-        bigText: String,
-    ): Boolean {
-        val normalizedPackage = packageName.lowercase(Locale.ROOT)
-        val normalizedSource = source.lowercase(Locale.ROOT)
-        val combined = listOf(title, text, bigText)
-            .joinToString(" ")
-            .lowercase(Locale.ROOT)
-
-        if (normalizedPackage == "com.android.systemui" || normalizedSource == "system ui") {
-            return true
-        }
-
-        if ("charging" in combined || "battery" in combined) {
-            return true
-        }
-
-        return false
     }
 
     private fun resolveAppLabel(packageName: String): String {

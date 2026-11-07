@@ -641,7 +641,6 @@ Heartbeat handling:
   missed heartbeats (`_heartbeatWarningAge = 20 s` stale signal)
 - a stale leg can be treated as degraded even before a full disconnect is
   reported
-- heartbeats are pauseable (depth-counted); the Navigate replay burst that used this was removed in phase 6, so nothing currently calls it
 
 Reconnect handling (per-leg):
 - degraded legs trigger bounded reconnect attempts through the native bridge
@@ -669,9 +668,7 @@ Reconnect display recovery:
 - the `_hasEverConnectedThisSession` flag is set on the first successful leg connect and cleared only on process exit; it ensures the flash and force-clear do not fire on the initial cold-connect at app startup
 - the previous `TextService.resendLastText` / `FeaturesServices.resendLastBmpData` resync path has been removed; stale content replay on reconnect was the wrong policy
 
-Navigate-specific transport protection:
-- `BleManager` can temporarily suspend `0x25` heartbeats
-- the Navigate replay that used this was removed in phase 6; `NavCardSession` does not suspend heartbeats (check `docs/current-worklist.md` `suspendHeartbeats` item before relying on it)
+Heartbeats are never paused; link liveness is any write within 30 s, so nav card traffic keeps the link alive on its own.
 
 ### Auto-reconnect (full session)
 
