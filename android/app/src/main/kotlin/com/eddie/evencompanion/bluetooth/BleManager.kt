@@ -690,6 +690,23 @@ class BleManager private constructor() {
 
             if (phase != LegSetupPhase.MTU_PENDING) return
 
+            // A failed MTU exchange leaves the leg unusable at the default MTU
+            // (our frames assume 251). Treat it as a setup failure: drop the leg
+            // and let Dart's leg-health monitor reconnect it with its backoff.
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.e(LOG_TAG, "onMtuChanged: MTU exchange failed (status=$status) for ${gatt.device?.name} - closing leg for reconnect")
+                phase = LegSetupPhase.IDLE
+                val stored = storedDeviceFor(gatt)
+                if (stored != null && stored.gatt === gatt) {
+                    closeLegGatt(stored, "MTU failure status=$status")
+                    lrForGatt(gatt)?.let { writeQueues[it]?.flush("mtu-failure") }
+                    notifyConnectionState("disconnected")
+                } else {
+                    gatt.close()
+                }
+                return
+            }
+
             // Bond only if not already bonded — avoids stray re-pairing prompts on reconnects.
             if (gatt.device.bondState != BluetoothDevice.BOND_BONDED) {
                 phase = LegSetupPhase.BOND_PENDING
@@ -762,12 +779,12 @@ class BleManager private constructor() {
                 //  eg. LC3 to PCM
                 if (isMicData) {
                     val lc3 = value.copyOfRange(2, 202)
-                    val pcmData = Cpp.decodeLC3(lc3)!!//200
-                    GlassesCaptureRecorder.appendPcmData(pcmData)
-
-                    // TODO
-                    // to implement the pcmData for asr in AI answer
-                    Log.d(this::class.simpleName, "============Lc3 data = $lc3, Pcm = $pcmData")
+                    val pcmData = Cpp.decodeLC3(lc3)
+                    if (pcmData == null || pcmData.isEmpty()) {
+                        Log.w(LOG_TAG, "LC3 decode returned null/empty PCM for mic frame seq=${value[1].toInt() and 0xFF} - frame skipped")
+                    } else {
+                        GlassesCaptureRecorder.appendPcmData(pcmData)
+                    }
                 }
 
                 BleChannelHelper.bleReceive(mapOf(

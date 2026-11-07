@@ -152,6 +152,29 @@ some firmware exits (`message_task.c` "goto idle1",
 auto is ever seen stuck at `0` by `0x29` while the app shows it on, re-send
 `0x01 <level> 01`.
 
+### The manual level is a floor under auto (`Confirmed` - live testing 2026-11-07)
+
+Probe batch polling `0x29` every 2 s with the firmware dashboard up (tilt held
+back from the app so no `0x4E` surface replaced it), wearer moving between a
+dark room, a normal room and a phone torch at the right arm:
+
+```
+case A  01 00 00 then 01 00 01   level ranged 0..12, tracked light within ~2 s
+case B  01 2a 01                 level held at 42 (0x2a) for 38 s, auto byte 1
+```
+
+Lens matched the readbacks: dims in the dark and brightens under the torch in
+case A; stays at full in case B. Auto never takes the level below the manual
+value, so "auto on" with a high slider value looks like auto is broken. To get
+working auto, send level 0 with the auto flag. Not tested: a mid value (say
+20), which would tell a pure floor (20..max) from an offset (20 + sensor).
+
+Two traps hit during the test:
+- the ramp only runs while the panel is on, so with nothing displayed the
+  level does not move whatever the light
+- covering the sensor with a finger reads as lux 0, which the firmware treats
+  as "no change", so a covered sensor does not dim the lens; use a dark room
+
 ---
 
 ## What's now wired in the app

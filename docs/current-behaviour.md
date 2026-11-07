@@ -921,9 +921,13 @@ When the glasses are connected, a `Display` card appears between the Modes
 card and the Chat Log on the home screen. It contains:
 
 - a brightness slider with the underlying firmware range 0–42; dragging the
-  slider does not send anything in flight, the value is committed on release
-- an `Auto brightness` switch which, when toggled, immediately sends the
-  current slider value with the new auto flag
+  slider does not send anything in flight, the value is committed on release.
+  The slider is disabled while auto brightness is on and keeps its value
+- an `Auto brightness` switch. Turning it on sends level 0 with auto on,
+  because the firmware treats the level as a floor and never auto-dims below
+  it ([FINDINGS-battery+brightness.md](FINDINGS-battery+brightness.md)).
+  Turning it off sends the slider value with auto off. The reconnect push
+  applies the same rule (`Proto.brightnessPayload`)
 - a small `Confirmed: N` label that reflects the most recent
   `F5 12 <level>` echo from the firmware so the user can see the difference
   between requested and actually applied brightness when auto brightness is

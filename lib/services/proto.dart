@@ -229,6 +229,15 @@ class Proto {
         ret.data[4].toInt() == 0x04;
   }
 
+  /// The `0x01` brightness payload. With [auto] on the level byte is always
+  /// 0: the firmware treats it as a floor and never auto-dims below it, so a
+  /// non-zero level makes auto look broken (FINDINGS-battery+brightness.md,
+  /// "The manual level is a floor under auto"). [level] is clamped to 0..42.
+  static Uint8List brightnessPayload(int level, bool auto) {
+    final wireLevel = auto ? 0 : level.clamp(0, 42);
+    return Uint8List.fromList([0x01, wireLevel, auto ? 0x01 : 0x00]);
+  }
+
   /// Set glasses display brightness on both legs.
   ///
   /// Format: `0x01 <level> <auto>` where `level` is 0..42 and `auto` is 0/1.
@@ -240,11 +249,9 @@ class Proto {
   /// official Even app uses the same fire-and-forget pattern for this
   /// command and relies on the F5 12 echo for confirmation.
   static Future<void> setBrightness(int level, bool auto) async {
-    final clamped = level.clamp(0, 42);
-    final autoByte = auto ? 0x01 : 0x00;
-    final data = Uint8List.fromList([0x01, clamped, autoByte]);
+    final data = brightnessPayload(level, auto);
     AppLog.debug(
-      '${DateTime.now()} brightness TX: level=$clamped auto=$auto',
+      '${DateTime.now()} brightness TX: level=${data[1]} auto=$auto',
       tag: 'DeviceStatus',
     );
     await BleManager.sendData(data);
