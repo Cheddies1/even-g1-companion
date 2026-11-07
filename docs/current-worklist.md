@@ -29,6 +29,7 @@ Working well:
 - Glance mode is a real daily-use feature
 - Chat mode works end-to-end with OpenAI-backed STT + assistant responses, paced `0x52` streaming, host-managed scrolling
 - Navigate mode runs on the firmware `0x0a` card via `NavCardSession` (phase 6, device-verified 2026-11-07 on the walking navigator): packet-built boot, master-last maps, 5 s master SYNC keepalive with echo liveness, reconnect re-boot, ARRIVED/EXIT. Main path is the walking navigator (Google Maps share); the Google Maps notification fallback (blank maps, built-in arrow, TRIP_STATUS only) is rewritten but not yet device-tested
+- Region sync (2026-11-07, [plans/region-sync.md](plans/region-sync.md)): multi-region `cartographer`, regions page, background builds with notifications, and a sync offer when a shared walk falls outside every region. Pinned: home and Prague
 - Quick mode switching works from app UI and persistent notification
 - Right-hold QuickNote: full pipeline live (gesture → LC3 decode → WAV → Whisper STT → GPT-4.1-mini tidy → local notes store → in-app UI). Phone-side keyboard add also live (FAB → category chips → multi-line text → same store); device-verified 2026-05-19.
 - Per-leg BLE heartbeat at 2 s cadence, independent per-leg start, parallel sends; reconnect logic exists
@@ -437,6 +438,13 @@ Working, but still needs real-world observation:
 ---
 
 ## Backlog — Unprioritised
+
+### region-sync-followups: Region sync loose ends
+
+- **Status**: Backlog
+- **Context (2026-11-07)**: left over from [plans/region-sync.md](plans/region-sync.md) phase 5.
+  - [ ] Device-check offer naming: a share outside every region should build a region named from the share's place line (`MapsShare.placeName`), not the coordinate id. Unit-tested only.
+  - [ ] Reroute `no_region` mid-walk (review G2, accepted nit): today it logs and keeps the current route. Decide whether to tell the user or offer a sync.
 
 ### capture-meeting-cue-cards: Prepared meeting points attached to a recording
 

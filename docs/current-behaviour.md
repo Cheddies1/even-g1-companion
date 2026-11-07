@@ -36,6 +36,9 @@ It is intentionally separate from:
 - the walking navigator passed a live walk on 2026-11-07; the fallback has not
   been device-tested since its rewrite
 - still needs longer real-world walking validation
+- region sync (2026-11-07): trips route on whichever `cartographer` region holds
+  them; the regions page syncs, pins, renames and deletes regions, and a share
+  outside every region offers a sync from a phone notification
 
 ### Chat
 - voice-driven conversational mode
@@ -438,6 +441,22 @@ glasses-side lifecycle owner, `NavCardSession`
   route tile on both maps and a position marker. Tiles are swapped as progress
   moves along the route. Plan and phase status:
   [plans/navigate-v1-cartographer.md](plans/navigate-v1-cartographer.md).
+- **Regions.** Routing works only inside a synced `cartographer` region
+  (~10 x 10 km). The route request omits `region_id`; the server picks the
+  smallest region holding both ends, else `no_region`. The home page's
+  "Regions" entry opens a list (cached for offline) with pin, rename and
+  delete; "Sync current location" takes one phone fix and starts a server
+  build. Builds are polled on Android by WorkManager, so the phone can be
+  pocketed, and finish with a "Region ready" or "Region sync failed"
+  notification. Unpinned regions expire after 30 days unused (server side).
+  On a share, the destination is checked against the cached list, then the
+  origin after the first fix. Outside every region: a "Walk: outside synced
+  areas" glasses card plus a "Sync this area?" phone notification whose
+  action builds a region there with the app closed, named from the shared
+  place (Samsung hides the action until the notification is expanded). A walk
+  spanning two regions shows "Walk: spans two areas"; a build already running
+  shows "Walk: area still syncing". Plan:
+  [plans/region-sync.md](plans/region-sync.md).
 - **Google Maps notification fallback.** With Navigate active and no trip
   started from a share, real turn-by-turn Google Maps notifications are
   ingested. The card is booted with blank maps, and TRIP_STATUS carries the

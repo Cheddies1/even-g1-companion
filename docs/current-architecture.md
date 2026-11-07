@@ -193,6 +193,16 @@ Owns:
   `walk_navigator_service.dart`, which drives `NavCardSession` and re-boots
   the card on the tile for the current progress after a BLE reconnect or lost
   liveness
+- region sync: `walknav/region_model.dart` (pure parsing, sorting,
+  `tripCoverage`) and `walknav/region_service.dart` (singleton; list, offline
+  cache, PATCH, DELETE, POST) on the Dart side. After a 202 the job goes to
+  Android `service/RegionSync.kt`: `RegionJobStore` (SharedPreferences),
+  `RegionJobWorker` (WorkManager poll, notification channel
+  `even_companion_region_sync`), `RegionOfferReceiver` and `RegionBuildWorker`
+  for the offer action (works with the app closed), and the debug
+  `REGION_SYNC` receiver. Dart hears job events on the `eventRegions` channel.
+  `walk_navigator_service.dart` gates trip start on `tripCoverage` and
+  handles a server `no_region`
 - `NavigateService` is the Google Maps notification fallback: latest
   maps-derived guidance model, suppression / prioritisation rules relative to
   Glance, boots `NavCardSession` with blank maps, then sends TRIP_STATUS only

@@ -118,6 +118,11 @@ flutter test test/services/walknav/real_trace_replay_test.dart` (skips without b
 BLE drop test: `adb shell cmd bluetooth_manager disable`, wait, `enable` (adb over Tailscale
 survives it); expect `[WalkNav] resync: re-booting the card`.
 
+Region sync (debug): `am broadcast -p com.eddie.evencompanion -a com.eddie.evencompanion.REGION_SYNC
+--es at "lat,lon" [--es name X] [--ez pinned true]` builds a region on cartographer and polls it
+(logcat `[Regions]` and `G1Regions`); open the app once after install. A `name` with spaces needs
+inner quoting over `adb shell`. Debug trips accept `--es name X` to name an offered region.
+
 GPS trace recorder (debug): `am broadcast ... -a com.eddie.evencompanion.GPS_TRACE --es cmd
 start|stop`, app foregrounded to start; CSVs hold real coordinates, keep them in gitignored
 `logs/gps/`. See [docs/FINDINGS-screen-off-gps.md](docs/FINDINGS-screen-off-gps.md).
@@ -136,7 +141,8 @@ reboot it needs USB `adb tcpip 5555` first).
   SYNC keepalive + liveness, ARRIVED, EXIT) shared by both nav paths
 - `lib/services/walknav/` - walking navigator: pure cores (geometry, bundle, manoeuvre
   filter, route tracker, tile selector, `0x0a` wire) + `walk_navigator_service.dart`;
-  Android side `service/NavLocationService.kt` (location FGS, replay, `NavBridge`)
+  Android side `service/NavLocationService.kt` (location FGS, replay, `NavBridge`);
+  regions in `walknav/region_*.dart` + `service/RegionSync.kt` (WorkManager job poller)
 - `lib/services/g1_text_layout.dart` - pixel-accurate `0x4E` wrapping from the
   firmware glyph-width table
 - `lib/services/streaming_render_queue.dart` - paced `0x52` queue for Chat
