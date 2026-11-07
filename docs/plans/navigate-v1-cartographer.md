@@ -1,17 +1,14 @@
 # Walking navigation v1: cartographer tiles on deepthought, navigator on the phone
 
-**Status:** IN PROGRESS - phases 1-4 done; phase 5 implemented and desk-verified on the glasses, live walk pending
-**Created:** 2026-11-06   **Last updated:** 2026-11-06   **Completed:** -
+**Status:** IN PROGRESS - phases 1-5 done; phase 6 next
+**Created:** 2026-11-06   **Last updated:** 2026-11-07   **Completed:** -
 
-## Start here (next session: finish phase 5)
-- **Code state (2026-11-06):** phase 5 code on local branch `walk-navigator` (from `main`),
-  **uncommitted** unless Eddie asked otherwise. Installed debug build on the phone matches it.
-- **Done:** navigator built and replayed through the real glasses (4x replay of the Dodo trace:
-  route fetch, boot, 14 tile swaps, 7 reroutes, turns, arrival - all clean, Eddie confirmed).
-- **Share start works** (2026-11-06): Google Maps route share -> "Walk with Even G1" resolved,
-  routed and rendered on the glasses.
-- **Left for phase 5:** a live walk with real GPS (Eddie, planned 2026-11-07). Then tick phase 5.
-- **Desk test recipe:** AGENTS.md "Walking-nav desk test".
+## Start here (next session: phase 6)
+- **Code state (2026-11-07):** phase 5 committed on local branch `walk-navigator` (`8bd9b45`,
+  plus `21999fd` screen-off wakelock fix); not pushed, not merged to `main`.
+- **Phase 5 passed** on a live walk (2026-11-07): Google Maps share start, per-second marker,
+  accurate distances, legible maps, turns and arrival screen all good.
+- **Next:** phase 6 below. Desk test recipe: AGENTS.md "Walking-nav desk test".
 
 ## Goal
 A working v1 walking navigation mode. At trip start, a `cartographer` service on deepthought
@@ -113,7 +110,7 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   bundle stays usable with Tailscale disconnected.
 - **Delegate:** Codex via `delegate_task`; Claude reviews the contract against phase 1 findings.
 
-### [ ] 5 - Phone navigator
+### [x] 5 - Phone navigator
 - **Objective:** end-to-end walking navigation on the glasses.
 - **Steps:** Google Maps share intent -> destination (plus a hard-coded dev destination); fetch
   and cache the bundle; map-match GPS to route progress (generous corridor >15 m); advance
@@ -273,13 +270,19 @@ size); v1 still ships with the home region only.
   link carried a `!3d/!4d` destination pin. Trip origin: first fix <=25 m, else best <=150 m
   after 15 s (routing snaps it); walking still gates fixes at 25 m.
 
+- 2026-11-07 - No in-app destination entry (Eddie): the Google Maps share is the only trip start.
+  Location management arrives with region sync, not a destination picker.
+- 2026-11-07 - Tiles are route intervals, not turns: a turn usually sits mid-tile, so the maps
+  refresh at the tile edge, not on turn completion. Confusing for a moment on first use, then
+  fine (Eddie, live walk). No change.
+
 ## Open questions
 - Tile orientation flips: each tile faces its own first 20 m, so consecutive panoramic tiles can
   jump between north-south and east-west (seen in the 4x replay). Ask Codex for heading
   hysteresis in cartographer (keep the previous tile's heading unless the route genuinely
   turns, or snap to 45 deg). Not blocking.
 - Roundabout exit mapping is unit-tested only; no real route with a roundabout yet.
-- Tile spacing and overlap - phase 2 found ~190 m / ~50 m fine when static; confirm on phase 5 walks.
+- ~~Tile spacing and overlap~~ - ~190 m / ~50 m confirmed fine on the 2026-11-07 live walk.
 
 ## Progress log
 - 2026-11-06 - phase 1 - `docs/FINDINGS-nav-marker-tiles.md`, harness `tool/nav_harness.py` +
@@ -311,3 +314,7 @@ size); v1 still ships with the home region only.
   and desk-verified via a 4x replay on the glasses. Deviations: verified by replay, not yet a
   live walk; fixed an Android 14 background-FGS crash on the debug path, and a share bug (new
   task + engine per share) via `singleTask`; share start then verified on device.
+- 2026-11-07 - phase 5 - live walk with real GPS passed: marker updated every second, distances
+  accurate, maps clear, turns and arrival screen correct. Found and fixed a screen-off timer stall
+  (CPU suspend delayed Dart timers; 5 s wakelock on `F5` gestures, `21999fd`) that had made the
+  Glance tap surface stick on "Even AI is listening". Deviation: short walk, no roundabout.

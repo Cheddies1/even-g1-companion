@@ -114,7 +114,7 @@ Working, but still needs real-world observation:
 - **Known design questions to resolve before/during implementation:**
   - **BLE bandwidth budget:** 488×136 raw = 8,296 bytes pre-RLE. Need to size bytes per panoramic update, packets per leg, update frequency, and whether both lenses must receive each update. Favour clean 1-bit geometry; no antialiasing.
   - **Orientation model:** heading-up / route-forward, not north-up. North-up is cognitively expensive on a 136 px-tall HUD.
-  - **Destination entry:** architecture currently ignores how the user starts navigation. Options: share-destination intent from Google Maps, voice destination via existing assistant/quick-ask path, recent/favourites. Worth a follow-on sub-spike once core nav works.
+  - **Destination entry:** decided 2026-11-07 - Google Maps share only, no in-app picker (see the nav plan). Original note: architecture currently ignores how the user starts navigation. Options: share-destination intent from Google Maps, voice destination via existing assistant/quick-ask path, recent/favourites. Worth a follow-on sub-spike once core nav works.
   - **Map-match corridor width and off-route hysteresis:** tunables to be set during the routing-engine spike; default to generous (>15 m corridor, >10 s sustained off-route) until walking data says otherwise.
 - **Child spikes** (cross-ref entries in Next):
   - `cartographer-frame-prototype` — Spike 1: visual feasibility — render pathological scenes, ship to glasses (parallel feasibility gate)
