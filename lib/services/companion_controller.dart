@@ -269,8 +269,8 @@ class CompanionController extends ChangeNotifier {
       return;
     }
 
-    // Don't interrupt critical in-flight flows. NavigateService bootstrap is
-    // a long interleaved replay; a QuickNote capture is mid-audio-stream.
+    // Don't interrupt critical in-flight flows: a QuickNote capture is
+    // mid-audio-stream.
     if (Proto.isQuickNoteCaptureActive) {
       AppLog.info(
         '${DateTime.now()} Transport: Reconnected flash skipped — QuickNote capture active',
@@ -278,9 +278,17 @@ class CompanionController extends ChangeNotifier {
       return;
     }
 
-    // A walking trip puts its own card back; a title card would clobber it.
+    // A live nav card is re-booted by its owner; a title card would clobber
+    // it.
     if (WalkNavigatorService.get.isActive) {
       await WalkNavigatorService.get.resyncAfterReconnect();
+      return;
+    }
+    if (NavigateService.get.isVisible && NavigateService.get.hasInstruction) {
+      await NavigateService.get.resyncAfterReconnect();
+      AppLog.info(
+        '${DateTime.now()} Transport: nav card re-booted after reconnect',
+      );
       return;
     }
 
@@ -301,13 +309,6 @@ class CompanionController extends ChangeNotifier {
       return;
     }
 
-    if (NavigateService.get.isVisible && NavigateService.get.hasInstruction) {
-      await NavigateService.get.refreshVisibleView();
-      AppLog.info(
-        '${DateTime.now()} Transport: nav view refreshed after reconnect',
-      );
-      return;
-    }
 
     if (await GlanceService.get.showIdleSurfaceIfAvailable()) {
       AppLog.info(

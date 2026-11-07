@@ -5,13 +5,12 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/nav_card_session.dart';
 import 'package:even_companion/services/proto.dart';
-import 'package:even_companion/services/text_service.dart';
 import 'package:even_companion/services/walknav/maneuver_plan.dart';
 import 'package:even_companion/services/walknav/maps_share.dart';
 import 'package:even_companion/services/walknav/nav_bundle.dart';
 import 'package:even_companion/services/walknav/nav_geo.dart';
-import 'package:even_companion/services/walknav/nav_wire.dart';
 import 'package:even_companion/services/walknav/route_tracker.dart';
 import 'package:even_companion/services/walknav/tile_selector.dart';
 import 'package:flutter/services.dart';
@@ -34,7 +33,6 @@ class WalkNavigatorService {
       'https://deepthought.tail082c0b.ts.net:9446/v1/route';
   static const _tag = 'WalkNav';
   static const _eventNav = EventChannel('eventNav');
-  static const _syncInterval = Duration(seconds: 5);
   static const _firstFixTimeout = Duration(seconds: 45);
   // The trip origin only needs to land near the right street - routing snaps
   // it to the network - so after a short wait the best fix within
@@ -43,7 +41,6 @@ class WalkNavigatorService {
   static const _goodOriginAccuracyM = 25.0;
   static const _originMaxAccuracyM = 150.0;
   static const _rerouteCooldown = Duration(seconds: 30);
-  static const _mapAckTimeout = Duration(seconds: 6);
 
   /// Called by the controller to switch into Navigate when a trip starts from
   /// a share or a debug broadcast, so mode ownership stays with it.
@@ -53,7 +50,8 @@ class WalkNavigatorService {
   /// Called when a trip ends, so the controller can refresh its UI state.
   void Function(String reason)? onTripEnded;
 
-  final NavWire _wire = NavWire();
+  late final NavCardSession _card =
+      NavCardSession(tag: _tag, onLost: _resync);
   StreamSubscription<dynamic>? _events;
   WalkTripState _state = WalkTripState.idle;
   LatLon? _destination;
@@ -66,7 +64,6 @@ class WalkNavigatorService {
   ManeuverPlan? _plan;
   RouteTracker? _tracker;
   TileSelector? _tiles;
-  Timer? _syncTimer;
   bool _transferring = false;
   bool _rerouting = false;
   DateTime? _lastReroute;
@@ -235,9 +232,12 @@ class WalkNavigatorService {
     _adoptBundle(bundle);
     _setState(WalkTripState.booting);
     await _bootGlasses();
+    if (_state != WalkTripState.booting) return; // stopped during boot
+    if (!_card.isRunning) {
+      await _fail('Walk: glasses not ready');
+      return;
+    }
     _setState(WalkTripState.running);
-    _syncTimer?.cancel();
-    _syncTimer = Timer.periodic(_syncInterval, (_) => _sendSync());
     final last = _lastFix;
     if (last != null) await _onFix(last);
   }
@@ -245,20 +245,12 @@ class WalkNavigatorService {
   Future<void> stop({required String reason}) async {
     if (!isActive) return;
     AppLog.info('trip ended: $reason (fixes=$_fixes)', tag: _tag);
-    final wasRunning = _state == WalkTripState.running ||
-        _state == WalkTripState.booting ||
-        _state == WalkTripState.arrived;
     _setState(WalkTripState.idle);
-    _syncTimer?.cancel();
-    _syncTimer = null;
     final ff = _firstFix;
     if (ff != null && !ff.isCompleted) ff.completeError(StateError('stopped'));
     _firstFix = null;
     await BleManager.invokeMethod('navLocationStop');
-    if (wasRunning) {
-      await BleManager.sendData(_wire.exit(), lr: 'L');
-      await BleManager.sendData(_wire.exit(), lr: 'R');
-    }
+    await _card.exit();
     _bundle = null;
     _plan = null;
     _tracker = null;
@@ -355,7 +347,7 @@ class WalkNavigatorService {
         : u.offRoute
             ? 'Off route'
             : (turn?.text ?? 'Continue');
-    final packet = _wire.tripStatus(
+    final packet = _card.wire.tripStatus(
       direction: turn?.direction ?? ManeuverPlan.arrowStraight,
       x: x,
       y: y,
@@ -366,31 +358,33 @@ class WalkNavigatorService {
           turn == null ? '' : TripText.distance(turn.progressM - progress),
       speed: TripText.speed(fix.speedMps),
     );
-    await BleManager.sendData(packet, lr: 'L');
-    await BleManager.sendData(packet, lr: 'R');
-  }
-
-  void _sendSync() {
-    if (_state != WalkTripState.running) return;
-    // Only the master counts SYNC; ~19 s grace (src/ui/ui_navigation_map.c).
-    unawaited(BleManager.sendData(_wire.sync(), lr: 'R'));
+    await _card.sendTripStatus(packet);
   }
 
   // ---- glasses ------------------------------------------------------------------
 
-  /// Gate A lifecycle: clear, INIT, maps (master last), SYNC, TRIP_STATUS.
+  /// Boot the card with the tile for the current progress. The session owns
+  /// the lifecycle (clear, INIT, maps master-last, SYNC keepalive).
   Future<void> _bootGlasses() async {
-    await TextService.get.stopTextSendingByOS();
-    await Proto.clearDisplay(); // INIT does not take over a live 0x4E surface
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    await BleManager.sendData(_wire.init(), lr: 'L');
-    await BleManager.sendData(_wire.init(), lr: 'R');
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    await BleManager.sendData(_wire.sync(), lr: 'R');
-    final first = _tiles!.desiredIndex(_tracker!.progressM ?? 0);
-    await _transferTile(first);
-    await BleManager.sendData(_wire.sync(), lr: 'R');
-    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final tiles = _tiles!;
+    final index = tiles.desiredIndex(_tracker!.progressM ?? 0);
+    final tile = tiles.tiles[index];
+    _transferring = true;
+    tiles.beginTransfer(index);
+    try {
+      final booted = await _card.boot(
+          miniMap: tile.miniMap.wire, panoramic: tile.panoramic.wire);
+      if (booted && _tiles == tiles) {
+        tiles.completeTransfer(index);
+      } else {
+        tiles.abortTransfer();
+      }
+    } catch (e) {
+      tiles.abortTransfer();
+      AppLog.error('boot with tile ${tile.id} failed: $e', tag: _tag);
+    } finally {
+      _transferring = false;
+    }
   }
 
   Future<void> _transferTile(int index) async {
@@ -401,15 +395,13 @@ class WalkNavigatorService {
     final tile = tiles.tiles[index];
     final sw = Stopwatch()..start();
     try {
-      final okMini = await _sendMapMasterLast(
-          _wire.miniMapPackets(tile.miniMap.wire), sub: 0x02);
-      final okPano = await _sendMapMasterLast(
-          _wire.panoramicPackets(tile.panoramic.wire), sub: 0x03);
+      final acked = await _card.swapMaps(
+          miniMap: tile.miniMap.wire, panoramic: tile.panoramic.wire);
       if (_tiles != tiles) return; // trip changed under us
       tiles.completeTransfer(index);
       AppLog.info(
         'tile ${tile.id} on glasses in ${sw.elapsedMilliseconds} ms '
-        '(L acks mini=$okMini pano=$okPano)',
+        '(L acks $acked)',
         tag: _tag,
       );
     } catch (e) {
@@ -420,40 +412,10 @@ class WalkNavigatorService {
     }
   }
 
-  /// All packets to both lenses, except the right (master) lens's final
-  /// packet, which goes only after the left has acked its own final packet.
-  /// Otherwise the master's RUNNING event reaches the slave before the
-  /// slave's map is ready (gate A, "Master last").
-  Future<bool> _sendMapMasterLast(List<Uint8List> packets,
-      {required int sub}) async {
-    final total = packets.length;
-    for (var i = 0; i < total - 1; i++) {
-      await BleManager.sendData(packets[i], lr: 'L');
-      await BleManager.sendData(packets[i], lr: 'R');
-    }
-    final ack = BleManager.navFrames.stream
-        .where((r) =>
-            r.lr == 'L' && NavWire.isFinalMapAck(r.data, sub, total))
-        .first
-        .timeout(_mapAckTimeout);
-    await BleManager.sendData(packets.last, lr: 'L');
-    var acked = true;
-    try {
-      await ack;
-    } on TimeoutException {
-      acked = false;
-      AppLog.error('no L ack for final map packet (sub $sub)', tag: _tag);
-    }
-    await BleManager.sendData(packets.last, lr: 'R');
-    return acked;
-  }
-
   Future<void> _arrive() async {
     if (_state == WalkTripState.arrived) return;
     _setState(WalkTripState.arrived);
-    final packet = _wire.arrived('You have arrived');
-    await BleManager.sendData(packet, lr: 'L');
-    await BleManager.sendData(packet, lr: 'R');
+    await _card.arrived('You have arrived');
     // The firmware shows "arrived complete" for 5 s, then we end the session.
     await Future<void>.delayed(const Duration(seconds: 6));
     if (_state == WalkTripState.arrived) await stop(reason: 'arrived');
@@ -475,9 +437,10 @@ class WalkNavigatorService {
       final bundle = await _fetchBundle(from, dest);
       if (bundle == null || !isActive) return;
       // Wait for any in-flight tile transfer to finish before swapping trips.
-      while (_transferring) {
+      while (_transferring || _state == WalkTripState.booting) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
+      if (_state != WalkTripState.running) return; // stopped or arrived
       _adoptBundle(bundle);
       await _transferTile(_tiles!.desiredIndex(0));
     } finally {
@@ -534,14 +497,24 @@ class WalkNavigatorService {
   }
 
   /// After a BLE reconnect, put the current tile back on the glasses.
-  Future<void> resyncAfterReconnect() async {
+  Future<void> resyncAfterReconnect() => _resync();
+
+  /// Re-boot the card on the tile for the current progress: after a BLE
+  /// reconnect, or when the master says nav is no longer running.
+  Future<void> _resync() async {
     if (_state != WalkTripState.running || _tiles == null) return;
-    AppLog.info('resync after reconnect', tag: _tag);
-    final want = _tiles!.desiredIndex(_tracker?.progressM ?? 0);
-    _tiles = TileSelector(_bundle!.tiles);
+    // Claim the resync before waiting, so a second trigger returns above.
     _setState(WalkTripState.booting);
+    while (_transferring) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    if (_state != WalkTripState.booting) return;
+    AppLog.info('resync: re-booting the card', tag: _tag);
+    _tiles = TileSelector(_bundle!.tiles);
     await _bootGlasses();
+    if (_state != WalkTripState.booting) return; // stopped meanwhile
     _setState(WalkTripState.running);
-    if (_tiles!.shownIndex != want) await _transferTile(want);
+    final last = _lastFix;
+    if (last != null) await _onFix(last);
   }
 }

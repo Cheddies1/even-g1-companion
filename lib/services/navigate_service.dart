@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:typed_data';
 
-import 'package:even_companion/ble_manager.dart';
 import 'package:even_companion/models/companion_notification.dart';
 import 'package:even_companion/services/app_log.dart';
+import 'package:even_companion/services/nav_card_session.dart';
+import 'package:even_companion/services/nav_manoeuvre.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 
@@ -21,13 +23,18 @@ enum NavSessionState {
 // NavigateService
 // ---------------------------------------------------------------------------
 
+/// Google Maps notification fallback for Navigate (the walking navigator is
+/// the main path). Mirrors the ongoing Maps notification onto the firmware
+/// `0x0a` card with blank maps and the firmware's built-in arrow.
 class NavigateService {
   NavigateService._();
 
   static const _minTextRenderGap = Duration(milliseconds: 250);
   static const _minNavCardGap = Duration(milliseconds: 500);
   static const _textToBootstrapSettleDelay = Duration(milliseconds: 250);
-  static const _navSyncPollInterval = Duration(seconds: 1);
+  // Blank maps put no marker anywhere meaningful; centre it.
+  static const _markerX = 244;
+  static const _markerY = 68;
 
   static NavigateService? _instance;
   static NavigateService get get => _instance ??= NavigateService._();
@@ -37,13 +44,15 @@ class NavigateService {
   CompanionNotification? _latestInstruction;
   NavSessionState _sessionState = NavSessionState.idle;
   bool _bootstrapInFlight = false; // async-work guard, not session state
+  // Bumped by _endSession; a render that started before it must not boot.
+  int _sessionEpoch = 0;
+  late final NavCardSession _card =
+      NavCardSession(tag: 'Navigate', onLost: _resync);
   bool _isVisible = false;
   bool _renderActive = false;
   bool _renderDirty = false;
   bool _lastRenderUsedNavCard = false;
   DateTime? _lastRenderCompletedAt;
-  Timer? _navSyncPoller;
-  Set<String> _lastKnownAvailableLegs = {};
 
   // -- Public accessors -----------------------------------------------------
 
@@ -132,20 +141,18 @@ class NavigateService {
   }
 
   Future<void> _endSession({required String reason}) async {
-    _stopNavSyncPoller(reason: reason);
-    final wasActive =
-        _sessionState == NavSessionState.active ||
-        _sessionState == NavSessionState.bootstrapping;
+    _sessionEpoch++;
+    final wasActive = _card.isRunning;
     _transitionTo(NavSessionState.idle, reason: reason);
     _bootstrapInFlight = false;
-    _lastKnownAvailableLegs = {};
-    if (!_isVisible) return;
+    if (!_isVisible) {
+      _card.drop();
+      return;
+    }
     _isVisible = false;
     _renderDirty = false;
-    if (wasActive) {
-      await Proto.sendNavModeExit();
-      AppLog.info('EXIT sent', tag: 'Navigate');
-    }
+    await _card.exit();
+    if (wasActive) AppLog.info('EXIT sent', tag: 'Navigate');
     await TextService.get.stopTextSendingByOS();
     await Proto.exit();
   }
@@ -169,6 +176,7 @@ class NavigateService {
   }
 
   Future<void> _renderCurrentView() async {
+    final epoch = _sessionEpoch;
     final notification = _latestInstruction;
     _isVisible = true;
 
@@ -184,11 +192,17 @@ class NavigateService {
     if (useNavCard) {
       await _prepareForBootstrapIfNeeded();
       await TextService.get.stopTextSendingByOS();
+      if (epoch != _sessionEpoch) return; // ended while we waited
       await _sendNavCard(notification);
       _lastRenderUsedNavCard = true;
       return;
     }
 
+    if (_sessionState != NavSessionState.idle) {
+      // Leaving the card for text: end it, so the next card boots afresh.
+      await _card.exit();
+      _transitionTo(NavSessionState.idle, reason: 'text-fallback');
+    }
     final text = _buildTextFallback(notification);
     await TextService.get.startSendText(text);
     _lastRenderUsedNavCard = false;
@@ -205,9 +219,7 @@ class NavigateService {
   // -- Nav card send --------------------------------------------------------
 
   Future<void> _sendNavCard(CompanionNotification notification) async {
-    final fields = _buildLiveNavFields(notification);
-
-    // First card: full bootstrap.
+    // First card: boot with blank maps, then the status.
     if (_sessionState == NavSessionState.idle) {
       if (_bootstrapInFlight) {
         AppLog.info('bootstrap already in flight; skipping', tag: 'Navigate');
@@ -215,110 +227,84 @@ class NavigateService {
       }
       _bootstrapInFlight = true;
       _transitionTo(NavSessionState.bootstrapping);
-      Proto.setBootstrapTripStatus(
-        eta: fields.eta,
-        totalDistance: fields.totalDistance,
-        roadName: fields.roadName,
-        turnDistance: fields.turnDistance,
-        speed: fields.speed,
-        navIconSource: fields.navIconSource,
-        navIconPngBase64: fields.navIconPngBase64,
-      );
       try {
-        await Proto.sendNavBootstrap();
-        _transitionTo(NavSessionState.active);
-        _startNavSyncPoller();
+        final booted = await _card.boot(
+          miniMap: NavCardSession.blankMiniMap,
+          panoramic: NavCardSession.blankPanoramic,
+        );
+        if (!booted || _sessionState != NavSessionState.bootstrapping) return;
+        await _card.sendTripStatus(_tripStatus(_latestInstruction ?? notification));
+        if (_sessionState == NavSessionState.bootstrapping) {
+          _transitionTo(NavSessionState.active);
+        }
       } catch (e) {
         AppLog.error('bootstrap failed: $e', tag: 'Navigate');
         _transitionTo(NavSessionState.idle, reason: 'bootstrap-failed');
+        await _card.exit(); // INIT may already be on the glasses
       } finally {
         _bootstrapInFlight = false;
       }
       return;
     }
 
-    // Subsequent updates: TRIP_STATUS + SYNC.
+    // Subsequent updates: TRIP_STATUS only; the session keeps SYNC alive.
     if (_sessionState == NavSessionState.active) {
-      await Proto.sendNavTripStatusAndSync(
-        eta: fields.eta,
-        distance: fields.totalDistance,
-        roadName: fields.roadName,
-        turnDistance: fields.turnDistance,
-        speed: fields.speed,
-        navIconSource: fields.navIconSource,
-      );
-      _startNavSyncPoller();
+      await _card.sendTripStatus(_tripStatus(notification));
       return;
     }
 
-    // Bootstrapping or ended — ignore update.
     AppLog.debug(
       'update skipped: session=${_sessionState.name}',
       tag: 'Navigate',
     );
   }
 
-  // -- SYNC poller ----------------------------------------------------------
+  /// After a BLE reconnect, or when the master says nav stopped: boot again
+  /// and resend the latest instruction.
+  Future<void> resyncAfterReconnect() => _resync();
 
-  void _startNavSyncPoller() {
-    if (_sessionState != NavSessionState.active) return;
-    if (!_isVisible || _latestInstruction == null) return;
-    if (_navSyncPoller != null) return;
-    _lastKnownAvailableLegs = _currentAvailableLegs();
-    _navSyncPoller = Timer.periodic(_navSyncPollInterval, (_) {
-      unawaited(_sendNavSyncTick());
-    });
-    AppLog.info('SYNC poller started', tag: 'Navigate');
-  }
-
-  Future<void> _sendNavSyncTick() async {
+  Future<void> _resync() async {
+    if (_latestInstruction == null || _bootstrapInFlight) return;
     if (_sessionState != NavSessionState.active) {
-      _stopNavSyncPoller(reason: 'session-not-active');
+      await refreshVisibleView(); // text fallback, or nothing booted yet
       return;
     }
-
-    final currentLegs = _currentAvailableLegs();
-    if (currentLegs.isEmpty) {
-      _stopNavSyncPoller(reason: 'transport-unavailable');
-      return;
-    }
-
-    // Detect leg recovery — resend current state to the recovered leg.
-    final recovered = currentLegs.difference(_lastKnownAvailableLegs);
-    _lastKnownAvailableLegs = currentLegs;
-    if (recovered.isNotEmpty && _latestInstruction != null) {
-      AppLog.info(
-        'leg recovered: ${recovered.join(",")} — resending nav state',
-        tag: 'Navigate',
-      );
-      final fields = _buildLiveNavFields(_latestInstruction!);
-      await Proto.sendNavTripStatusAndSync(
-        eta: fields.eta,
-        distance: fields.totalDistance,
-        roadName: fields.roadName,
-        turnDistance: fields.turnDistance,
-        speed: fields.speed,
-        navIconSource: fields.navIconSource,
-      );
-      return; // sent SYNC as part of the update
-    }
-
-    if (_bootstrapInFlight) return;
-    await Proto.sendNavSync();
+    AppLog.info('resync: re-booting the card', tag: 'Navigate');
+    _card.drop();
+    _transitionTo(NavSessionState.idle, reason: 'resync');
+    await _scheduleRender();
   }
 
-  void _stopNavSyncPoller({required String reason}) {
-    final poller = _navSyncPoller;
-    if (poller == null) return;
-    poller.cancel();
-    _navSyncPoller = null;
-    AppLog.info('SYNC poller stopped: $reason', tag: 'Navigate');
-  }
-
-  Set<String> _currentAvailableLegs() {
-    return {'L', 'R'}
-        .where((lr) => BleManager.get().isLegAvailable(lr))
-        .toSet();
+  Uint8List _tripStatus(CompanionNotification notification) {
+    final f = _buildLiveNavFields(notification);
+    // The built-in arrow is the only turn cue on this path, so classify on
+    // the raw notification text: the card fields drop "Turn left" etc.
+    final direction = classifyManoeuvre(
+      navIconSource: f.navIconSource,
+      instructionText: [
+        notification.navPrimaryInfo,
+        notification.navChipExpandedText,
+        notification.navSecondaryInfo,
+        notification.title,
+        notification.text,
+      ].join(' '),
+    ).directionTurnByte;
+    AppLog.info(
+      'TRIP_STATUS: eta="${f.eta}" dist="${f.totalDistance}" '
+      'road="${f.roadName}" turn="${f.turnDistance}" '
+      'dir=0x${direction.toRadixString(16).padLeft(2, '0')}',
+      tag: 'Navigate',
+    );
+    return _card.wire.tripStatus(
+      direction: direction,
+      x: _markerX,
+      y: _markerY,
+      timeRemaining: f.eta,
+      distanceRemaining: f.totalDistance,
+      road: f.roadName,
+      turnDistance: f.turnDistance,
+      speed: f.speed,
+    );
   }
 
   // -- Field extraction -----------------------------------------------------
@@ -336,7 +322,6 @@ class NavigateService {
     String turnDistance,
     String speed,
     String navIconSource,
-    String navIconPngBase64,
   }) _buildLiveNavFields(CompanionNotification notification) {
     // turnDistance: only accept values that look like distances.
     // Google Maps sometimes puts road names or destination labels in
@@ -376,7 +361,6 @@ class NavigateService {
       turnDistance: turnDistance,
       speed: '0.0km/h',
       navIconSource: notification.navIconSource,
-      navIconPngBase64: notification.navIconPngBase64,
     );
   }
 
