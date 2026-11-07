@@ -1,7 +1,7 @@
 # Robustness smalls: four backlog fixes and the auto-brightness probe
 
 **Status:** DONE - 2026-11-07
-**Created:** 2026-11-07   **Last updated:** 2026-11-07   **Completed:** -
+**Created:** 2026-11-07   **Last updated:** 2026-11-07   **Completed:** 2026-11-07
 
 ## Goal
 Close five worklist items in one small PR: `lc3-hot-path-crash`, `notification-listener-rebind`,
@@ -89,5 +89,5 @@ confirms firmware behaviour we cannot change, it goes on `firmware-mod-spike` (P
   title/text at `info`. Candidate worklist item.
 
 ## Progress log
-- 2026-11-07 - phase 2 device check - capture saves (first run HUD froze at 00:00: master R stopped acking `0x4E` and `0x25` mid-recording; second run clean, treated as a one-off); Glance shows a "battery" message and hides the charging card; BT off/on reconnects both legs (~22 s, first backoff attempt fires while BT is still off); brightness answered (floor). Seen in passing: red-screen `Cannot get renderObject of inactive element` from `HeroController` on a back press during a route transition (not this branch).
+- 2026-11-07 - phase 2 device check - capture saves (first run HUD froze at 00:00: master R stopped acking `0x4E` and `0x25` mid-recording; second run clean; Eddie confirmed a one-off, no action); Glance shows a "battery" message and hides the charging card; BT off/on reconnects both legs (~22 s, first backoff attempt fires while BT is still off); brightness answered (floor). Seen in passing: red-screen `Cannot get renderObject of inactive element` from `HeroController` on a back press during a route transition (not this branch; on the worklist as `back-during-transition-red-screen`).
 - 2026-11-07 - phase 1 - branch `robustness-smalls` (uncommitted grooming landed on `main` as 6bf2668 first); fix 1 done inline (same file as fix 3), fix 4 via local-dev - `_heartbeatPauseDepth` was never read, so suspend was always a no-op; added junit `testImplementation`; analyze 39 = 39 vs main.

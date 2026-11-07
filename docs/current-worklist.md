@@ -480,6 +480,17 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
   - [ ] Two recordings started within the same minute no longer collide, and the rename UI correctly isolates the timestamp suffix for both old and new filename widths.
 - **Notes**: Surfaced during `phone-local-capture` (Done 2026-09-07) and deliberately not bundled into that item, to keep it tight. Low priority - MediaStore's own de-dupe suffix means no data loss today, just a rename-UI degradation.
 
+### back-during-transition-red-screen: Red error screen when pressing back during a page transition
+- **Status**: Backlog
+- **Priority**: Low-medium
+- **Effort**: Small investigation
+- **Context (2026-11-07)**: During the 2026-11-07 device session (see the progress log in `plans/robustness-smalls.md`), pressing Android back while a page route transition was still running showed the Flutter red error screen `Cannot get renderObject of inactive element`, thrown from `HeroController`. Eddie triggered it by pressing back while doing something else in the app. It is a debug-build assertion; a release build would show a grey/blank frame or nothing. Unrelated to the robustness branch. An earlier `debugNeedsLayout` red screen after a reinstall (2026-11-06) may be the same family; this link is unconfirmed.
+- **Acceptance**:
+  - [ ] Reproduce: back press mid-transition on the affected route. Identify which navigator push is involved and whether a Hero widget is in play (grep `lib/views`).
+  - [ ] Fix, e.g. guard the pop, remove or tag the Hero, or avoid a nested navigator.
+  - [ ] No red screen on repeated quick back presses during transitions.
+- **Notes**: Check whether the 2026-11-06 `debugNeedsLayout` report shares a cause before closing; do not assume it does.
+
 ---
 
 ## Parked
