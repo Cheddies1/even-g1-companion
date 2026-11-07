@@ -1,14 +1,16 @@
 # Walking navigation v1: cartographer tiles on deepthought, navigator on the phone
 
-**Status:** IN PROGRESS - phases 1-5 done; phase 6 next
-**Created:** 2026-11-06   **Last updated:** 2026-11-07   **Completed:** -
+**Status:** DONE - all six phases complete
+**Created:** 2026-11-06   **Last updated:** 2026-11-07   **Completed:** 2026-11-07
 
-## Start here (next session: phase 6)
-- **Code state (2026-11-07):** phase 5 committed on local branch `walk-navigator` (`8bd9b45`,
-  plus `21999fd` screen-off wakelock fix); not pushed, not merged to `main`.
-- **Phase 5 passed** on a live walk (2026-11-07): Google Maps share start, per-second marker,
-  accurate distances, legible maps, turns and arrival screen all good.
-- **Next:** phase 6 below. Desk test recipe: AGENTS.md "Walking-nav desk test".
+## Outcome
+v1 walking navigation works end to end: Google Maps share -> cartographer bundle -> per-second
+marker, tile swaps, built-in arrows, ARRIVED, EXIT; BLE drops recover. Artefacts:
+- `docs/FINDINGS-nav-marker-tiles.md`, `docs/FINDINGS-screen-off-gps.md`,
+  `docs/cartographer-contract.md`; harness `tool/nav_harness.py`, fixtures `tool/nav_fixtures/`
+- cartographer service on deepthought (`/home/eddie/projects/personal/cartographer/`)
+- `lib/services/walknav/`, `lib/services/nav_card_session.dart`, `NavLocationService.kt`
+- Open after v1: Google Maps fallback device test, region sync (below), the open questions.
 
 ## Goal
 A working v1 walking navigation mode. At trip start, a `cartographer` service on deepthought
@@ -133,7 +135,7 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   (live/replay fixes, share intent, debug `NAV_TRIP`); controller wiring; 30 unit tests + an
   env-gated real-trace replay test.
 
-### [ ] 6 - Protocol hardening and de-replay
+### [x] 6 - Protocol hardening and de-replay
 - **Objective:** production-grade `0x0a` lifecycle.
 - **Steps:** packet builders replace `nav_replay_data.dart` in the main path; master-only SYNC
   every ~5 s with ack-based liveness (SYNC reply byte 5 = 0 means not running); reconnect
@@ -144,6 +146,10 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
 - **Done when:** the replay is not used in the main path, a deliberate BLE drop mid-walk recovers,
   and arrival shows ARRIVED.
 - **Delegate:** inline, then `review-loop` for cross-model review.
+- **Built (2026-11-07):** `NavCardSession` owns the `0x0a` lifecycle for both paths (boot,
+  master-last maps, 5 s master SYNC with echo liveness, swap, ARRIVED, EXIT, cancellation by
+  generation, re-boot when a missing leg returns); the Maps fallback boots with blank maps and the
+  built-in arrow; replay, `nav_replay_data.dart` and the generated arrow deleted.
 
 ## Decisions
 - 2026-11-06 - Deepthought pre-renders route-forward tiles; phone moves the firmware marker and
@@ -276,7 +282,17 @@ size); v1 still ships with the home region only.
   refresh at the tile edge, not on turn completion. Confusing for a moment on first use, then
   fine (Eddie, live walk). No change.
 
+- 2026-11-07 - Phase 6: one shared `NavCardSession` for walk and Maps fallback. Liveness = two
+  consecutive "not running" echoes of keepalive SYNCs (seq-matched; boot SYNCs ignored), then
+  the owner re-boots. Boot waits up to 15 s for both legs, then goes ahead and re-boots when the
+  missing leg returns. Master SYNC echoes arrive ~0.2 s after each SYNC on device.
+- 2026-11-07 - Review follow-ups declined (not needed for v1): liveness unit tests via an injected
+  transport; final-map ack matched without seq; fallback render-loop races (`_isVisible`);
+  `_missingLeg` cleared before the owner commits to a re-boot.
+
 ## Open questions
+- Google Maps notification fallback is rebuilt but not device-tested (needs a live Maps
+  navigation session).
 - Tile orientation flips: each tile faces its own first 20 m, so consecutive panoramic tiles can
   jump between north-south and east-west (seen in the 4x replay). Ask Codex for heading
   hysteresis in cartographer (keep the previous tile's heading unless the route genuinely
@@ -285,11 +301,6 @@ size); v1 still ships with the home region only.
 - ~~Tile spacing and overlap~~ - ~190 m / ~50 m confirmed fine on the 2026-11-07 live walk.
 
 ## Progress log
-- 2026-11-06 - phase 1 - `docs/FINDINGS-nav-marker-tiles.md`, harness `tool/nav_harness.py` +
-  probe batch mode in `BleManager.kt` on branch `nav-marker-harness`. Deviations: harness is
-  adb-driven Kotlin batch + Python generator, not a Dart debug path; arrows catalogued as
-  "all 35 render" without per-value names for 0x0c-0x23; 500/250 ms sweeps generated but not
-  run; firmware nav simulator closed (JSON legacy format, not `0x0a`).
 - 2026-11-06 - phase 2 - verdicts in `docs/FINDINGS-nav-marker-tiles.md` (gate B), fixtures
   `tool/nav_fixtures/`, renderer `/home/eddie/projects/personal/cartographer/`, harness
   `s_<scene>.txt` sessions; probe holds back F5 00/02/03 during batches. Deviations: one real
@@ -318,3 +329,7 @@ size); v1 still ships with the home region only.
   accurate, maps clear, turns and arrival screen correct. Found and fixed a screen-off timer stall
   (CPU suspend delayed Dart timers; 5 s wakelock on `F5` gestures, `21999fd`) that had made the
   Glance tap surface stick on "Even AI is listening". Deviation: short walk, no roundabout.
+- 2026-11-07 - phase 6 - `lib/services/nav_card_session.dart`, docs updated. Desk replay
+  (synthesised trace of the acceptance route, 2x) passed twice: Bluetooth off 8 s mid-trip
+  recovered, ARRIVED then EXIT. Council review-loop, 4 rounds (fable-5-1, gpt-5.6-sol,
+  gemini-4-argon; joker empty), approved. Deviation: Maps fallback not device-tested.

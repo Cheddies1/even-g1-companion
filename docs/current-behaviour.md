@@ -30,8 +30,11 @@ It is intentionally separate from:
   benefit from continued real-world validation
 
 ### Navigate
-- intended to surface Google Maps navigation guidance from notifications
-- implemented with a Navigate-only visual card path
+- two paths onto the firmware `0x0a` navigation card: the **walking navigator**
+  (main path; a Google Maps share starts a trip, route data from `cartographer`)
+  and the **Google Maps notification fallback** (blank maps and a built-in arrow)
+- the walking navigator passed a live walk on 2026-11-07; the fallback has not
+  been device-tested since its rewrite
 - still needs longer real-world walking validation
 
 ### Chat
@@ -422,73 +425,72 @@ continued validation.
 
 ## Navigate mode
 
-Navigate is intentionally lean and notification-driven.
+Navigate drives the firmware `0x0a` navigation card. Both paths share one
+glasses-side lifecycle owner, `NavCardSession`
+([lib/services/nav_card_session.dart](../lib/services/nav_card_session.dart)).
 
-### Current intended behaviour
+### Paths
 
-- user switches app into Navigate mode on phone
-- Google Maps notifications are ingested
-- concise turn guidance is shown in the glasses
+- **Walking navigator (main path).** Sharing a destination from Google Maps to
+  the app starts a trip. The app fetches a route bundle from `cartographer`
+  (schema in [cartographer-contract.md](cartographer-contract.md)), tracks GPS
+  progress, and shows TRIP_STATUS text, the firmware's built-in arrow, the
+  route tile on both maps and a position marker. Tiles are swapped as progress
+  moves along the route. Plan and phase status:
+  [plans/navigate-v1-cartographer.md](plans/navigate-v1-cartographer.md).
+- **Google Maps notification fallback.** With Navigate active and no trip
+  started from a share, real turn-by-turn Google Maps notifications are
+  ingested. The card is booted with blank maps, and TRIP_STATUS carries the
+  parsed notification text, the firmware's built-in arrow chosen by
+  `classifyManoeuvre` (parsing `navIconSource` and instruction text), and the
+  marker centred at (244, 68). The generated `MAP_OVERVIEW` arrow and the
+  notification-PNG icon conversion are retired.
+
+### Card lifecycle (both paths)
+
+- boot: `0x18` clear, ~400 ms, INIT to both lenses, SYNC to the master, mini-map
+  then panoramic map (right lens's final packet only after the left has acked
+  its own), SYNC to the master
+- keepalive: master-only SYNC every 5 s. A master echo with byte 5 = 0 means
+  nav is not running; two consecutive such echoes (keepalive SYNCs only, not
+  during a boot or map transfer) make the owner re-boot the card
+- updates (fallback path): TRIP_STATUS only, no per-update SYNC and no 1 s
+  poller
+- end: the walking navigator sends ARRIVED (status 2) then EXIT on arrival.
+  The fallback sends no ARRIVED; when Google Maps removes its notification the
+  session ends with EXIT
+- the idle prompt ("Open Google Maps to start navigation") is never sent on
+  mode entry
+
+### Reconnect behaviour
+
+- after a BLE reconnect, `CompanionController` transport recovery asks the
+  active nav path to re-boot the card (the walking navigator on the tile for
+  the current progress; the fallback via
+  `NavigateService.resyncAfterReconnect()`)
+- the "Reconnected" title card is skipped while a nav card is live
+- `Confirmed` 2026-11-07 (desk replay, walking navigator): an 8 s Bluetooth
+  drop mid-trip showed the firmware's "navigation service lost"; the app
+  reconnected, re-booted the card on the current tile, the trip continued and
+  arrival sent ARRIVED then EXIT. Not yet verified for the fallback path
+
+### Other behaviour
+
 - ordinary Glance notifications are suppressed or deprioritised while navigating
-
-### Current status
-
-- the notification ingestion path is already available
-- Maps notification fields are parsed
-- only real turn-by-turn Google Maps notifications are now eligible input
-- startup and waiting states stay text-rendered
-- idle state shows `Open Google Maps` / `to start navigation`
-- real navigation instructions are currently debug-driven by a full
-  **108-packet `0x0a` replay** of the official app's lifecycle
-  (INIT + SYNC + TRIP_STATUS + icon + map + trailing SYNC), sent with an
-  **interleaved per-leg fire-and-forget transport** that has now proven fast
-  and stable on device for the initial bootstrap
-- the replayed bootstrap now replaces only the `TRIP_STATUS` packet with a
-  live packet built from the current Google Maps notification fields
-- after bootstrap, Navigate runs a real **1-second `0x0a` SYNC poller**
-  while the session remains active
-- post-bootstrap updates now default to **dynamic `TRIP_STATUS + SYNC`**
-  instead of resending the full 108-packet lifecycle on every guidance change
-- the production target remains a structured TRIP_STATUS packet with four
-  visible null-separated text fields (ETA, total distance, road name, turn
-  distance) that the firmware renders using its own built-in card template
-  and font
-- the **MAP_OVERVIEW direction icon is now dynamically generated** from the
-  Google Maps notification icon PNG (`navIconPngBase64`): decoded to 136×136
-  monochrome via alpha threshold, RLE-encoded, padded to 13 bands. Falls
-  back to geometric arrow generation, then captured data.
-- the `DirectionTurn` byte in TRIP_STATUS is classified by
-  `classifyManoeuvre()` parsing both `navIconSource` and instruction text
-- the previous BMP-per-frame approach has been replaced; the BMP pipeline
-  is preserved in the codebase for potential future use but is no longer
-  called from Navigate
-- the rate limit between updates has been reduced from 2200 ms (BMP) to
-  500 ms (the structured text packet is tiny and atomic)
 - on mode entry, a "Navigate" title card is shown for ~500 ms **only when
   no nav instruction is currently held**. When an instruction is already in
-  hand, the title card is suppressed entirely — a clear sequence fired mid-bootstrap
-  would cancel the nav session start. The glasses stay on whatever was displayed
-  before until the first Maps notification triggers the nav card. The idle prompt
-  ("Open Google Maps to start navigation") is not sent on mode entry regardless.
+  hand, the title card is suppressed entirely, as a clear sequence landing
+  during a boot would cancel the nav session start
 
 ### Current caveats
 
-- **The `0x0a` nav card protocol is confirmed working** with dynamic
-  direction icons and live text fields. Session keepalive behaves well on
-  longer routes.
-- The bootstrap is still replay-based around captured snoop bytes, with
-  TRIP_STATUS and MAP_OVERVIEW replaced dynamically. PANORAMIC_MAP remains
-  captured/static.
 - Some Google Maps updates still map the wrong source text into the
-  `turnDistance` field, so payload extraction needs cleanup.
-- Startup robustness still needs observation when one leg begins degraded or
-  reconnecting.
-- Navigate depends on how stable Google Maps notification updates are on
-  the real phone/device configuration during longer walks.
-- The `0x0a` code still contains replay scaffolding and captured
-  `MAP_OVERVIEW` / `PANORAMIC_MAP` data. The next production step is
-  replacing those captured bytes with real icon/map generation or a turn-icon
-  library once lifecycle/update behaviour is fully trusted.
+  `turnDistance` field on the fallback path.
+- The fallback path has not been device-tested since its rewrite onto
+  `NavCardSession` (2026-11-07).
+- Walking navigator: only a short live walk so far, no roundabout.
+- Fallback depends on how stable Google Maps notification updates are on the
+  real phone/device configuration.
 
 ## Chat mode
 
@@ -726,7 +728,7 @@ blank after the clear.
 
 **Navigate hard constraint:** when a nav instruction is already in hand, the Navigate title card
 is suppressed entirely. The clear sequence that ends a title card would cancel the nav session
-bootstrap if it landed mid-replay. See "Current status" in the Navigate section above, and
+boot if it landed mid-sequence. See "Card lifecycle" in the Navigate section above, and
 `current-architecture.md` § "Transport health and recovery" for the `CompanionController` design.
 
 Chat does not receive a title card in this version. Capture shows its idle
@@ -741,7 +743,7 @@ On transport recovery after a real disconnect, the app:
 2. Force-clears the display with `0x50 + 0x18`.
 3. Conditionally resumes content in this priority order:
    - **Recording HUD** — if a Capture recording is active.
-   - **Nav refresh** — if Navigate was the visible mode and a nav instruction is held.
+   - **Nav card** - while a nav card is live, steps 1-2 are skipped and the card is re-booted instead (see "Reconnect behaviour" under Navigate mode).
    - **Call HUD** — if a phone call is active.
    - **Blank** — otherwise; no content is sent.
 
@@ -957,6 +959,6 @@ This supports:
 - Glance left/right synchronisation still needs watching under rapid notification arrival
 - some notification sources/messages still need smarter formatting
 - Capture mode stop/save semantics and recordings-list behaviour need continued real-world validation
-- Navigate mode still needs longer human review against real Google Maps walking sessions
+- Navigate: walking navigator needs longer live walks; the Google Maps fallback path needs a device test after its rewrite
 - Chat mode still needs broader real-world testing for latency, retries, and edge-case error handling
 - Chat `0x52` streaming is confirmed working (host-managed scrolling, 43 chars/row, 3 rows, 200 ms pacing); follow-up turn rendering still benefits from broader real-world observation

@@ -591,7 +591,7 @@ Observed reality (`Confirmed`):
   - `0a 06 00 <seq> 00 01` — INIT (enter navigation display mode)
   - `0a 06 00 <seq> 04 01` — SYNC (prepare / commit)
   - `0a 06 00 <seq> 05 01` — EXIT (leave navigation mode)
-  - `0a 06 00 <seq> 06 01` — ARRIVED (navigation complete)
+  - `0a <len16> <seq> 06 <status> <prompt, <=63 B>` - ARRIVED; status 2 is the "arrived complete" page (prompt + clock, ~5 s). Device-confirmed 2026-11-07
 
 - Official app sequence per update:
   INIT → SYNC → TRIP_STATUS → MAP_OVERVIEW ×13 → PANORAMIC_MAP ×90 → SYNC
@@ -647,9 +647,10 @@ Observed reality (`Confirmed`):
   (0x0c-0x1d; UK is cw, the odd values), merge left/right, ramp right/left and fork
   right/left (0x1e-0x23). Full table, confirmed from the firmware bitmaps, in
   [FINDINGS-nav-marker-tiles.md](FINDINGS-nav-marker-tiles.md).
-  The companion app classifies manoeuvres via `classifyManoeuvre()` in
-  `nav_icon_generator.dart`, parsing both `navIconSource` and instruction
-  text for direction keywords.
+  The companion app's Google Maps notification fallback classifies
+  manoeuvres via `classifyManoeuvre()` in `nav_manoeuvre.dart`, parsing both
+  `navIconSource` and instruction text for direction keywords. The walking
+  navigator takes the direction from its route bundle instead.
 - **Sub-type 2 — MAP_OVERVIEW (direction icon)** (`02`):
   `0a <len> 00 <seq> 02 <bandCount> 00 <bandNum> 00 <RLE chunk>` — 9-byte
   header + up to 185 bytes of RLE payload per band. Typically 13 bands for
@@ -661,10 +662,10 @@ Observed reality (`Confirmed`):
   previously assumed). Pixel (x, y) is at bit `(x % 8)` of byte
   `(y * 17 + x ~/ 8)`. `toBytes()` packs 8 consecutive bools per byte,
   bit 0 (LSB) = first pixel in the group.
-  The companion app scrapes the Google Maps notification icon PNG
-  (`navIconPngBase64`), decodes to 136×136 monochrome via alpha threshold,
-  RLE-encodes, pads to 13 bands, and frames as MAP_OVERVIEW packets.
-  Geometric arrow generation exists as fallback.
+  The companion app sends route-tile content as the mini-map (walking
+  navigator) or a blank map (notification fallback: RLE of all zeros, one
+  packet). It no longer draws its own direction icon here; the arrow comes
+  from the firmware's built-in set via `direction` in TRIP_STATUS.
 - **Sub-type 3 — PANORAMIC_MAP (route map)** (`03 5a`):
   `0a c3 00 <seq> 03 5a 00 <row> <~187 bytes>` — 90 rows (`5a` = 90) for a
   488×136 pixel map. Data is **unencoded** raw bitmap (not RLE).
@@ -681,7 +682,10 @@ Notes:
   resets its countdown to 19 when it sees one and decrements it once a second,
   and at zero tells the slave to stop navigation
   (`src/ui/ui_navigation_map.c:387-412`). So a master-only SYNC every ~5 s is
-  safe; the 1 s poller to both legs is overkill. Not yet changed in the app
+  safe; the 1 s poller to both legs is overkill. The app now sends a
+  master-only SYNC every 5 s (2026-11-07). `Confirmed` on device in a desk
+  replay: the master's echo arrives ~0.2 s after each SYNC with byte 5 = 1,
+  so echoes are prompt, not queued
 - RUNNING needs both `nav_overview_map_ready` and `nav_panoramic_map_ready`
   (`src/ui/ui_navigation_map.c:371-374`), which is why text-only cards are
   rejected
@@ -700,8 +704,9 @@ Notes:
   the circle outside the map is never cleared
 - `0x50` is sent before the first INIT because the capture did. The named
   source shows neither `0x0a` INIT nor `0x52` reads the lock bits, so it is
-  not required. Since 2026-11-06 the bootstrap strips it from the replay and
-  sends it to the right lens only
+  not required. The app's nav path sends no `0x50` of its own; the only one
+  ahead of INIT is the right-lens `0x50` inside `Proto.clearDisplay`, before
+  the `0x18`
 - fire-and-forget writes (`sendData`) are the transport we use, but `0x0a` is
   **acked** (corrected 2026-11-06): INIT replies with a 6-byte echo, byte 5 =
   0, queued on the master and posted straight away on the slave
@@ -717,14 +722,26 @@ Notes:
   `packet length error` and drops the packet with no other symptom
   (`Firmware-source`) — first thing to check when a hand-built `0x0a` frame
   renders nothing
-- sending 108 packets (~20KB) to both legs simultaneously requires pacing
-  and per-leg transport care to avoid BLE buffer overflow and connection drops
-- the current confirmed debug transport in the companion app is an
-  **interleaved per-leg fire-and-forget replay**:
-  packet `i` to right, wait 10 ms, packet `i` to left, wait 20 ms, and
-  pause 50 ms every 10 packet pairs. Broadcast mode could starve a leg;
-  full sequential per-leg replay was stable but introduced a visible
-  multi-second eye gap
+- sending a full card (~100 packets, ~20KB) to both legs simultaneously
+  requires pacing and per-leg transport care to avoid BLE buffer overflow and
+  connection drops. Broadcast mode could starve a leg; a full sequential
+  per-leg replay was stable but introduced a visible multi-second eye gap
+- the companion app's transport (`NavCardSession`, 2026-11-07): `0x18`,
+  ~400 ms, INIT to both lenses, SYNC to the master, then mini-map and
+  panoramic map packet by packet (left, then right), with the right lens's
+  final packet held until the left acks its own, then SYNC to the master.
+  Keepalive is a master-only SYNC every 5 s. Liveness: an echo with byte 5 = 0
+  to a keepalive SYNC (matched by `seq`) means nav is not running. Echoes of
+  boot SYNCs are ignored (they precede RUNNING), as are echoes during a map
+  transfer; two consecutive "not running" echoes make the app re-boot the
+  card. `Confirmed` on device 2026-11-07: an 8 s Bluetooth drop mid-trip
+  showed the firmware's "navigation service lost", and the app reconnected,
+  re-booted the card and carried on
+- a card with no real map still needs both maps: the app's blank mini-map is
+  RLE zeros (one packet) and its blank panoramic map is raw zeros (90 packets)
+- closing a session: ARRIVED (`0a 06 ... 06 <status 2>`) on completion, then
+  EXIT (`0x05`) to both lenses. `Confirmed` on device 2026-11-07 (walking
+  navigator: ARRIVED then EXIT). EXIT is sent only if the session was running
 
 ## Dashboard data slots: `0x1e` TX
 
@@ -815,8 +832,8 @@ Consequences for our code:
   down. Most likely it only added wire delay ahead of `0x18`.
 - The `0x50`-before-`0x0a`-INIT and `0x50`-before-`0x52` "requirements" were
   never requirements: neither handler reads the lock bits. Since 2026-11-06
-  the app sends `0x50` to the right lens only (clear, streaming init, nav
-  bootstrap). Removing it entirely is a follow-up.
+  the app sends `0x50` to the right lens only (clear, streaming init). Nav
+  no longer sends its own. Removing it entirely is a follow-up.
 
 ## Battery and wear state: `0xF5`
 

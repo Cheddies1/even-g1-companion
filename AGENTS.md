@@ -20,8 +20,10 @@ generic SDK or cross-device release.
   surface), media line, ongoing-call HUD, assistant shortcut
 - `capture` - glasses-mic WAV recording with a live HUD. Phone-mic recording is
   a home-screen button, not a mode; same WAV format, folder and list
-- `navigate` - Google Maps turn-by-turn via the firmware `0x0a` nav card;
-  being rebuilt per [docs/plans/navigate-v1-cartographer.md](docs/plans/navigate-v1-cartographer.md)
+- `navigate` - walking navigation on the firmware `0x0a` nav card from
+  `cartographer` route bundles, started by a Google Maps share; the Google Maps
+  notification card is the fallback. Plan:
+  [docs/plans/navigate-v1-cartographer.md](docs/plans/navigate-v1-cartographer.md)
 - `chat` - voice loop, paced `0x52` streaming
 
 Speech-to-text is the self-hosted Speaches `whisper-server` on `deepthought`
@@ -113,6 +115,8 @@ Walking-nav desk test (debug): `am start -n com.eddie.evencompanion/.MainActivit
 --es dest "lat,lon" [--es replay <trace.csv from files/gps>] [--ef speed 4]` (`--es cmd stop` ends
 it). Logs: logcat `[WalkNav]` and `G1Nav`. Real-trace replay test: `NAV_BUNDLE=... NAV_TRACE=...
 flutter test test/services/walknav/real_trace_replay_test.dart` (skips without both).
+BLE drop test: `adb shell cmd bluetooth_manager disable`, wait, `enable` (adb over Tailscale
+survives it); expect `[WalkNav] resync: re-booting the card`.
 
 GPS trace recorder (debug): `am broadcast ... -a com.eddie.evencompanion.GPS_TRACE --es cmd
 start|stop`, app foregrounded to start; CSVs hold real coordinates, keep them in gitignored
@@ -128,6 +132,8 @@ reboot it needs USB `adb tcpip 5555` first).
 - `lib/services/<feature>_service.dart` - per-feature logic (glance, capture,
   phone_capture, navigate, chat, device_status, recordings)
 - `lib/services/glance_carousel.dart` - pure, unit-tested carousel paging
+- `lib/services/nav_card_session.dart` - the `0x0a` card lifecycle (boot, master-last maps,
+  SYNC keepalive + liveness, ARRIVED, EXIT) shared by both nav paths
 - `lib/services/walknav/` - walking navigator: pure cores (geometry, bundle, manoeuvre
   filter, route tracker, tile selector, `0x0a` wire) + `walk_navigator_service.dart`;
   Android side `service/NavLocationService.kt` (location FGS, replay, `NavBridge`)

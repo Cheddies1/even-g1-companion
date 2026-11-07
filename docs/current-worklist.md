@@ -28,7 +28,7 @@ Distinction: QuickNote is "remember something fast" (single note, right-hold). C
 Working well:
 - Glance mode is a real daily-use feature
 - Chat mode works end-to-end with OpenAI-backed STT + assistant responses, paced `0x52` streaming, host-managed scrolling
-- Navigate mode boots and stays alive on the firmware `0x0a` card path (full 108-packet interleaved replay, dynamic TRIP_STATUS, 1-second SYNC poller, post-bootstrap TRIP_STATUS+SYNC updates, idle-prompt suppression)
+- Navigate mode runs on the firmware `0x0a` card via `NavCardSession` (phase 6, device-verified 2026-11-07 on the walking navigator): packet-built boot, master-last maps, 5 s master SYNC keepalive with echo liveness, reconnect re-boot, ARRIVED/EXIT. Main path is the walking navigator (Google Maps share); the Google Maps notification fallback (blank maps, built-in arrow, TRIP_STATUS only) is rewritten but not yet device-tested
 - Quick mode switching works from app UI and persistent notification
 - Right-hold QuickNote: full pipeline live (gesture → LC3 decode → WAV → Whisper STT → GPT-4.1-mini tidy → local notes store → in-app UI). Phone-side keyboard add also live (FAB → category chips → multi-line text → same store); device-verified 2026-05-19.
 - Per-leg BLE heartbeat at 2 s cadence, independent per-leg start, parallel sends; reconnect logic exists
@@ -66,19 +66,20 @@ Working, but still needs real-world observation:
 
 ### 4. Navigate cleanup (composite)
 - **Status**: Now
-- **Context**: Navigate is functionally working on the `0x0a` structured-card path. Several cleanup tasks remain before it can shed its debug scaffolding. Eddie expects most are straightforward.
+- **Context**: Navigate is functionally working on the `0x0a` structured-card path. Phase 6 of the nav plan (2026-11-07) removed the replay scaffolding and added liveness, reconnect re-boot and ARRIVED/EXIT; the fallback device test is the main thing still open.
 - **Acceptance** — all of the following:
-  - [ ] **Startup robustness** — keep observing first-entry Navigate starts, especially cases where one leg begins degraded or reconnecting. Idle prompt is now suppressed; verify no regressions.
+  - [ ] **Startup robustness** — keep observing first-entry Navigate starts, especially cases where one leg begins degraded or reconnecting. Idle prompt is now suppressed; verify no regressions. Phase 6: reconnect re-boot verified on the walking navigator (8 s Bluetooth drop, 2026-11-07); still open for the Google Maps fallback path.
   - [x] **Field extraction cleanup** — fix `turnDistance` being populated with road text such as `towards Milton Rd` or `Home (36 Campbell Rd)`. Tighten the Google Maps notification parsing model.
-  - [ ] **Proper EXIT / ARRIVED handling** — sessions are currently torn down via the existing exit path, but the `0x0a 05` EXIT and `0x0a 06` ARRIVED sub-commands are not used cleanly.
-  - [ ] **Replay scaffolding decision** — `lib/services/nav_replay_data.dart` and the debug 108-packet replay path remain in use for PANORAMIC_MAP bootstrap and as MAP_OVERVIEW fallback. Once bootstrap and update behaviour are trusted, decide what to keep, what to relabel as production-fallback, and what to remove. Do NOT remove yet.
+  - [x] **Proper EXIT / ARRIVED handling** - done in phase 6 (2026-11-07): `NavCardSession.arrived` / `exit`; walking navigator sends ARRIVED then EXIT on arrival (device-verified), fallback ends with EXIT when Google Maps removes its notification (no ARRIVED, not yet device-tested).
+  - [x] **Replay scaffolding decision** - removed in phase 6 (2026-11-07): `nav_replay_data.dart`, the 108-packet replay, the generated `MAP_OVERVIEW` arrow and the notification-PNG icon conversion are deleted; the fallback uses blank maps and the firmware's built-in arrow.
+  - [ ] **Fallback device test** - Google Maps notification fallback after the `NavCardSession` rewrite (boot with blank maps, TRIP_STATUS-only updates, reconnect via `resyncAfterReconnect()`, EXIT on notification removal) has not been run on device.
   - [x] **Time set (0x06 01)** — periodic epoch-time push from the app to the glasses. The glasses use this for both the navigation HUD clock and the firmware dashboard. Wire format per JohnRThomas wiki: `06 16 00 <seq> 01 <epoch32> <epoch64_ms> <weather_icon> <temp_c> <c_f_flag> <24h_flag> 00`. Start with time-only; weather fields can be zeroed initially.
   - [x] **PANORAMIC_MAP placeholder** — replace the misleading static map capture (488x136) with the smallest viable neutral placeholder image. This is option 2 from the Parked PANORAMIC_MAP decision item. The placeholder should be honest about not being a real map — single-colour fill or minimal grid.
 - **Firmware-decomp input (2026-09-07)** — `docs/firmware-decomp-notes.md`. Three things land on this item:
   - **TRIP_STATUS field model was wrong.** `y` is a `uint16` (offsets 8-9), not a byte plus a null separator, and the first string starts at offset 10. Our captured prefix `01 03 c8 00 12 00` re-reads as direction=Right, x=200, y=18. Corrected in `docs/protocol-reference.md` and `docs/FINDINGS-layouts.md`. Check `navigate_service.dart` against the corrected table before any further dynamic-field work.
   - **Field size caps are hard.** 24 / 24 / 64 / 24 / 24 bytes for `time_remaining` / `remaining_kilometers` / `road_name_info` / `remaining_distance_info` / `current_speed`. Exceeding one **aborts the whole packet** rather than truncating — a plausible cause of any "renders nothing" case with a long road name. Same for bytes 1-2: if the declared length does not match the actual packet length, the firmware drops it silently.
   - **`spec_ble_command_hook.c` is an on-device nav simulator.** The firmware can synthesise `BLE_REQ_PUT_NAVIGATION_INFO` payloads from cJSON with no phone attached. If it is reachable over a normal BLE session (unknown), it is a much better way to isolate rendering bugs than replaying 108 packets. Worth 30 minutes before the replay-scaffolding decision.
-- **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `docs/firmware-decomp-notes.md`, `lib/services/navigate_service.dart`, `lib/services/nav_icon_generator.dart`. See the related Parked item on PANORAMIC_MAP.
+- **Notes**: Cross-ref `docs/FINDINGS-layouts.md`, `docs/firmware-decomp-notes.md`, `lib/services/navigate_service.dart`, `lib/services/nav_card_session.dart`, `lib/services/nav_manoeuvre.dart` (was `nav_icon_generator.dart`). See the related Parked item on PANORAMIC_MAP.
 
 ### navigate-osm-research: Navigate mode — architecture decision and spike plan
 - **Status**: Now
@@ -121,6 +122,7 @@ Working, but still needs real-world observation:
   - `navigate-foreground-service` — Spike 3: phone-side GPS endurance (parallel feasibility gate — either can kill the project)
   - `cartographer-routing-engine` — Spike 2: routing + scene-graph emission (gated on Spike 1 passing)
 - **Resolution of `PANORAMIC_MAP decision` Parked item**: this architecture implements option 3 from that item ("build real local-surroundings line-drawing"), with the rendering lift offloaded to Deepthought. See updated Parked item.
+- **Status note (2026-11-07)**: phases 1-5 done; phase 6 (protocol hardening and de-replay) code done and desk-verified on the walking navigator, with the fallback device test and the plan's cross-model review still open. The plan file owns phase status.
 - **Notes**: Google Maps notification path stays as fallback only. `cartographer` is a new Deepthought service, separate from Hermes. Keep separate from `navigate-cleanup` (tactical protocol cleanup, also in Now) — they remain deliberately parallel.
 
 ---
@@ -696,7 +698,7 @@ Items 1–2 were the top transport priorities; both shipped in the 2026-06-13 de
 ### navigate-cleanup: Navigation protocol cleanup and de-replay work
 - **Status**: Backlog
 - **Priority**: Medium
-- **Context**: `0x0a` navigation path works but remains partially dependent on replay-derived scaffolding and captured assets. Navigate is operational but not yet fully "owned" at the protocol level.
+- **Context**: `0x0a` navigation path works but remains partially dependent on replay-derived scaffolding and captured assets. Navigate is operational but not yet fully "owned" at the protocol level. Update 2026-11-07: phase 6 removed the replay data and bootstrap code and owns the lifecycle in `NavCardSession`; remaining acceptance is the fallback device test and route update handling.
 - **Acceptance**: Remaining captured/replayed dependencies removed. Static PANORAMIC_MAP replaced with a generated or optional implementation. Startup robustness, reconnect behaviour, exit semantics, and route update handling improved. Icon generation, card generation, and lifecycle fully owned.
 - **Notes**: The PANORAMIC_MAP sub-issue may remain Parked even while other parts of this item progress. Cross-ref the Parked `PANORAMIC_MAP decision` item, and the existing Now item `Navigate cleanup (composite)` — that covers immediate tactical fixes (turnDistance, EXIT/ARRIVED); this item covers broader protocol ownership and de-replay work.
 
@@ -1118,10 +1120,9 @@ Rendering protocols (layouts capture):
   - **`0x0a` navigation card** — structured text data slots in one ~48-byte
     packet (ETA, distance, road, turn distance) plus optional icon/map
     bitmap chunks. The current Navigate implementation uses:
-    - full 108-packet interleaved replay for bootstrap
-    - dynamic live `TRIP_STATUS` replacement inside that replay
-    - 1-second `SYNC` keepalive while the session is active
-    - post-bootstrap `TRIP_STATUS + SYNC` updates as the current experiment
+    - `NavCardSession` boot: `0x18`, INIT, maps sent master last, SYNC
+    - master-only `SYNC` keepalive every 5 s with echo-based liveness
+    - `TRIP_STATUS` updates, then ARRIVED (walking navigator) and EXIT
   - **`0x1e` TX dashboard data slots** — pushes titled content into the
     firmware's grid layout. Enables companion-app quicknote and dashboard
     injection features.
@@ -1229,7 +1230,7 @@ Good first prompt pattern:
   - Hermes dewire (`hermes-dewire-chat`) - **Done 2026-09-07, working tree uncommitted**; Hermes fully stripped (not repointed at a local model - see the Decision in Recently Done); analyze/test/build clean; Chat + left-hold Quick Ask confirmed working on device 2026-09-08 over the direct OpenAI route (an OpenAI 429 hit during testing was a credit issue, resolved, not an app bug); the clean-network-failure sub-case is still outstanding
   - Phone-local capture (`phone-local-capture`) - **Done 2026-09-07, working tree uncommitted**; new home-screen Record/Stop button using the phone's own mic, same pipeline and storage as glasses Capture; device-verified 2026-09-07/08 including both directions of the mic exclusion and the notification's "Stop and save" action; only a long screen-off recording against Samsung's battery optimiser remains outstanding; `recording-filename-seconds-resolution` (Backlog, Low) was surfaced by this work
   - STT is now local (`stt-local-whisper`, Done 2026-09-08) - Quick Ask, Chat and QuickNote transcribe via the self-hosted whisper-server on deepthought over Tailscale, no fallback; the reasoning call for Chat and Quick Ask still goes to OpenAI, unchanged
-  - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_icon_generator.dart`) — **Now #4 (in flight)**; startup robustness, EXIT/ARRIVED handling, replay scaffolding decision remain open; field extraction / time set / PANORAMIC_MAP placeholder done
+  - Navigate `0x0a` cleanup (`navigate_service.dart`, `nav_card_session.dart`) — **Now #4 (in flight)**; EXIT/ARRIVED and replay removal done in phase 6; fallback device test and startup robustness observation remain open; field extraction / time set / PANORAMIC_MAP placeholder done
   - Dashboard widgets v1 (`dashboard-widgets-v1`) — **Next #1 (Medium-high)**; first `0x1E` implementation; system-status widget, calendar scope parked in `calendar-integration-outlook`; PR-B
   - Router v1 (`router-v1-glance-handlers`) — **Next #2**; medium priority retained; Quick Actions scope updated 2026-09-09: first slice is contextual lists, timers, reminders and passive mode switches through one router (`quick-actions-timers-reminders` is Next and ships with it), with WhatsApp replies as a separate Backlog slice; favourite outbound messaging needs a locked-phone/no-notification feasibility test; PR-A (`router-v1-chat-logging` done)
   - BLE hardening (`heartbeat-retry-suppression`, `heartbeat-counter-echo-verify`, `mic-right-side-only-spike`) — Low priority, Next; small targeted fixes from comparison; PR-C

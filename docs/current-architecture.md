@@ -29,7 +29,7 @@ Only one mode is active at a time.
 Current implementation state:
 - `glance`: implemented and actively used
 - `capture`: implemented for practical on-device use, still needs ongoing validation
-- `navigate`: implemented using the structured `0x0a` navigation card protocol — 108-packet interleaved bootstrap, dynamic TRIP_STATUS and MAP_OVERVIEW, 1-second SYNC poller; working for walking navigation, still open to incremental tuning
+- `navigate`: implemented on the structured `0x0a` navigation card via `NavCardSession` (boot, master-last maps, 5 s master SYNC keepalive with echo liveness, ARRIVED/EXIT). Main path: the walking navigator (Google Maps share, `cartographer` route bundles). Fallback: Google Maps notifications with blank maps and a built-in arrow
 - `chat`: implemented as a practical v1 voice loop
 
 ## Android build baseline
@@ -174,41 +174,46 @@ current and legacy formats:
 Both are parsed transparently; no migration is required for existing files.
 
 ### Navigate
+- [lib/services/nav_card_session.dart](../lib/services/nav_card_session.dart)
+- [lib/services/walknav/](../lib/services/walknav/)
 - [lib/services/navigate_service.dart](../lib/services/navigate_service.dart)
-- [lib/services/nav_icon_generator.dart](../lib/services/nav_icon_generator.dart)
+- [lib/services/nav_manoeuvre.dart](../lib/services/nav_manoeuvre.dart)
 - [lib/services/navigate_bitmap_service.dart](../lib/services/navigate_bitmap_service.dart)
 
 Owns:
-- latest maps-derived guidance model
-- suppression / prioritisation rules relative to Glance
-- **uses the structured `0x0a` navigation card protocol**. The bootstrap
-  path replays 108 captured official-app packets through
-  [Proto.sendNavBootstrap](../lib/services/proto.dart) using
-  interleaved per-leg fire-and-forget transport, with two dynamic
-  replacements:
-  1. `TRIP_STATUS` — rebuilt from live Google Maps notification fields
-  2. `MAP_OVERVIEW` — direction icon scraped from the Google Maps
-     notification PNG (`navIconPngBase64`), decoded to 136×136 monochrome
-     via alpha threshold, RLE-encoded, padded to 13 bands. Falls back to
-     geometric arrow generation (`ManoeuvreType` enum) if PNG unavailable,
-     then to captured data. See
-     [nav_icon_generator.dart](../lib/services/nav_icon_generator.dart).
-- captured `PANORAMIC_MAP` bytes remain unchanged (static route map)
-- owns the real 1-second `0x0a` SYNC poller for active Navigate sessions and
-  the post-bootstrap update-mode switch (`fullLifecycleUpdate` vs
-  `tripStatusOnlyUpdate`)
+- `NavCardSession` is the single owner of the glasses-side `0x0a` lifecycle,
+  shared by both paths: boot (`0x18`, INIT to both lenses, maps sent master
+  last), `swapMaps`, `sendTripStatus`, `arrived`, `exit`, `drop`, the
+  master-only 5 s SYNC keepalive, and liveness (two consecutive "not running"
+  SYNC echoes call the owner's `onLost` to re-boot). It also supplies blank
+  maps (RLE-zero mini-map, raw-zero panoramic). Protocol detail:
+  [protocol-reference.md](protocol-reference.md) § "Navigation card: `0x0a`"
+- `walknav/` is the walking navigator (main path): pure cores (geometry,
+  bundle, manoeuvre filter, route tracker, tile selector, `0x0a` wire) plus
+  `walk_navigator_service.dart`, which drives `NavCardSession` and re-boots
+  the card on the tile for the current progress after a BLE reconnect or lost
+  liveness
+- `NavigateService` is the Google Maps notification fallback: latest
+  maps-derived guidance model, suppression / prioritisation rules relative to
+  Glance, boots `NavCardSession` with blank maps, then sends TRIP_STATUS only
+  (built by `NavWire.tripStatus`, firmware built-in arrow from
+  `classifyManoeuvre`, marker centred at (244, 68)); no per-update SYNC and no
+  poller. `resyncAfterReconnect()` is called from `CompanionController`
+  transport recovery. No ARRIVED on this path; Google Maps removing its
+  notification ends the session with EXIT
+- [nav_manoeuvre.dart](../lib/services/nav_manoeuvre.dart) keeps only
+  `ManoeuvreType` and `classifyManoeuvre()`, which parses `navIconSource` and
+  instruction text (turnDistance + roadName) for direction keywords and maps
+  to firmware `DirectionTurn` bytes. The replay data, bootstrap and generated
+  `MAP_OVERVIEW` icon code were removed (phase 6)
 - the BMP pipeline ([NavigateBitmapService](../lib/services/navigate_bitmap_service.dart))
   is preserved in the codebase but no longer called from the main Navigate
   render path
-- `DirectionTurn` byte in TRIP_STATUS is classified by `classifyManoeuvre()`
-  which parses both `navIconSource` and instruction text (turnDistance +
-  roadName) for direction keywords. `ManoeuvreType` enum maps to firmware
-  byte values 0x01–0x0b.
 - `NavigateService.showIdlePrompt()` is suppressed — no text is sent to the
   glasses on mode entry. This avoids a race condition where `Proto.exit()`
-  (needed to clean up idle text) completed mid-replay, blanking the display.
+  (needed to clean up idle text) completed mid-boot, blanking the display.
   The glasses stay on whatever was shown before until the first Maps
-  notification triggers the full nav card bootstrap.
+  notification boots the nav card.
 
 ### QuickNote
 
@@ -548,9 +553,9 @@ Current mode-entry idle displays:
 - `chat`: `Chat ready` / `Tilt up to talk`
 - `navigate`: "Navigate" title card (~500 ms, via `Proto.showTitleCard`) on mode entry, **gated
   on no nav instruction currently held**; if an instruction is in hand the title card is suppressed
-  to avoid a clear sequence landing mid-bootstrap and cancelling the nav session start. The idle
+  to avoid a clear sequence landing mid-boot and cancelling the nav session start. The idle
   prompt ("Open Google Maps to start navigation") is never sent on mode entry; the first Maps
-  notification triggers the full nav card bootstrap.
+  notification boots the nav card.
 - `glance`: "Glance" title card (~500 ms, via `Proto.showTitleCard`) on mode entry, always shown
 
 Glance assistant:
@@ -626,8 +631,7 @@ Heartbeat handling:
   missed heartbeats (`_heartbeatWarningAge = 20 s` stale signal)
 - a stale leg can be treated as degraded even before a full disconnect is
   reported
-- heartbeats are pauseable (depth-counted) to avoid degraded-leg noise during
-  the Navigate 108-packet bootstrap burst
+- heartbeats are pauseable (depth-counted); the Navigate replay burst that used this was removed in phase 6, so nothing currently calls it
 
 Reconnect handling (per-leg):
 - degraded legs trigger bounded reconnect attempts through the native bridge
@@ -651,15 +655,13 @@ Reconnect display recovery:
 - on transport recovery after a real disconnect (`_hasEverConnectedThisSession` is `true`), `CompanionController.handleTransportRecovered` runs
 - "Reconnected" is flashed for ~1 s via `Proto.showTitleCard`, then `0x50 + 0x18` force-clears the display
 - content is then conditionally resumed in priority order: Capture recording HUD → Navigate refresh (only if Navigate was visible with an instruction held) → Call HUD → blank
+- exception: while a nav card is live (walking navigator active, or the fallback visible with an instruction held), `handleTransportRecovered` skips the "Reconnected" card and force-clear and instead calls that path's `resyncAfterReconnect()`, which re-boots the card
 - the `_hasEverConnectedThisSession` flag is set on the first successful leg connect and cleared only on process exit; it ensures the flash and force-clear do not fire on the initial cold-connect at app startup
 - the previous `TextService.resendLastText` / `FeaturesServices.resendLastBmpData` resync path has been removed; stale content replay on reconnect was the wrong policy
 
 Navigate-specific transport protection:
 - `BleManager` can temporarily suspend `0x25` heartbeats
-- the current Navigate bootstrap replay uses this during the 108-packet
-  interleaved burst, then resumes heartbeats afterwards
-- this is specifically to avoid degraded-leg noise and false transport
-  failures during the large fire-and-forget bootstrap
+- the Navigate replay that used this was removed in phase 6; `NavCardSession` does not suspend heartbeats (check `docs/current-worklist.md` `suspendHeartbeats` item before relying on it)
 
 ### Auto-reconnect (full session)
 
