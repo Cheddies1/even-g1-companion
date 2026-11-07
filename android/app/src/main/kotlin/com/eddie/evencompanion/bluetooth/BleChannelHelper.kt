@@ -84,6 +84,14 @@ object BleChannelHelper {
                     com.eddie.evencompanion.service.NavBridge.detach()
                 }
             })
+        EventChannel(binaryMessenger, com.eddie.evencompanion.service.RegionSync.EVENT_REGIONS)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventSink?) =
+                    com.eddie.evencompanion.service.RegionSync.attach(events)
+                override fun onCancel(arguments: Any?) {
+                    com.eddie.evencompanion.service.RegionSync.detach()
+                }
+            })
     }
 
     /**
@@ -153,6 +161,31 @@ class BleMethodChannel(
                 com.eddie.evencompanion.service.NavLocationService.stop(context)
                 result.success(true)
             }
+            "regionJobWatch" -> {
+                com.eddie.evencompanion.service.RegionSync.watch(
+                    context.applicationContext,
+                    call.argument<String>("baseUrl")!!,
+                    call.argument<String>("jobId")!!,
+                    call.argument<String>("regionId")!!,
+                    call.argument<String>("name") ?: call.argument<String>("regionId")!!,
+                )
+                result.success(true)
+            }
+            "regionJobsPending" -> result.success(
+                com.eddie.evencompanion.service.RegionSync.pendingForDart(context.applicationContext)
+            )
+            "regionOfferSync" -> {
+                com.eddie.evencompanion.service.RegionSync.offerSync(
+                    context.applicationContext,
+                    call.argument<String>("baseUrl")!!,
+                    call.argument<Double>("lat")!!,
+                    call.argument<Double>("lon")!!,
+                    call.argument<String>("name"),
+                    call.argument<String>("text") ?: "This walk is outside your synced areas.",
+                )
+                result.success(true)
+            }
+            "regionCurrentFix" -> com.eddie.evencompanion.service.RegionSync.currentFix(context, result)
             "isNotificationAccessEnabled" -> isNotificationAccessEnabled(call, result)
             "openNotificationAccessSettings" -> openNotificationAccessSettings(call, result)
             "startCompanionService" -> startCompanionService(call, result)

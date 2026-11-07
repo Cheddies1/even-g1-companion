@@ -22,6 +22,21 @@ class MapsShare {
     return m.group(0)!.replaceAll(RegExp(r'[)\].,;]+$'), '');
   }
 
+  /// The place name from shared text: its first line that is neither a URL
+  /// nor a coordinate pair, capped at [maxLength] characters. Null when the
+  /// share is only a link or a dropped pin.
+  static String? placeName(String text, {int maxLength = 40}) {
+    for (final raw in text.split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty || _pair.hasMatch(line)) continue;
+      if (_urlPattern.hasMatch(line)) continue;
+      return line.length <= maxLength
+          ? line
+          : line.substring(0, maxLength).trimRight();
+    }
+    return null;
+  }
+
   /// A plain `lat,lon` anywhere in the shared text (e.g. a dropped pin).
   static LatLon? coordinatesFromText(String text) {
     for (final line in text.split('\n')) {

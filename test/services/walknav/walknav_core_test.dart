@@ -254,6 +254,17 @@ void main() {
       expect(MapsShare.needsResolving('https://maps.app.goo.gl/AbC123'), isTrue);
     });
 
+    test('takes the place name from the first plain line', () {
+      expect(
+          MapsShare.placeName(
+              'Windsor Castle\nWindsor SL4 1NJ\nhttps://maps.app.goo.gl/AbC123'),
+          'Windsor Castle');
+      expect(MapsShare.placeName('\n  A Pub  \nhttps://x.y/z'), 'A Pub');
+      expect(MapsShare.placeName('https://maps.app.goo.gl/AbC123'), isNull);
+      expect(MapsShare.placeName('51.48, -0.60\nhttps://x.y/z'), isNull);
+      expect(MapsShare.placeName('${'x' * 45} ', maxLength: 40), 'x' * 40);
+    });
+
     test('prefers the place pin over the viewport centre', () {
       const url = 'https://www.google.com/maps/place/A+Pub/@50.10,0.20,17z/'
           'data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d50.1234!4d0.2345!16s';

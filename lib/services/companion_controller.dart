@@ -14,6 +14,7 @@ import 'package:even_companion/services/notification_settings_store.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 import 'package:even_companion/services/walknav/nav_geo.dart';
+import 'package:even_companion/services/walknav/region_service.dart';
 import 'package:even_companion/services/walknav/walk_navigator_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -98,6 +99,8 @@ class CompanionController extends ChangeNotifier {
         notifyListeners();
       }
       ..init();
+    // Early, so a debug REGION_SYNC broadcast works without opening the page.
+    unawaited(RegionService.get.init());
     await _refreshNotificationAccess();
     await _hydrateNotifications();
     _notificationSubscription = _notificationChannel

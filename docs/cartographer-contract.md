@@ -1,10 +1,10 @@
 # Cartographer HTTP contract v1
 
-Running on deepthought, 2026-11-06. Base URL: `https://deepthought.tail082c0b.ts.net:9446`. HTTPS is Tailscale Serve, tailnet only, with no application authentication. No Funnel or LAN listener. The API binds loopback port 8766; its separate Valhalla engine binds loopback port 8003. Operational runbook and implementation: [cartographer](../../cartographer/README.md). Display protocol remains [FINDINGS-nav-marker-tiles.md](FINDINGS-nav-marker-tiles.md).
+Running on deepthought, service 1.2.0, 2026-11-07. Base URL: `https://deepthought.tail082c0b.ts.net:9446`. HTTPS is Tailscale Serve, tailnet only, with no application authentication. No Funnel or LAN listener. The API binds loopback port 8766; each prepared region has a separate Valhalla engine on loopback (home 8003; other ports allocated per region). Operational runbook and implementation: [cartographer](../../cartographer/README.md). Display protocol remains [FINDINGS-nav-marker-tiles.md](FINDINGS-nav-marker-tiles.md).
 
 ## Request and response
 
-`POST /v1/route`, `Content-Type: application/json`, body 1..4096 bytes. Only origin, destination and optional region_id are accepted. Coordinates must be finite numeric WGS84 degrees within the home bbox. Equal endpoints are rejected. Default region_id is `home`.
+`POST /v1/route`, `Content-Type: application/json`, body 1..4096 bytes. Only origin, destination and optional region_id are accepted. Coordinates must be finite numeric WGS84 degrees. Equal endpoints are rejected. An explicit region_id selects that region and requires both endpoints inside its bbox. Omit region_id to auto-select the smallest spherical bbox area containing both endpoints; equal areas use lexicographic region_id as a deterministic tie-break. No matching region returns HTTP 404 `no_region`. The phone may continue sending `home`.
 
 ```json
 {"origin":{"lat":51.5122017,"lon":-0.3405805},"destination":{"lat":51.5067295,"lon":-0.3374416},"region_id":"home"}
@@ -15,8 +15,8 @@ The response is UTF-8 JSON. Every coordinate pair in `polyline` is `[latitude,lo
 | Field | Type and meaning |
 |---|---|
 | bundle_id | SHA-256 of canonical request, service version and data identity; phone cache key |
-| version | Bundle schema/behaviour semantic version, currently `1.0.0` |
-| region_id | `home` |
+| version | Bundle schema/behaviour semantic version, currently `1.2.0` |
+| region_id | ID of the selected prepared region |
 | data_id | SHA-256 of geometry cache bytes followed by routing extract bytes |
 | polyline | Ordered array of numeric `[lat,lon]` pairs, snapped to pedestrian network |
 | total_m | Number, length of polyline |
@@ -34,7 +34,7 @@ Abbreviated example, with bitmap data and hashes truncated and most tiles/coordi
 ```json
 {
   "bundle_id":"08c3546b8b5fea789b8cfb4ef15dbb96e7a558d37147726fd6973df7c606824f",
-  "version":"1.0.0","region_id":"home","data_id":"...",
+  "version":"1.1.0","region_id":"home","data_id":"...",
   "coordinate_order":"lat,lon",
   "polyline":[[51.512202,-0.340581],"..."],"total_m":723.5828357226798,
   "maneuvers":[{"progress_m":83.76159090349222,"instruction":"Turn left onto Station Road.","street_name":"Station Road","direction":4,"engine_type":15}],
@@ -106,24 +106,37 @@ Versioning: `/v1` fixes the schema and bitmap contract. Additive fields may incr
 
 ## Regions, operations and failures
 
-`GET /v1/regions` returns `{"regions":[...]}`. Region `home` maps to `data/ealing/` in the service repository, with its own manifest: region_id, name (`Hanwell / Ealing`), centre (51.512,-0.338), bbox_wsen (-0.410,51.467,-0.266,51.557), created and last_used UTC timestamps, pinned true, and measured size_bytes. last_used updates after successful creation or cache retrieval. Home is the sole configured region. Directories/manifests allow later additions; no synchronisation or region download API is built. The current engine and routing adapter must be extended to enable another region.
+`GET /v1/regions` returns `{"regions":[...]}` from published `data/<dir>/manifest.json` files. Each has region_id, name, centre (`lat`,`lon`), bbox_wsen (W,S,E,N), created, last_used (UTC, initially null), pinned, routing_port and measured size_bytes (extract, geometry_cache, routing_extract, routing_graph, routing_config, total). Successful route creation/cache retrieval updates only the selected region's last_used. Each region has its own graph/container; adding/deleting one never rebuilds another. Home stays pinned on port 8003. Both endpoints and the snapped route must remain within the selected bbox. There is no handedness field; the clockwise arrow adapter remains unchanged.
+
+`POST /v1/regions` accepts `{lat,lon,name?,pinned?}` and returns HTTP 202 `{job_id,region_id}`. pinned defaults false. Coordinates must be finite numeric WGS84 degrees; names non-blank strings of at most 100 characters; pins boolean; unknown fields invalid. The fixed 5 km radius produces a bbox envelope, approximately 10 x 10 km. Envelopes beyond +/-85 latitude or crossing the antimeridian are rejected. IDs are unique name/coordinate slugs with a suffix; treat them as opaque. A centre already inside a published region returns 409 region_exists. Envelope overlap is allowed otherwise. Only one build runs at a time; another returns 409 build_busy, without queuing. A 202 is not readiness.
+
+`GET /v1/regions/jobs/{job_id}` returns job_id, region_id, state (`queued|running|done|failed`), created and optional stage, reason, finished, timings_s and source metadata. Stages are source_download, geometry, routing_extract, graph_and_engine. Jobs persist indefinitely under data/jobs, including after region deletion. queued -> running -> done/failed; queued can fail during launch/restart. The phone must persist job_id, resume polling after hours/disconnection and notify on done/failed. A job may finish between polls. Failure reasons are diagnostic strings, not a fixed enum. A lost POST response does not make resubmission idempotent: check regions before retrying. Region_exists identifies coverage via GET regions; build_busy means retry later. Polling has no long-held request and needs no connection to remain open.
+
+Builds use separate systemd units (4 GiB, two-hour deadline), never the API's serial worker/512 MiB cgroup. Geofabrik's index selects the smallest polygon containing the centre; a border envelope can extend beyond that source's coverage. The full source is downloaded, both extraction passes run with disk-backed node indexes, then a new engine starts on a distinct loopback port. Atomic manifest publication happens only after geometry, graph and engine readiness; created is set and last_used null. Engines retain their 2 GiB Docker ceiling. Failed/killed workers are reconciled within roughly 10 seconds: stop/remove their engine, remove partial data/source and release the port before marking failed. API restart stops unfinished builds and marks api_restarted; an already published manifest wins and marks done. A cleanup failure keeps the job active for retry. No other region is touched.
+
+`PATCH /v1/regions/{id}` accepts `{pinned?,name?}` and returns the updated manifest (200), written with file fsync, atomic replace and directory fsync. It leaves last_used unchanged. `DELETE /v1/regions/{id}` returns 200 `{deleted:id}` after removing its engine/container, data and cached bundles. Pinned regions return 409 pinned: unpin first. Interrupted deletion resumes from a durable marker. Bundles already downloaded to the phone remain valid.
+
+Unpinned regions expire when last_used (created if null) is older than N days. N defaults to 30 via CARTOGRAPHER_EXPIRY_DAYS in the API systemd environment. Sweep runs at startup and hourly; it uses the same deletion path. Pin to preserve a region. Full-source/partial downloads under data/sources/job_id are removed after success/failure/recovery. The manually retained London source stays. Regional bundle caches are reclaimed on deletion/expiry; no independent cache age/size eviction. Job records remain.
+
+Measured full-source build on 2026-11-07: Geofabrik now supplies a 45,102,584 B Praha extract, smaller than Czech country data. A real 5 km-radius Prague build took download/index 2.66 s, geometry 8.24 s, routing extraction 6.16 s, graph/engine readiness 8.12 s, total 25.55 s including publication; first cold run 23.92 s. This supports the urban radius, not country-source latency. Timeouts: download 3600 s, each extraction 2400 s, engine readiness 600 s, overriding unit deadline 7200 s. The phone must poll the job rather than hold POST open or assume a 30-second completion guarantee.
 
 | HTTP | JSON error / meaning |
 |---|---|
-| 400 | invalid_route: malformed JSON, missing/non-finite coordinates, equal/snapped-too-close points, outside bbox, route leaves prepared bbox, or cannot fit tiles |
-| 404 | unknown_region, or not_found for an unknown path |
+| 400 | invalid_request: region mutation input/JSON invalid; invalid_route: malformed route request, invalid/equal coordinates, outside bbox, route leaves bbox or tiles cannot fit |
+| 404 | unknown_region: explicit route/metadata/delete ID absent; no_region: no bbox contains both route endpoints; unknown_job: job ID absent/invalid; not_found: unknown path |
+| 409 | region_exists: centre covered; build_busy: one build active; pinned: unpin before deletion |
 | 413 | body_size: absent/zero Content-Length or more than 4096 bytes |
-| 422 | no_walkable_route: engine rejects request, including unsnappable/unconnected endpoints |
-| 503 | routing_unavailable: engine timeout, connection failure or engine server error |
-| 500 | bundle_failed: unexpected render/cache/storage failure; details stay in journal |
+| 422 | no_walkable_route: engine rejects unconnected/unsnappable route |
+| 503 | routing_unavailable: engine timeout/connection/server failure; build_unavailable: worker launch failed; no_port: allocation range exhausted |
+| 500 | bundle_failed or region_operation_failed: storage/Docker/unexpected failure; details stay in journal |
 
-`GET /health` (also `/`) returns service, version, routing ready with HTTP 200 when the engine status responds, else 503. The API has one serial request worker; rendering delays health and other requests briefly. Cache has no eviction in v1. User-unit memory limit is 512 MiB; engine Docker memory limit 2 GiB. Units, pinned image and recovery commands are in the component runbook.
+`GET /health` (also `/`) returns service, version, routing ready with HTTP 200 when every published engine responds, else 503. The serial API worker can briefly delay health/polls during route rendering or deletion. It retains only the latest region geometry. Measured live acceptance: home still 723.58 m / six tiles, Richmond still 629.37 m / five tiles before deliberate expiry, Prague 674.81 m / five tiles. All passed saved-bundle offline validation. HTTP pin/rename/unpin/delete, restart failure recovery, build_busy and startup expiry of backdated Richmond passed. Prague was rebuilt after delete; Richmond is intentionally absent. The runbook owns units, recovery and operational limits.
 
 ## Engine choice and measured evidence
 
 Valhalla `3.9.1-8e84136b2`, pinned scripted-image digest `sha256:4e77581226c7b6f5923372b46b0a6203e857ca828d4dfa5cb817d09949d927f3`. Chosen for pedestrian access handling and explicit footway/pavement weighting, keeping mapped cut-throughs and crossings in the network. [Pedestrian costing source](https://github.com/valhalla/valhalla/blob/master/src/sif/pedestriancost.cc) documents these factors. The service uses pedestrian costing with walkway_factor and sidewalk_factor 0.9. GraphHopper was not benchmarked head-to-head; this choice is capability-based, backed by the real local route rather than a claim of universal superiority.
 
-Routing preparation retains all highway ways/areas intersecting the bbox envelope, referenced tagged nodes and restriction relations; it does not feed the simplified display geometry into routing. Complete ways can extend outside the envelope, but v1 rejects routes whose shape leaves it. Admin/timezone, elevation and transit data are disabled. UK roundabout handedness is explicit in the adapter. Gate B display context remains sparse even when the route uses pavement/crossing geometry. Mapped access and crossing data can be incomplete; no surveyed crossing or step-free guarantee.
+Routing preparation retains all highway ways/areas intersecting the bbox envelope, referenced tagged nodes and restriction relations; it does not feed the simplified display geometry into routing. Complete ways can extend outside the envelope, but v1 rejects routes whose shape leaves it. Admin/timezone, elevation and transit data are disabled. The existing clockwise roundabout adapter is unchanged; per-region handedness was excluded from this change. Gate B display context remains sparse even when the route uses pavement/crossing geometry. Mapped access and crossing data can be incomplete; no surveyed crossing or step-free guarantee.
 
 Measured home region file bytes on 2026-11-06:
 
@@ -139,3 +152,16 @@ Measured home region file bytes on 2026-11-06:
 Region payload excludes the tiny manifest, directory metadata, shared source download, Python environment, Docker image and bundle cache. Retained Greater London source PBF is 130,061,734 B shared preparation input, not a required regional runtime dependency.
 
 Acceptance: public Campbell Road / Golden Manor junction to the Boston Road POI from the request above. Engine route 723.58 m; six tiles, twelve maps; saved JSON 159,282 B. Walkway and crosswalk manoeuvres appear in real engine output. The bundle was fetched through the HTTPS tailnet endpoint, then reloaded from disk with socket creation disabled. Extended `validate.py` checked every wire/raw size and SHA-256, complete overlapping coverage, and all route vertices plus one-metre marker samples inside x 6..482 / y 6..130 without applying a clamp. Original gate B fixture validation and four service invariant tests also passed. Request and offline evidence are in the service's `acceptance/` directory; downloaded JSON and caches are gitignored.
+
+Measured Richmond test region file bytes on 2026-11-07 (same payload exclusions as home):
+
+| Component | Bytes |
+|---|---:|
+| Renderer highway extract | 164,065 |
+| Geometry cache | 863,696 |
+| Routing extract | 173,509 |
+| Routing graph (tar plus loose graph tiles) | 1,791,736 |
+| Routing config/hash files | 9,613 |
+| Total region payload | 3,002,619 (2.86 MiB) |
+
+Richmond uses the retained Greater London source with no extra download. HTTPS acceptance from (51.4632,-0.3013) to (51.4595,-0.3060), omitting region_id, returned `richmond-test`: 629.37 m, five tiles, ten maps, 136,159 B. Both Richmond and home passed saved-bundle offline validation under service 1.1.0. Explicit and auto-selection produced the same cached bundle per region, distinct data IDs across regions, and last_used updated only on the selected region. HTTP checks confirmed unknown_region=404, no_region=404 and explicit endpoints outside bbox=400. Home remains 723.58 m / six tiles / 159,282 B. Six service unit tests and all twelve original fixture binaries/previews passed.

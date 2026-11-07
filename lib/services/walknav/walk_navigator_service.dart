@@ -11,6 +11,8 @@ import 'package:even_companion/services/walknav/maneuver_plan.dart';
 import 'package:even_companion/services/walknav/maps_share.dart';
 import 'package:even_companion/services/walknav/nav_bundle.dart';
 import 'package:even_companion/services/walknav/nav_geo.dart';
+import 'package:even_companion/services/walknav/region_model.dart';
+import 'package:even_companion/services/walknav/region_service.dart';
 import 'package:even_companion/services/walknav/route_tracker.dart';
 import 'package:even_companion/services/walknav/tile_selector.dart';
 import 'package:flutter/services.dart';
@@ -55,6 +57,10 @@ class WalkNavigatorService {
   StreamSubscription<dynamic>? _events;
   WalkTripState _state = WalkTripState.idle;
   LatLon? _destination;
+
+  /// Place name of the last requested destination (share text or debug
+  /// `--es name`), used to name a region built from the sync offer.
+  String? _destinationName;
   NavFix? _lastFix;
   NavFix? _bestOriginFix;
   DateTime? _locatingSince;
@@ -118,6 +124,8 @@ class WalkNavigatorService {
           duration: const Duration(seconds: 2));
       return;
     }
+    _destinationName = MapsShare.placeName(text);
+    if (!await _checkCoverage(dest)) return;
     await onTripRequested?.call(dest, speed: 1.0);
   }
 
@@ -133,6 +141,8 @@ class WalkNavigatorService {
       AppLog.error('debug trip needs --es dest "lat,lon"', tag: _tag);
       return;
     }
+    _destinationName = e['name'] as String?;
+    if (!await _checkCoverage(dest)) return;
     await onTripRequested?.call(
       dest,
       origin: parse(e['origin']),
@@ -220,13 +230,29 @@ class WalkNavigatorService {
         return; // stopped while waiting for the first fix
       }
     }
+    if (!await _checkCoverage(destination, origin: from)) return;
+    if (!isActive) return; // stopped while checking
     _setState(WalkTripState.routing);
     await Proto.showTitleCard('Walk: routing...',
         duration: const Duration(milliseconds: 800));
     final bundle = await _fetchBundle(from, destination);
     if (!isActive) return; // stopped while routing
     if (bundle == null) {
-      await _fail('Walk: no route');
+      if (_lastRouteError == 'no_region') {
+        // The cached list said covered but the server disagrees: refresh and
+        // offer a sync where the fresh list says one is needed.
+        AppLog.error('server says no_region', tag: _tag);
+        final c = tripCoverage(await RegionService.get.regionsForTrip(),
+            destLat: destination.lat,
+            destLon: destination.lon,
+            originLat: from.lat,
+            originLon: from.lon);
+        await _offerSync(c.syncLat ?? destination.lat,
+            c.syncLon ?? destination.lon,
+            atDestination: c.syncLat == null || c.syncLat == destination.lat);
+      } else {
+        await _fail('Walk: no route');
+      }
       return;
     }
     _adoptBundle(bundle);
@@ -448,11 +474,82 @@ class WalkNavigatorService {
     }
   }
 
+  // ---- regions (plan region-sync, phase 4) -------------------------------------
+
+  /// False, with the user told why, when the region list says this walk
+  /// cannot route. Without [origin] (at share time, before any GPS) only the
+  /// destination is judged. No cached list lets the server decide.
+  ///
+  /// The route request still omits `region_id`: the server auto-selects with
+  /// the same smallest-bbox rule, so a stale phone list cannot pin a trip to
+  /// the wrong region, and its `no_region` is handled after the request.
+  Future<bool> _checkCoverage(LatLon dest, {LatLon? origin}) async {
+    final c = tripCoverage(await RegionService.get.regionsForTrip(),
+        destLat: dest.lat,
+        destLon: dest.lon,
+        originLat: origin?.lat,
+        originLon: origin?.lon);
+    switch (c.kind) {
+      case CoverageKind.covered:
+        AppLog.info('walk inside region ${c.region!.id}', tag: _tag);
+        return true;
+      case CoverageKind.unknown:
+        AppLog.info('no region list; the server picks', tag: _tag);
+        return true;
+      case CoverageKind.split:
+        AppLog.error('walk spans two regions', tag: _tag);
+        await _tell('Walk: spans two areas');
+        return false;
+      case CoverageKind.uncovered:
+        await _offerSync(c.syncLat!, c.syncLon!,
+            atDestination: c.syncLat == dest.lat && c.syncLon == dest.lon);
+        return false;
+    }
+  }
+
+  /// Phone notification "Sync this area?" plus a glasses card. While a build
+  /// is still running, says so instead of offering a second one.
+  Future<void> _offerSync(double lat, double lon,
+      {required bool atDestination}) async {
+    final regions = RegionService.get;
+    if (regions.pendingJobs.isNotEmpty) {
+      AppLog.info('outside regions; a build is already running', tag: _tag);
+      await _tell('Walk: area still syncing');
+      return;
+    }
+    AppLog.info(
+        'outside regions; offering a sync at the '
+        '${atDestination ? 'destination' : 'origin'}',
+        tag: _tag);
+    await regions.offerSync(
+        lat,
+        lon,
+        atDestination ? _destinationName : null,
+        atDestination
+            ? 'This walk ends outside your synced areas. Sync about 5 km '
+                'around the destination, then share the walk again.'
+            : 'You are outside your synced areas. Sync about 5 km around '
+                'where you are, then share the walk again.');
+    await _tell('Walk: outside synced areas');
+  }
+
+  /// Glasses card; ends the trip first if one is starting.
+  Future<void> _tell(String message) async {
+    if (isActive) {
+      await _fail(message);
+    } else {
+      await Proto.showTitleCard(message, duration: const Duration(seconds: 2));
+    }
+  }
+
+  /// Cartographer error code of the last failed route request, if any.
+  String? _lastRouteError;
+
   Future<NavBundle?> _fetchBundle(LatLon from, LatLon to) async {
+    _lastRouteError = null;
     final body = jsonEncode({
       'origin': {'lat': from.lat, 'lon': from.lon},
       'destination': {'lat': to.lat, 'lon': to.lon},
-      'region_id': 'home',
     });
     final sw = Stopwatch()..start();
     try {
@@ -469,6 +566,8 @@ class WalkNavigatorService {
         ),
       );
       if (r.statusCode != 200 || r.data == null) {
+        _lastRouteError =
+            RegionApiError.fromResponse(r.statusCode ?? 0, r.data).code;
         AppLog.error('route request ${r.statusCode}: ${r.data}', tag: _tag);
         return null;
       }

@@ -224,7 +224,7 @@ map labels, voice destination entry, coverage beyond the home area, frequent rer
   firmware bitmaps: roundabout cw/ccw pairs 0x0c-0x1d, merge L/R, ramp R/L, fork R/L. UK
   roundabouts use `cw` (odd values). Walking needs 0x02-0x0a, 0x22/0x23 and the `cw` set.
 
-## Follow-on after v1: region sync (own plan when v1 ships)
+## Follow-on after v1: region sync (now planned in [region-sync.md](region-sync.md))
 Eddie's design, 2026-11-06:
 - A **"Sync current location"** action in the app sends the phone's GPS position to cartographer,
   which builds a region (~5 km radius) on deepthought: extract, routing graph, geometry cache.

@@ -16,6 +16,7 @@ import 'package:even_companion/views/chat_transcript_page.dart';
 import 'package:even_companion/views/features_page.dart';
 import 'package:even_companion/views/notes_page.dart';
 import 'package:even_companion/views/recordings_page.dart';
+import 'package:even_companion/views/regions_page.dart';
 import 'package:even_companion/views/settings_page.dart';
 import 'package:flutter/material.dart';
 
@@ -765,13 +766,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildRecordingsCard() {
+  Widget _buildRecordingsCard() => _buildLinkCard(
+        title: 'Recordings',
+        subtitle: 'Captured audio from glasses and phone',
+        page: () => const RecordingsPage(),
+      );
+
+  /// The Navigate area: walking regions synced on cartographer.
+  Widget _buildRegionsCard() => _buildLinkCard(
+        title: 'Walking regions',
+        subtitle: 'Sync, pin and delete areas for walking navigation',
+        page: () => const RegionsPage(),
+      );
+
+  Widget _buildLinkCard({
+    required String title,
+    required String subtitle,
+    required Widget Function() page,
+  }) {
     return InkWell(
       borderRadius: BorderRadius.circular(18),
       onTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const RecordingsPage()),
+          MaterialPageRoute(builder: (context) => page()),
         );
       },
       child: _buildSectionCard(
@@ -782,12 +800,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Recordings',
+                    title,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Captured audio from glasses and phone',
+                    subtitle,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: const Color(0xFF9AB7C8),
                         ),
@@ -878,6 +896,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          _buildRegionsCard(),
           if (BleManager.get().isConnected) ...[
             const SizedBox(height: 16),
             _buildDisplaySection(),

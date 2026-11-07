@@ -54,6 +54,10 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- "Sync this area" action on the walk-outside-regions offer (plan region-sync, phase 4). -->
+        <receiver
+            android:name=".service.RegionOfferReceiver"
+            android:exported="false" />
         <service
             android:name=".service.GpsTraceService"
             android:enabled="true"

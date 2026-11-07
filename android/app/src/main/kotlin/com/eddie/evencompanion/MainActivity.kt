@@ -22,6 +22,8 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
         BlePermissionUtil.ensureNotificationPermission(this)
         GpsTraceService.registerDebugReceiver(this)
         com.eddie.evencompanion.service.NavBridge.registerDebugReceiver(this)
+        com.eddie.evencompanion.service.RegionSync.registerDebugReceiver(this)
+        com.eddie.evencompanion.service.RegionSync.resumeAll(applicationContext)
         com.eddie.evencompanion.service.NavBridge.handleIntent(intent)
     }
 
