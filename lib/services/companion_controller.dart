@@ -717,7 +717,10 @@ class CompanionController extends ChangeNotifier {
         }
         break;
       case AppMode.capture:
-        if (CaptureService.get.isRecording) {
+        // Idle too: the ready card or save confirmation leaves the display
+        // flag set, and Glance would then refuse Quick Ask as "busy".
+        if (CaptureService.get.isRecording ||
+            CaptureService.get.isDisplayVisible) {
           AppLog.debug(
             '${DateTime.now()} DisplayState: source=ModeSwitchClose service=Capture currentMode=${_activeMode.label}',
           );
