@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Advertised over the Wearable Data Layer so the phone app's WatchBridge
+     knows a watch remote is reachable. The phone advertises evencompanion_phone. -->
+<resources>
+    <string-array name="android_wear_capabilities">
+        <item>evencompanion_watch</item>
+    </string-array>
+</resources>

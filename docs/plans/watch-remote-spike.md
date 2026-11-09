@@ -1,6 +1,6 @@
 # Spike: Galaxy Watch 6 as a remote for the companion
 
-Status: slice 1 (phone side) built, 2026-11-09.
+Status: slices 1-2 built and device-verified, 2026-11-09.
 
 ## Answer
 
@@ -164,6 +164,11 @@ The watch bridge is the same idea from a different source.
    start/stop, refusing a mode switch mid-recording, Quick Ask.
 2. A minimal watch app with mode chips, Record/Stop and prev/next. Install,
    confirm Data Layer routing and acks on the SM-R940.
+   Watch app built 2026-11-09 (`wear/`, Kotlin + Compose for Wear,
+   release build for smooth scrolling): mode chips, Record/Stop with timer,
+   Glance prev/close/next, hold-to-ask. Device-verified on the SM-R940,
+   including a spoken Quick Ask, after fixing the silent-mic trap (see
+   `docs/protocol-reference.md`, `0x0E`).
 3. State mirror + Ongoing Activity for recording.
 4. Hold-to-ask, then the Tile.
 
