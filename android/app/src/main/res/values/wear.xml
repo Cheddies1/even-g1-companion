@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wearable Data Layer capability, so the watch remote can find this phone.
+     The watch app advertises evencompanion_watch in return (WatchBridge). -->
+<resources>
+    <string-array name="android_wear_capabilities">
+        <item>evencompanion_phone</item>
+    </string-array>
+</resources>

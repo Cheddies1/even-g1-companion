@@ -66,6 +66,11 @@ class GlanceService {
       !_isIdleSurfaceActive &&
       Proto.isTapSurfaceOpen;
   int get notificationCount => _carousel.length;
+  int get carouselIndex => _carousel.currentIndex;
+
+  /// The notification on the glasses, or null when hidden or on the end card.
+  CompanionNotification? get currentNotification =>
+      _isVisible ? _carousel.current : null;
   bool get isInActiveRecall => _isVisible;
 
   List<CompanionNotification> get notifications =>

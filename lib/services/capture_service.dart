@@ -39,6 +39,7 @@ class CaptureService {
   bool get isRecording => _isRecording;
   bool get isDisplayVisible => _isDisplayVisible;
   String? get lastSavedFileName => _lastSavedFileName;
+  DateTime? get recordingStartedAt => _recordingStartedAt;
 
   void markDisplayVisible({
     required bool value,

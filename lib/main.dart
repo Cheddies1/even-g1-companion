@@ -5,6 +5,7 @@ import 'package:even_companion/services/app_settings_store.dart';
 import 'package:even_companion/services/chat_history_store.dart';
 import 'package:even_companion/services/companion_controller.dart';
 import 'package:even_companion/services/notes_store.dart';
+import 'package:even_companion/services/watch/watch_remote_service.dart';
 import 'package:even_companion/views/home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -21,6 +22,7 @@ Future<void> main() async {
     await ChatHistoryStore.get.init();
     await NotesStore.get.init();
     await CompanionController.get.init();
+    WatchRemoteService.get.init();
     AppLog.info('${DateTime.now()} companion init end', tag: 'AppStartup');
   });
 }

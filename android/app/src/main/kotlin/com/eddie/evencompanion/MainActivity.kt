@@ -23,6 +23,7 @@ class MainActivity: FlutterActivity(), EventChannel.StreamHandler {
         GpsTraceService.registerDebugReceiver(this)
         com.eddie.evencompanion.service.NavBridge.registerDebugReceiver(this)
         com.eddie.evencompanion.service.RegionSync.registerDebugReceiver(this)
+        com.eddie.evencompanion.watch.WatchBridge.registerDebugReceiver(this)
         com.eddie.evencompanion.service.RegionSync.resumeAll(applicationContext)
         com.eddie.evencompanion.service.NavBridge.handleIntent(intent)
     }

@@ -126,6 +126,12 @@ Region sync (debug): `am broadcast -p com.eddie.evencompanion -a com.eddie.evenc
 (logcat `[Regions]` and `G1Regions`); open the app once after install. A `name` with spaces needs
 inner quoting over `adb shell`. Debug trips accept `--es name X` to name an offered region.
 
+Watch remote (debug): `am broadcast -p com.eddie.evencompanion -a com.eddie.evencompanion.WATCH_CMD
+--es cmd <mode.set|capture.start|capture.stop|glance.next|glance.prev|glance.close|ask.start|ask.stop|nav.stop|state.request>
+[--es mode glance|capture|navigate|chat]` injects a command through the same path as a real watch
+message; the ack and published state log under `adb logcat -s G1Watch`, the controller under `[Watch]`.
+Plan: [docs/plans/watch-remote-spike.md](docs/plans/watch-remote-spike.md).
+
 GPS trace recorder (debug): `am broadcast ... -a com.eddie.evencompanion.GPS_TRACE --es cmd
 start|stop`, app foregrounded to start; CSVs hold real coordinates, keep them in gitignored
 `logs/gps/`. See [docs/FINDINGS-screen-off-gps.md](docs/FINDINGS-screen-off-gps.md).

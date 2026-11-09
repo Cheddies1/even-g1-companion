@@ -16,6 +16,7 @@ import 'package:even_companion/services/text_service.dart';
 import 'package:even_companion/services/walknav/nav_geo.dart';
 import 'package:even_companion/services/walknav/region_service.dart';
 import 'package:even_companion/services/walknav/walk_navigator_service.dart';
+import 'package:even_companion/services/watch/watch_protocol.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -553,6 +554,123 @@ class CompanionController extends ChangeNotifier {
   Future<void> stopWalkTrip() async {
     await WalkNavigatorService.get.stop(reason: 'stopped from phone');
     notifyListeners();
+  }
+
+  // Remote intents (Galaxy Watch, docs/plans/watch-remote-spike.md). A watch
+  // press is already deliberate, so these act directly instead of replaying
+  // mode-relative F5 gestures with their tilt gates and voice guards. Callers
+  // serialise them (WatchRemoteService); each returns the ack for the watch.
+
+  Future<RemoteResult> remoteCommand(WatchCommand command) async {
+    final result = await _runRemoteCommand(command);
+    AppLog.info(
+      '${DateTime.now()} Remote: ${command.kind.wire}'
+      '${command.mode == null ? '' : ' ${command.mode!.name}'} '
+      'mode=${_activeMode.label} ok=${result.ok} ${result.message}',
+      tag: 'Watch',
+    );
+    if (result.ok && result.message.isNotEmpty) {
+      _statusMessage = result.message;
+    }
+    _logDisplayStateIfChanged('Remote.${command.kind.wire}');
+    notifyListeners();
+    return result;
+  }
+
+  Future<RemoteResult> _runRemoteCommand(WatchCommand command) async {
+    final recording = CaptureService.get.isRecording;
+    switch (command.kind) {
+      case WatchCommandKind.setMode:
+        final mode = command.mode!;
+        // Leaving Capture cancels (discards) a live recording.
+        if (recording && mode != AppMode.capture) {
+          return const RemoteResult.fail('Recording - stop it first');
+        }
+        await setMode(mode, source: 'watch');
+        return RemoteResult.ok('${mode.label} mode');
+
+      case WatchCommandKind.captureStart:
+        if (recording) {
+          return const RemoteResult.ok('Already recording');
+        }
+        if (_activeMode != AppMode.capture) {
+          await setMode(AppMode.capture, source: 'watch');
+        }
+        _cancelPendingTiltUpIntent(reason: 'watch-capture-start');
+        final started = await CaptureService.get.startRecording();
+        return started
+            ? const RemoteResult.ok('Recording from glasses mic')
+            : const RemoteResult.fail('Capture start failed');
+
+      case WatchCommandKind.captureStop:
+        if (!recording) {
+          return const RemoteResult.ok('Not recording');
+        }
+        final fileName = await CaptureService.get.stopAndSave();
+        return RemoteResult.ok(
+            fileName == null ? 'Capture stopped' : 'Saved $fileName');
+
+      case WatchCommandKind.glanceNext:
+      case WatchCommandKind.glancePrev:
+      case WatchCommandKind.glanceClose:
+        if (_activeMode != AppMode.glance) {
+          return const RemoteResult.fail('Not in Glance mode');
+        }
+        if (command.kind == WatchCommandKind.glanceClose) {
+          if (GlanceAssistantService.get.isDisplayVisible) {
+            await GlanceAssistantService.get.close();
+          }
+          await GlanceService.get.close();
+          return const RemoteResult.ok('Glance closed');
+        }
+        if (GlanceAssistantService.get.isDisplayVisible) {
+          return const RemoteResult.fail('Assistant is showing');
+        }
+        _cancelPendingTiltUpIntent(reason: 'watch-glance');
+        if (!GlanceService.get.isVisible) {
+          // Either direction opens the carousel at the start.
+          await GlanceService.get.showLatestOrAdvance();
+        } else if (command.kind == WatchCommandKind.glanceNext) {
+          await GlanceService.get.showNext();
+        } else {
+          await GlanceService.get.showPrevious();
+        }
+        return const RemoteResult.ok();
+
+      case WatchCommandKind.askStart:
+        // Same voice path as holding the glasses long-press (Glance) or the
+        // tilt-up listen (Chat); the single-mic check lives in those services.
+        if (_activeMode == AppMode.chat) {
+          return RemoteResult.ok(await ChatService.get.startListening());
+        }
+        if (_activeMode != AppMode.glance) {
+          return const RemoteResult.fail('Ask works in Glance or Chat');
+        }
+        if (GlanceService.get.isVisible) {
+          await GlanceService.get.close();
+        }
+        if (hasActiveDisplay) {
+          return RemoteResult.fail('Glasses busy ($_activeDisplayOwner)');
+        }
+        return RemoteResult.ok(await GlanceAssistantService.get.startListening());
+
+      case WatchCommandKind.askStop:
+        if (_activeMode == AppMode.chat) {
+          return RemoteResult.ok(await ChatService.get.stopListeningAndSubmit());
+        }
+        if (_activeMode != AppMode.glance) {
+          return const RemoteResult.fail('Ask works in Glance or Chat');
+        }
+        return RemoteResult.ok(
+            await GlanceAssistantService.get.stopListeningAndSubmit());
+
+      case WatchCommandKind.navStop:
+        if (!WalkNavigatorService.get.isActive) {
+          return const RemoteResult.ok('No walk active');
+        }
+        await WalkNavigatorService.get.stop(reason: 'stopped from watch');
+        return const RemoteResult.ok('Walk ended');
+    }
   }
 
   Future<void> _handleNavigateGesture(int eventId) async {

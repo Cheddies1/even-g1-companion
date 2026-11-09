@@ -71,6 +71,7 @@ object BleChannelHelper {
             MethodChannel(binaryMessenger, METHOD_CHANNEL_BLE_TAG)
         )
         //  Event
+        com.eddie.evencompanion.watch.WatchBridge.attach(context, binaryMessenger)
         EventChannel(binaryMessenger, EVENT_BLE_STATUS).setStreamHandler(context)
         EventChannel(binaryMessenger, EVENT_BLE_RECEIVE).setStreamHandler(context)
         EventChannel(binaryMessenger, EVENT_BLE_SPEECH_RECOGNIZE).setStreamHandler(context)
