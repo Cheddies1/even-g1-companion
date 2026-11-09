@@ -223,6 +223,11 @@ class BleManager {
         // glasses HUD teardown and the UI refresh cannot diverge.
         unawaited(PhoneCaptureService.get.stopAndSave());
         break;
+      case 'phoneCaptureStartDenied':
+        // Android refused the microphone FGS (app not in an eligible state);
+        // the native side already dropped the recorder.
+        unawaited(PhoneCaptureService.get.handleStartDenied());
+        break;
       case 'quickNoteAudioReady':
         final args = call.arguments as Map?;
         final noteUid = args?['noteUid'] as Uint8List?;

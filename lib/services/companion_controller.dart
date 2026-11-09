@@ -44,6 +44,9 @@ class CompanionController extends ChangeNotifier {
   StreamSubscription<dynamic>? _telephonySubscription;
   bool _telephonyActive = false;
   AppMode _activeMode = AppMode.glance;
+  /// Set when a watch capture start switched into Capture; the watch stop
+  /// switches back. Any other mode change clears it.
+  AppMode? _modeBeforeRemoteCapture;
   String _statusMessage = 'Ready';
   bool _notificationAccessEnabled = false;
   DateTime? _ignoreVoiceGesturesUntil;
@@ -156,6 +159,7 @@ class CompanionController extends ChangeNotifier {
     }
 
     final fromMode = _activeMode;
+    _modeBeforeRemoteCapture = null;
     _cancelPendingTiltUpIntent(reason: 'mode-switch');
     await _closeActiveView(sendExit: false);
 
@@ -604,8 +608,11 @@ class CompanionController extends ChangeNotifier {
         if (recording) {
           return const RemoteResult.ok('Already recording');
         }
+        final modeBefore = _activeMode;
         if (_activeMode != AppMode.capture) {
           await setMode(AppMode.capture, source: 'watch');
+          // After setMode, which clears it: the watch stop returns here.
+          _modeBeforeRemoteCapture = modeBefore;
         }
         _cancelPendingTiltUpIntent(reason: 'watch-capture-start');
         final started = await CaptureService.get.startRecording();
@@ -618,8 +625,14 @@ class CompanionController extends ChangeNotifier {
           return const RemoteResult.ok('Not recording');
         }
         final fileName = await CaptureService.get.stopAndSave();
-        return RemoteResult.ok(
-            fileName == null ? 'Capture stopped' : 'Saved $fileName');
+        final saved = fileName == null ? 'Capture stopped' : 'Saved $fileName';
+        // A watch start that switched into Capture hands the mode back.
+        final back = _modeBeforeRemoteCapture;
+        if (back != null && _activeMode == AppMode.capture) {
+          await setMode(back, source: 'watch');
+          return RemoteResult.ok('$saved - ${back.label}');
+        }
+        return RemoteResult.ok(saved);
 
       case WatchCommandKind.recordStart:
         if (recording || PhoneCaptureService.get.isRecording) {
@@ -630,6 +643,15 @@ class CompanionController extends ChangeNotifier {
               const WatchCommand(WatchCommandKind.captureStart));
         }
         final result = await PhoneCaptureService.get.startRecording();
+        if (result == PhoneCaptureStartResult.started) {
+          // Android can still refuse the microphone FGS a moment later
+          // (handleStartDenied); give it the chance before acking.
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          if (!PhoneCaptureService.get.isRecording) {
+            return const RemoteResult.fail(
+                'Phone blocked the mic - open Even Companion once');
+          }
+        }
         return switch (result) {
           PhoneCaptureStartResult.started ||
           PhoneCaptureStartResult.alreadyRecording =>

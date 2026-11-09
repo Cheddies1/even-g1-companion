@@ -169,6 +169,16 @@ class PhoneCaptureService extends ChangeNotifier {
     return _lastSavedFileName;
   }
 
+  /// Android refused the microphone foreground service after
+  /// [startRecording] reported success; undo the recording state.
+  Future<void> handleStartDenied() async {
+    AppLog.error(
+      '${DateTime.now()} microphone foreground service refused - recording abandoned',
+      tag: 'PhoneCapture',
+    );
+    await cancel();
+  }
+
   /// Aborts without saving and deletes the temp PCM.
   Future<void> cancel() async {
     if (!_isRecording) {

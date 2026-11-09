@@ -57,7 +57,20 @@ class PhoneCaptureService : Service() {
         val startedAtMs = intent?.getLongExtra(EXTRA_STARTED_AT_MS, 0L)
             ?.takeIf { it > 0L }
             ?: System.currentTimeMillis()
-        startForegroundCompat(buildNotification(startedAtMs))
+        try {
+            startForegroundCompat(buildNotification(startedAtMs))
+        } catch (e: Exception) {
+            // Android 14+ refuses a microphone FGS while the app is not in an
+            // eligible state (e.g. started behind the lock screen, or from a
+            // watch command after a cold start). Uncaught, this throws on the
+            // main thread and kills the whole companion. Without the FGS the
+            // recorder would only capture silence, so abandon it and tell Dart.
+            android.util.Log.w("PhoneCapture", "microphone FGS refused; abandoning recording", e)
+            runCatching { PhoneCaptureRecorder.cancel() }
+            runCatching { BleChannelHelper.bleMC.flutterPhoneCaptureStartDenied() }
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // START_NOT_STICKY on purpose. A recording cannot survive process
         // death - the AudioRecord and the PCM stream are gone - so an

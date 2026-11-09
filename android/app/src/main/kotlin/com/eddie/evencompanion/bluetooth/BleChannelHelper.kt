@@ -540,6 +540,14 @@ class BleMethodChannel(
     fun flutterPhoneCaptureStopRequested() =
         methodChannel.invokeMethod("phoneCaptureStopRequested", null)
 
+    /**
+     * Notifies Dart that Android refused the microphone foreground service,
+     * so the recording that startPhoneCapture reported as started is void.
+     * Dart handler: `case 'phoneCaptureStartDenied':` in `lib/ble_manager.dart`.
+     */
+    fun flutterPhoneCaptureStartDenied() =
+        methodChannel.invokeMethod("phoneCaptureStartDenied", null)
+
     fun flutterQuickNoteAudioReady(noteUid: ByteArray, audio: ByteArray) =
         methodChannel.invokeMethod(
             "quickNoteAudioReady",
