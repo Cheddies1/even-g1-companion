@@ -44,12 +44,19 @@ class GlanceAssistantService {
   Timer? _sessionExpiryTimer;
   Timer? _displayClearTimer;
 
+  bool _hostOpenedMic = false;
+
   bool get isListening => _isListening;
   bool get isThinking => _isThinking;
   bool get isDisplayVisible => _isDisplayVisible;
   bool get hasEphemeralContext => _messages.isNotEmpty;
 
-  Future<String> startListening() async {
+  /// [hostTriggered]: started from somewhere other than the glasses' left
+  /// long-press (the watch). Without the long-press the firmware never opens
+  /// its own "Even AI is listening" screen, and with no surface up the mic
+  /// streams silence (measured 2026-11-09: RMS ~8 vs ~2000+ for speech), so
+  /// put a text surface up first, and close the mic ourselves on stop.
+  Future<String> startListening({bool hostTriggered = false}) async {
     if (_isThinking) {
       AppLog.debug(
         '${DateTime.now()} start ignored -> still thinking',
@@ -68,6 +75,9 @@ class GlanceAssistantService {
 
     _expireSessionIfStale();
     _displayClearTimer?.cancel();
+    if (hostTriggered) {
+      await _showText('Listening...');
+    }
 
     AppLog.debug(
       '${DateTime.now()} recorder start requested',
@@ -101,6 +111,7 @@ class GlanceAssistantService {
     }
 
     _isListening = true;
+    _hostOpenedMic = hostTriggered;
     _lastActivityAt = DateTime.now();
     AppLog.info(
       '${DateTime.now()} listening started',
@@ -130,6 +141,10 @@ class GlanceAssistantService {
       final raw = await BleManager.invokeMethod<Map<dynamic, dynamic>>(
         'stopGlassesCaptureToTemp',
       );
+      if (_hostOpenedMic) {
+        _hostOpenedMic = false;
+        await Proto.micOff(lr: 'R');
+      }
       final filePath = (raw?['localPath'] as String?) ?? '';
       AppLog.debug(
         '${DateTime.now()} stopToTemp result -> success=${raw?['success']} localPath=$filePath pcmBytes=${raw?['pcmBytes']} durationMs=${raw?['durationMs']}',
@@ -247,6 +262,10 @@ class GlanceAssistantService {
       tag: 'GlanceAssistant',
     );
     await BleManager.invokeMethod('cancelGlassesCapture');
+    if (_hostOpenedMic) {
+      _hostOpenedMic = false;
+      await Proto.micOff(lr: 'R');
+    }
     await TextService.get.stopTextSendingByOS();
     await Proto.clearDisplay();
   }
@@ -265,6 +284,7 @@ class GlanceAssistantService {
   /// Must not perform any BLE IO — transport is gone.
   void handleTransportLost() {
     _isListening = false;
+    _hostOpenedMic = false;
     _isThinking = false;
     _isDisplayVisible = false;
     _displayClearTimer?.cancel();

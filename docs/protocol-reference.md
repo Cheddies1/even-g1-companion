@@ -273,7 +273,15 @@ Vendor/demo reference:
 Observed reality:
 - mic enable is `Confirmed` enough for the current app path
 - the app has used mic-on successfully for the old connected voice flow and for current capture scaffolding
-- mic-disable / clean stop semantics are still not proven strongly enough to document as settled behaviour
+- mic-disable: `0x0E 00` acks `0E C9 00` and stops the `0xF1` stream
+  (device, 2026-11-09). After a left long-press the firmware closes the mic
+  itself on release; a mic the host opened without one keeps streaming until
+  `0x0E 00` is sent
+- **trap:** `0x0E 01` sent while the glasses are idle on the dashboard (no
+  long-press, no text surface up) acks `C9` and streams `0xF1` frames, but they
+  decode to near-silence (RMS ~8 vs ~2000 for speech). Put a `0x4E` text
+  surface up first (`GlanceAssistantService.startListening(hostTriggered:)`);
+  Capture and Chat already have one up when they open the mic
 - `Firmware-source`: `0xC9` is the firmware's **generic** success code, not
   specific to this family — `deal_event_to_phone.c` builds
   `<opcode> C9 <state>` acks for at least `0x0D`, `0x0F` and `0x4E` too

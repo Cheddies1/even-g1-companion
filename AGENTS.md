@@ -83,6 +83,9 @@ Load-bearing rules (each has caused a silent failure):
   ([docs/FINDINGS-nav-marker-tiles.md](docs/FINDINGS-nav-marker-tiles.md))
 - `0x52`/`0x53` streaming: the keepalive must be the full `53 06 00 <seq> 03 00`
   frame; 30 s without one ends the session
+- `0x0E 01` from an idle dashboard (no long-press, no text surface) streams
+  silent audio: put a `0x4E` surface up first, and send `0x0E 00` yourself
+  to close a mic the host opened
 - `0x50` is a master-only dashboard-state probe. It does not clear or prime the
   display; send it to R only
 - link liveness is any write within 30 s; `0x25` sub 4 is teleprompter sync,

@@ -81,6 +81,15 @@ class Proto {
     return (startMic, (!receive.isTimeout && receive.data[1] == 0xc9));
   }
 
+  /// `0x0E 00`. The firmware closes the mic by itself when a left long-press
+  /// ends; a mic the host opened without one (e.g. from the watch) keeps
+  /// streaming until this is sent.
+  static Future<bool> micOff({String? lr}) async {
+    final receive =
+        await BleManager.request(Uint8List.fromList([0x0E, 0x00]), lr: lr);
+    return !receive.isTimeout && receive.data[1] == 0xc9;
+  }
+
   /// True while the QuickNote audio stream is expected to be in flight —
   /// between sending `02 01` and receiving the flushed buffer in Dart.
   /// [clearDisplay] checks this and suppresses the 0x50+0x18 sequence to

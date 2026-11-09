@@ -652,7 +652,8 @@ class CompanionController extends ChangeNotifier {
         if (hasActiveDisplay) {
           return RemoteResult.fail('Glasses busy ($_activeDisplayOwner)');
         }
-        return RemoteResult.ok(await GlanceAssistantService.get.startListening());
+        return RemoteResult.ok(await GlanceAssistantService.get
+            .startListening(hostTriggered: true));
 
       case WatchCommandKind.askStop:
         if (_activeMode == AppMode.chat) {
