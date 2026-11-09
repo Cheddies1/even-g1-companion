@@ -261,6 +261,12 @@ size); v1 still ships with the home region only.
   over 25 m either side (15 m for a lone manoeuvre); drop under 30 deg; arrow from the net
   change (slight <45, normal <135, sharp <165, U-turn); roundabouts and arrival always kept.
   Acceptance route: 14 raw -> 6 turns, matching what a walker needs.
+- 2026-11-09 - Live walk: a ~70 deg right turn where one continuous footway bends had no engine
+  manoeuvre at all, so it was never guided (not the cluster rule). Added geometry turns: heading
+  change over 20 m either side, sampled every 5 m; a run at 45 deg or more becomes "Turn
+  left/right" at its peak unless an engine manoeuvre is within 25 m, it is within 25 m of either
+  end, or it falls inside a roundabout. On the day's six cached bundles it adds that right turn
+  and one unguided left on the walk out, nothing else.
 - 2026-11-06 - Phase 5 behaviour: fixes worse than 25 m ignored; 20 m corridor; off-route after
   10 s sustained; reroute from the current fix with a 30 s cooldown, keeping the old bundle if
   the fetch fails; marker on the matched route point when on route, raw GPS (clamped) when off;

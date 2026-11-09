@@ -15,7 +15,11 @@ import 'package:even_companion/services/walknav/nav_geo.dart';
 ///   manoeuvre uses [singleWindowM] either side;
 /// - a turn under [suppressBelowDeg] is dropped (a jog, not a turn);
 /// - roundabouts are always kept with the engine's arrow; the arrival is
-///   always kept.
+///   always kept;
+/// - a bend in the route geometry of [geometryTurnDeg] or more with no engine
+///   manoeuvre within [geometryClearM] becomes a turn too. Valhalla emits
+///   nothing when one continuous footway bends sharply, so a 70 degree right
+///   turn on the 2026-11-09 walk was never guided.
 class WalkTurn {
   const WalkTurn({
     required this.progressM,
@@ -45,6 +49,10 @@ class ManeuverPlan {
   static const double clusterWindowM = 25;
   static const double singleWindowM = 15;
   static const double suppressBelowDeg = 30;
+  static const double geometryWindowM = 20;
+  static const double geometryStepM = 5;
+  static const double geometryTurnDeg = 45;
+  static const double geometryClearM = 25;
 
   // Firmware arrows (docs/FINDINGS-nav-marker-tiles.md, built-in arrows).
   static const int arrowStraight = 0x02;
@@ -126,6 +134,70 @@ class ManeuverPlan {
       }
       i = j + 1;
     }
+    out.addAll(_geometryTurns(route, maneuvers));
+    out.sort((a, b) => a.progressM.compareTo(b.progressM));
+    return out;
+  }
+
+  /// Sharp bends the engine said nothing about. Samples the heading change
+  /// across [geometryWindowM] either side every [geometryStepM]; each run of
+  /// samples at or over [geometryTurnDeg] with one sign is one turn, placed at
+  /// its peak. Skipped near any engine manoeuvre (it already covers the spot,
+  /// or deliberately dropped it as a jog), near the route ends, and through a
+  /// roundabout.
+  static List<WalkTurn> _geometryTurns(
+      RouteLine route, List<NavManeuver> maneuvers) {
+    bool covered(double s) {
+      if (s < geometryClearM || s > route.totalM - geometryClearM) return true;
+      for (final m in maneuvers) {
+        if ((m.progressM - s).abs() < geometryClearM) return true;
+      }
+      // Inside a roundabout: between an enter and the following exit.
+      for (var k = 0; k < maneuvers.length; k++) {
+        if (maneuvers[k].engineType != NavManeuver.typeRoundaboutEnter) {
+          continue;
+        }
+        final exit = maneuvers.skip(k + 1).firstWhere(
+            (m) => m.engineType == NavManeuver.typeRoundaboutExit,
+            orElse: () => maneuvers[k]);
+        if (s >= maneuvers[k].progressM && s <= exit.progressM) return true;
+      }
+      return false;
+    }
+
+    final out = <WalkTurn>[];
+    double? peakS;
+    var peakDelta = 0.0;
+    void flush() {
+      if (peakS != null && !covered(peakS!)) {
+        final arrow = arrowForDelta(peakDelta);
+        out.add(WalkTurn(
+          progressM: peakS!,
+          direction: arrow,
+          text: _synthesise(arrow, ''),
+          isArrival: false,
+        ));
+      }
+      peakS = null;
+      peakDelta = 0;
+    }
+
+    for (var s = geometryWindowM;
+        s <= route.totalM - geometryWindowM;
+        s += geometryStepM) {
+      final d = headingDelta(route.headingBetween(s - geometryWindowM, s),
+          route.headingBetween(s, s + geometryWindowM));
+      if (d.abs() < geometryTurnDeg ||
+          (peakS != null && d.sign != peakDelta.sign)) {
+        flush();
+        if (d.abs() < geometryTurnDeg) continue;
+      }
+      if (d.abs() > peakDelta.abs()) {
+        peakS = s;
+        peakDelta = d;
+      }
+    }
+    flush();
     return out;
   }
 

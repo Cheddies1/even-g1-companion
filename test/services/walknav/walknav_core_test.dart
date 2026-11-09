@@ -163,11 +163,46 @@ void main() {
     });
 
     test('roundabouts are kept with the engine arrow', () {
-      final plan = ManeuverPlan.buildTurns(lRoute(), [
+      final plan = ManeuverPlan.buildTurns(RouteLine([at(0, 0), at(0, 400)]), [
         m(150, 0x1d, 26, text: 'Enter the roundabout.'),
         m(160, 0x0f, 27, text: 'Exit the roundabout.'),
       ]);
       expect(plan.map((t) => t.direction), [0x1d, 0x0f]);
+    });
+
+    test('a sharp bend with no engine manoeuvre becomes a turn', () {
+      // One continuous footway: north 200 m, then east. Valhalla says nothing.
+      final plan = ManeuverPlan.buildTurns(lRoute(), [
+        m(0, 2, 1),
+        m(400, 2, 4),
+      ]);
+      expect(plan.length, 2);
+      expect(plan[0].direction, ManeuverPlan.arrowRight);
+      expect(plan[0].text, 'Turn right');
+      expect(plan[0].progressM, closeTo(200, 5));
+      expect(plan[1].isArrival, isTrue);
+    });
+
+    test('a bend the engine already names is not doubled', () {
+      final plan = ManeuverPlan.buildTurns(lRoute(), [
+        m(0, 2, 1),
+        m(195, 3, 10, text: 'Turn right onto Test Road.'),
+        m(400, 2, 4),
+      ]);
+      expect(plan.where((t) => !t.isArrival).length, 1);
+      expect(plan.first.text, 'Turn right onto Test Road');
+    });
+
+    test('a gentle curve is not a turn', () {
+      // 90 degrees spread over about 160 m.
+      final pts = <LatLon>[];
+      for (var k = 0; k <= 10; k++) {
+        final a = k * 9 * math.pi / 180;
+        pts.add(at(100 - 100 * math.cos(a), 100 * math.sin(a)));
+      }
+      final r = RouteLine([at(0, -100), ...pts, at(200, 100)]);
+      final plan = ManeuverPlan.buildTurns(r, [m(r.totalM, 2, 4)]);
+      expect(plan.single.isArrival, isTrue);
     });
 
     test('arrowForDelta bands', () {
