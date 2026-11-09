@@ -11,8 +11,13 @@ data class PhoneState(
     val connected: Boolean,
     val mode: String,
     val status: String,
+    /** Either source; see [recordingSource]. */
     val recording: Boolean,
+    /** "glasses", "phone", or null when idle. */
+    val recordingSource: String?,
     val recordingStartedAt: Long?,
+    /** Which mic record.start would use now: "glasses" or "phone". */
+    val recordTarget: String,
     val glanceVisible: Boolean,
     val glanceIndex: Int,
     val glanceCount: Int,
@@ -38,7 +43,9 @@ data class PhoneState(
                     mode = o.optString("mode", "glance"),
                     status = o.optString("status"),
                     recording = o.optBoolean("recording"),
+                    recordingSource = if (o.isNull("recordingSource")) null else o.optString("recordingSource"),
                     recordingStartedAt = o.optLongOrNull("recordingStartedAt"),
+                    recordTarget = o.optString("recordTarget", "phone"),
                     glanceVisible = glance.optBoolean("visible"),
                     glanceIndex = glance.optInt("index"),
                     glanceCount = glance.optInt("count"),

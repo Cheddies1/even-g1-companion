@@ -6,11 +6,13 @@ import 'package:even_companion/models/companion_notification.dart';
 import 'package:even_companion/services/app_log.dart';
 import 'package:even_companion/services/capture_service.dart';
 import 'package:even_companion/services/chat_service.dart';
+import 'package:even_companion/services/device_status_service.dart';
 import 'package:even_companion/services/glance_assistant_service.dart';
 import 'package:even_companion/services/glance_service.dart';
 import 'package:even_companion/services/navigate_service.dart';
 import 'package:even_companion/services/notification_policy.dart';
 import 'package:even_companion/services/notification_settings_store.dart';
+import 'package:even_companion/services/phone_capture_service.dart';
 import 'package:even_companion/services/proto.dart';
 import 'package:even_companion/services/text_service.dart';
 import 'package:even_companion/services/walknav/nav_geo.dart';
@@ -577,6 +579,15 @@ class CompanionController extends ChangeNotifier {
     return result;
   }
 
+  /// Glasses mic for a source-agnostic record: connected and not docked.
+  /// Unknown wear state counts as worn; it is often unknown right after connect.
+  /// Which mic `record.start` would use now: `glasses` or `phone`.
+  String get remoteRecordTarget => _glassesCanRecord ? 'glasses' : 'phone';
+
+  bool get _glassesCanRecord =>
+      BleManager.get().isConnected &&
+      DeviceStatusService.get.wearState != WearState.inCradle;
+
   Future<RemoteResult> _runRemoteCommand(WatchCommand command) async {
     final recording = CaptureService.get.isRecording;
     switch (command.kind) {
@@ -609,6 +620,36 @@ class CompanionController extends ChangeNotifier {
         final fileName = await CaptureService.get.stopAndSave();
         return RemoteResult.ok(
             fileName == null ? 'Capture stopped' : 'Saved $fileName');
+
+      case WatchCommandKind.recordStart:
+        if (recording || PhoneCaptureService.get.isRecording) {
+          return const RemoteResult.ok('Already recording');
+        }
+        if (_glassesCanRecord) {
+          return _runRemoteCommand(
+              const WatchCommand(WatchCommandKind.captureStart));
+        }
+        final result = await PhoneCaptureService.get.startRecording();
+        return switch (result) {
+          PhoneCaptureStartResult.started ||
+          PhoneCaptureStartResult.alreadyRecording =>
+            const RemoteResult.ok('Recording on phone mic'),
+          PhoneCaptureStartResult.permissionDenied =>
+            const RemoteResult.fail('Phone mic permission denied'),
+          _ => const RemoteResult.fail('Phone recording failed'),
+        };
+
+      case WatchCommandKind.recordStop:
+        if (recording) {
+          return _runRemoteCommand(
+              const WatchCommand(WatchCommandKind.captureStop));
+        }
+        if (PhoneCaptureService.get.isRecording) {
+          final fileName = await PhoneCaptureService.get.stopAndSave();
+          return RemoteResult.ok(
+              fileName == null ? 'Recording stopped' : 'Saved $fileName');
+        }
+        return const RemoteResult.ok('Not recording');
 
       case WatchCommandKind.glanceNext:
       case WatchCommandKind.glancePrev:

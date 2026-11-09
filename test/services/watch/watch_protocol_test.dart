@@ -51,7 +51,9 @@ void main() {
           status: 'Recording',
           displayOwner: 'Capture',
           recording: startedAt != null,
+          recordingSource: startedAt == null ? null : 'phone',
           recordingStartedAt: startedAt,
+          recordTarget: 'phone',
           glanceVisible: false,
           glanceIndex: 0,
           glanceCount: 4,
@@ -70,6 +72,7 @@ void main() {
       expect(json['protocol'], WatchState.protocol);
       expect(json['mode'], 'capture');
       expect(json['recording'], true);
+      expect(json['recordingSource'], 'phone');
       expect(json['recordingStartedAt'], 1700000000000);
       expect(json['battery'], {'glasses': 80, 'case': null});
     });

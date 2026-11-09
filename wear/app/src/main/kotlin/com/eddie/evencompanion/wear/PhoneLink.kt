@@ -44,6 +44,27 @@ class PhoneLink(context: Context) :
 
         /** ask.stop waits for transcription on the phone, so allow for it. */
         private const val ACK_TIMEOUT_MS = 15_000L
+
+        fun parseItem(item: DataItem): PhoneState? {
+            if (item.uri.path != PATH_STATE) return null
+            val map = DataMapItem.fromDataItem(item).dataMap
+            val json = map.getString("json") ?: return null
+            return PhoneState.parse(json, map.getLong("updatedAt"))
+        }
+
+        /** Last state the phone published; the Data Layer keeps it while the phone is away. */
+        suspend fun loadState(dataClient: DataClient): PhoneState? =
+            try {
+                val items = dataClient.dataItems.await()
+                try {
+                    items.mapNotNull { parseItem(it) }.maxByOrNull { it.updatedAt }
+                } finally {
+                    items.release()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "state load failed", e)
+                null
+            }
     }
 
     private val dataClient = Wearable.getDataClient(context)
@@ -121,22 +142,15 @@ class PhoneLink(context: Context) :
         }
 
     private suspend fun loadCachedState() {
-        try {
-            val items = dataClient.dataItems.await()
-            try {
-                items.filter { it.uri.path == PATH_STATE }.forEach { applyItem(it) }
-            } finally {
-                items.release()
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "state load failed", e)
+        val cached = loadState(dataClient) ?: return
+        val current = _state.value
+        if (current == null || cached.updatedAt >= current.updatedAt) {
+            _state.value = cached
         }
     }
 
     private fun applyItem(item: DataItem) {
-        val map = DataMapItem.fromDataItem(item).dataMap
-        val json = map.getString("json") ?: return
-        val parsed = PhoneState.parse(json, map.getLong("updatedAt")) ?: return
+        val parsed = parseItem(item) ?: return
         val current = _state.value
         if (current == null || parsed.updatedAt >= current.updatedAt) {
             _state.value = parsed

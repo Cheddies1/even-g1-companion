@@ -9,6 +9,11 @@ enum WatchCommandKind {
   setMode('mode.set'),
   captureStart('capture.start'),
   captureStop('capture.stop'),
+
+  /// Source-agnostic: glasses mic when the glasses are connected and out of
+  /// the case, else the phone mic. Stop ends whichever is running.
+  recordStart('record.start'),
+  recordStop('record.stop'),
   glanceNext('glance.next'),
   glancePrev('glance.prev'),
   glanceClose('glance.close'),
@@ -81,7 +86,9 @@ class WatchState {
     required this.status,
     required this.displayOwner,
     required this.recording,
+    required this.recordingSource,
     required this.recordingStartedAt,
+    required this.recordTarget,
     required this.glanceVisible,
     required this.glanceIndex,
     required this.glanceCount,
@@ -101,8 +108,15 @@ class WatchState {
   final AppMode mode;
   final String status;
   final String displayOwner;
+  /// Either source: the glasses mic (Capture) or the phone mic.
   final bool recording;
+
+  /// `glasses`, `phone`, or null when idle.
+  final String? recordingSource;
   final DateTime? recordingStartedAt;
+
+  /// Which mic `record.start` would use now: `glasses` or `phone`.
+  final String recordTarget;
   final bool glanceVisible;
   final int glanceIndex;
   final int glanceCount;
@@ -121,7 +135,9 @@ class WatchState {
         'status': status,
         'displayOwner': displayOwner,
         'recording': recording,
+        'recordingSource': recordingSource,
         'recordingStartedAt': recordingStartedAt?.millisecondsSinceEpoch,
+        'recordTarget': recordTarget,
         'glance': {
           'visible': glanceVisible,
           'index': glanceIndex,

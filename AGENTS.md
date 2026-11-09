@@ -130,7 +130,7 @@ Region sync (debug): `am broadcast -p com.eddie.evencompanion -a com.eddie.evenc
 inner quoting over `adb shell`. Debug trips accept `--es name X` to name an offered region.
 
 Watch remote (debug): `am broadcast -p com.eddie.evencompanion -a com.eddie.evencompanion.WATCH_CMD
---es cmd <mode.set|capture.start|capture.stop|glance.next|glance.prev|glance.close|ask.start|ask.stop|nav.stop|state.request>
+--es cmd <mode.set|capture.start|capture.stop|record.start|record.stop|glance.next|glance.prev|glance.close|ask.start|ask.stop|nav.stop|state.request>
 [--es mode glance|capture|navigate|chat]` injects a command through the same path as a real watch
 message; the ack and published state log under `adb logcat -s G1Watch`, the controller under `[Watch]`.
 Plan: [docs/plans/watch-remote-spike.md](docs/plans/watch-remote-spike.md).

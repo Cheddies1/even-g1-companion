@@ -92,6 +92,9 @@ fun RemoteScreen(link: PhoneLink) {
                 item { Header(state, reachable) }
 
                 val s = state
+                if (s != null && s.mode != "capture") {
+                    item { RecordChip(s) { send(it) } }
+                }
                 if (s != null) {
                     when (s.mode) {
                         "capture" -> item { CaptureControls(s) { send(it) } }
@@ -163,7 +166,7 @@ private fun CaptureControls(state: PhoneState, send: (String) -> Unit) {
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Button(
-            onClick = { send(if (state.recording) "capture.stop" else "capture.start") },
+            onClick = { send(if (state.recording) "record.stop" else "record.start") },
             colors = ButtonDefaults.buttonColors(
                 backgroundColor = if (state.recording) Color.DarkGray else RecordRed,
             ),
@@ -177,7 +180,11 @@ private fun CaptureControls(state: PhoneState, send: (String) -> Unit) {
         }
         val started = state.recordingStartedAt
         Text(
-            if (state.recording && started != null) elapsed(now - started) else "Tap to record",
+            if (state.recording && started != null) {
+                "${RecordingNotifier.sourceLabel(state.recordingSource)}  ${elapsed(now - started)}"
+            } else {
+                "Tap to record - ${RecordingNotifier.sourceLabel(state.recordTarget)}"
+            },
             fontSize = 12.sp,
             color = if (state.recording) RecordRed else Muted,
             modifier = Modifier.padding(top = 4.dp),
@@ -223,6 +230,36 @@ private fun GlanceControls(state: PhoneState, send: (String) -> Unit) {
                 Text(">")
             }
         }
+    }
+}
+
+/** Outside Capture mode: a live recording with Stop, or Record (phone picks the mic). */
+@Composable
+private fun RecordChip(state: PhoneState, send: (String) -> Unit) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.recording) {
+        while (state.recording) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val started = state.recordingStartedAt
+    if (state.recording) {
+        Chip(
+            label = { Text("Stop  ${if (started != null) elapsed(now - started) else ""}") },
+            secondaryLabel = { Text(RecordingNotifier.sourceLabel(state.recordingSource)) },
+            onClick = { send("record.stop") },
+            colors = ChipDefaults.chipColors(backgroundColor = RecordRed),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    } else {
+        Chip(
+            label = { Text("Record") },
+            secondaryLabel = { Text(RecordingNotifier.sourceLabel(state.recordTarget)) },
+            onClick = { send("record.start") },
+            colors = ChipDefaults.secondaryChipColors(),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

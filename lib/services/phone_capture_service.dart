@@ -53,6 +53,7 @@ class PhoneCaptureService extends ChangeNotifier {
   static const List<String> _pulseChars = <String>['*', '#', '.'];
 
   bool get isRecording => _isRecording;
+  DateTime? get startedAt => _startedAt;
   String? get lastSavedFileName => _lastSavedFileName;
 
   /// Elapsed recording time, or [Duration.zero] when idle.

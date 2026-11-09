@@ -9,6 +9,7 @@ import 'package:even_companion/services/companion_controller.dart';
 import 'package:even_companion/services/device_status_service.dart';
 import 'package:even_companion/services/glance_assistant_service.dart';
 import 'package:even_companion/services/glance_service.dart';
+import 'package:even_companion/services/phone_capture_service.dart';
 import 'package:even_companion/services/walknav/walk_navigator_service.dart';
 import 'package:even_companion/services/watch/watch_protocol.dart';
 import 'package:flutter/services.dart';
@@ -38,6 +39,7 @@ class WatchRemoteService {
     _initialized = true;
     _channel.setMethodCallHandler(_onCall);
     CompanionController.get.addListener(_schedulePublish);
+    PhoneCaptureService.get.addListener(_schedulePublish);
     Timer.periodic(_heartbeat, (_) => _publish(force: true));
     unawaited(_publish(force: true));
   }
@@ -103,13 +105,20 @@ class WatchRemoteService {
     final chat = ChatService.get;
     final assistant = GlanceAssistantService.get;
     final status = DeviceStatusService.get;
+    final phone = PhoneCaptureService.get;
+    final glassesRecording = CaptureService.get.isRecording;
     return WatchState(
       connected: BleManager.get().isConnected,
       mode: controller.activeMode,
       status: controller.statusMessage,
       displayOwner: controller.activeDisplayOwnerLabel,
-      recording: CaptureService.get.isRecording,
-      recordingStartedAt: CaptureService.get.recordingStartedAt,
+      recording: glassesRecording || phone.isRecording,
+      recordingSource:
+          glassesRecording ? 'glasses' : (phone.isRecording ? 'phone' : null),
+      recordingStartedAt: glassesRecording
+          ? CaptureService.get.recordingStartedAt
+          : phone.startedAt,
+      recordTarget: controller.remoteRecordTarget,
       glanceVisible: glance.isVisible,
       glanceIndex: glance.carouselIndex,
       glanceCount: glance.notificationCount,

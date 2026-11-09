@@ -1,6 +1,6 @@
 # Spike: Galaxy Watch 6 as a remote for the companion
 
-Status: slices 1-2 built and device-verified, 2026-11-09.
+Status: slices 1-3 built and device-verified, 2026-11-09. Bezel paging dropped (virtual bezel only).
 
 ## Answer
 
@@ -170,6 +170,11 @@ The watch bridge is the same idea from a different source.
    including a spoken Quick Ask, after fixing the silent-mic trap (see
    `docs/protocol-reference.md`, `0x0E`).
 3. State mirror + Ongoing Activity for recording.
+   Done 2026-11-09: `record.start`/`record.stop` let the phone pick the mic
+   (glasses when connected and out of the case, else the phone mic, which
+   starts fine from the background because the companion FGS is running).
+   The watch shows a recording timer on the watch face (ongoing activity,
+   posted by a background `StateListenerService`) and has a Record tile.
 4. Hold-to-ask, then the Tile.
 
 ## Not covered here

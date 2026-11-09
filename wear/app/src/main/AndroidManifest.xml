@@ -3,6 +3,8 @@
 
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The recording timer on the watch face is an ongoing notification. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- A remote for the phone app; useless without it, so not standalone. -->
     <application
@@ -29,5 +31,33 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Phone state publishes, even with the app closed: drives the
+             watch-face recording timer and the tile. -->
+        <service
+            android:name=".StateListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:path="/evencompanion/state" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".StopRecordingReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".RecordTileService"
+            android:exported="true"
+            android:label="Even Record"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/ic_launcher" />
+        </service>
     </application>
 </manifest>
