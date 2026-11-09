@@ -3,186 +3,208 @@
 This repository is two things at once:
 
 1. A reverse-engineered behaviour and protocol knowledge base for the Even
-   Realities G1 smart glasses' BLE interface — built from HCI snoop captures
-   of the official Android app and live testing on real hardware.
+   Realities G1 smart glasses' BLE interface, built from HCI snoop captures
+   of the official Android app, a firmware decompilation, and live testing on
+   real hardware (firmware 1.6.6).
 2. A personal Flutter companion app I use to drive the glasses for my own
    day-to-day use.
 
 The companion app is **not** an official SDK, **not** a polished consumer
-release, and **not** offered with support for other users — it is shaped
+release, and **not** offered with support for other users. It is shaped
 around my own workflow. Most people landing here will probably get more value
 from the documentation than from running the app itself.
 
 If you are investigating Even G1 BLE behaviour and want to skip past the
-generic vendor demo material, the docs and the raw captures in this repo
-should save you a lot of time.
+generic vendor demo material, the docs in this repo should save you a lot of
+time.
 
 ## Start here for protocol and behaviour findings
 
 If your interest is the protocol or the device's actual behaviour, these are
 the documents to read first:
 
-- [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md) — current
+- [docs/protocol-reference.md](docs/protocol-reference.md): wire-level
+  reference for every command and event family that has been pinned down,
+  including the persisted-on-glasses settings opcodes and the recipe for a
+  tap-enabled text surface.
+- [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md): current
   trusted mapping of every observed `F5` sub-code, with confidence labels and
   evidence.
-- [docs/protocol-reference.md](docs/protocol-reference.md) — wire-level
-  reference for every command and event family that has been pinned down,
-  including the persisted-on-glasses settings opcodes.
-- [docs/investigation-notes.md](docs/investigation-notes.md) — broader
-  exploratory notes, the firmware / app / persisted-config three-layer model,
-  and the running list of what is still unknown.
-- [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md) —
-  comparison against the public Python SDK, including the places where its
-  labels are stale relative to current firmware.
-- [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md) —
-  comparison against three external protocol sources: the JohnRThomas wiki,
-  the Gadgetbridge `even-g1-custom-drawing-experiment` branch (which names
-  all navigation sub-commands), and the ayroblu/bazel-demo Swift
-  implementation (which decodes the TRIP_STATUS packet structure and
-  confirms the icon/map bitmap dimensions and encoding).
-- [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md) —
+- [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md):
   reconciliation against `JohnRThomas/even_realities_decomp`, a Ghidra
   decompilation of the G1 firmware. Every other external source is another
   sender; this one is the receiver, so it outranks them on packet structure
   (and only on packet structure). Records what it confirmed, what it
-  corrected — the `0x0a` TRIP_STATUS field model and the `0x06` family model
-  were both wrong — and the firmware-native record types we are not using.
-- [docs/firmware-decomp-display-relay.md](docs/firmware-decomp-display-relay.md)
-  — inter-leg forwarding subset, the `0x4E` ack structure, the per-lens `0x39`
+  corrected (the `0x0a` TRIP_STATUS field model and the `0x06` family model
+  were both wrong) and the firmware-native record types we are not using.
+- [docs/firmware-decomp-display-relay.md](docs/firmware-decomp-display-relay.md):
+  inter-leg forwarding subset, the `0x4E` ack structure, the per-lens `0x39`
   display-state query, and lens roles (right is master, left is slave).
   Display content is not relayed between temples, so the host must write both
   legs.
-- [docs/FINDINGS-evenai-flash-on-clear.md](docs/FINDINGS-evenai-flash-on-clear.md)
-  — the long-standing intermittent "Even AI is listening" flash on screen
-  clear, traced to a firmware race. Also corrects `0x50`: it is a master-only
-  dashboard lock, not display-mode control, so the `0x50 + 0x18` combo
-  previously recorded as the fix was only ever a timing mitigation.
-- [docs/current-behaviour.md](docs/current-behaviour.md) — how the companion
+- [docs/investigation-notes.md](docs/investigation-notes.md): broader
+  exploratory notes, the firmware / app / persisted-config three-layer model,
+  and the running list of what is still unknown.
+- [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md):
+  comparison against the public Python SDK, including the places where its
+  labels are stale relative to current firmware.
+- [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md):
+  comparison against external protocol sources: the JohnRThomas wiki, the
+  Gadgetbridge `even-g1-custom-drawing-experiment` branch (which names all
+  navigation sub-commands), and the ayroblu/bazel-demo Swift implementation
+  (which decodes the TRIP_STATUS packet structure and confirms the icon/map
+  bitmap dimensions and encoding).
+- [docs/g1-companion-apps-comparison-notes.md](docs/g1-companion-apps-comparison-notes.md):
+  how other G1 companion apps approach the same problems.
+- [docs/current-behaviour.md](docs/current-behaviour.md): how the companion
   app behaves at runtime; useful as a reference for what a host app is
   expected to do for each gesture / event.
-- [docs/current-architecture.md](docs/current-architecture.md) — how the
+- [docs/current-architecture.md](docs/current-architecture.md): how the
   companion app is wired internally, for anyone reading the code.
 
 The per-topic write-ups live alongside the other docs:
 
-- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md)
-- [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md)
-- [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
-- [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md) — display layout protocol
-  (`0x50`, `0x52`/`0x53` live streaming text, `0x0a` navigation card, `0x1e`
-  dashboard injection); the most comprehensive single-session capture to date.
+- [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md): taps and long-press.
+- [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md): persisted settings
+  opcodes.
+- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md):
+  battery, wear state and brightness.
+- [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md): display layout
+  protocol (`0x50`, `0x52`/`0x53` live streaming text, `0x0a` navigation card,
+  `0x1e` dashboard injection).
+- [docs/FINDINGS-quicknote.md](docs/FINDINGS-quicknote.md): right long-press
+  QuickNote recording and audio retrieval.
+- [docs/FINDINGS-evenai-flash-on-clear.md](docs/FINDINGS-evenai-flash-on-clear.md):
+  the intermittent "Even AI is listening" flash on screen clear, traced to a
+  firmware race. Also corrects `0x50`: it is a master-only dashboard-state
+  probe, not display-mode control.
+- [docs/FINDINGS-nav-marker-tiles.md](docs/FINDINGS-nav-marker-tiles.md):
+  position marker bounds and route tiles on the `0x0a` card.
+- [docs/FINDINGS-screen-off-gps.md](docs/FINDINGS-screen-off-gps.md): GPS
+  behaviour with the phone screen off during walking navigation.
 
 The raw captures and parser scripts that produced them live under
 `logs/bluetooth/` in the working tree (`btsnoop_hci_*.log` files,
 `parse_btsnoop.py`, `analyze_*.py`, and per-session `wall clock *.md`
 annotations). Those raw logs are deliberately kept out of the published
-repository — the published findings stand on their own.
+repository; the published findings stand on their own.
 
 ## Key confirmed findings
 
-Short list of what these captures and the live testing have pinned down so
-far. Each item is detailed in the docs above.
+Short list of what the captures, the decomp and live testing have pinned down
+so far. Each item is detailed in the docs above.
 
+- **Length-validated framing.** Bytes 1-2 of most commands are a validated
+  little-endian total length. A mismatch drops the packet silently.
+- **Both legs must be written.** Display content is not relayed between
+  lenses. Right is master, left is slave.
 - **Battery push, no polling required.** `F5 0A <pct>` for the glasses,
-  `F5 0F <pct>` for the case. Byte 2 is the percentage 0–100. Both temples
+  `F5 0F <pct>` for the case. Byte 2 is the percentage 0-100. Both temples
   push independently.
 - **Wear / cradle state.** `F5 06` worn, `F5 07` transitioning, `F5 08`
   cradle open, `F5 0B` cradle closed.
 - **Brightness.** TX `0x01 <level> <auto>` where `level` is `0..42` and
   `auto` is `0/1`. The firmware echoes the actual applied level back as
-  `F5 12 <level>` when it changes — the auto flag is not echoed and must be
+  `F5 12 <level>` when it changes; the auto flag is not echoed and must be
   tracked locally.
-- **Long-press (left).** `F5 17` press-down → `F5 18` release. This is the
+- **Long-press (left).** `F5 17` press-down, `F5 18` release. This is the
   voice / Even AI entry path.
-- **Long-press (right) — QuickNote.** Does **not** fire `F5 17` / `F5 18`.
+- **Long-press (right): QuickNote.** Does **not** fire `F5 17` / `F5 18`.
   Instead emits `0x21` on release (notes-list metadata). The firmware records
   into a circular 4-slot buffer on the glasses; the host requests audio via
   `1e 06 00 <seq> 02 <noteIndex>` and receives an LC3 stream on `0x1e c8`
-  chunks (10-byte header + 190-byte payload). The companion app decodes
-  LC3 → WAV → Whisper STT → GPT tidy/categorise → Notes UI (Shopping / To Do
-  / Notes). Shipped end-to-end 2026-05-09.
+  chunks (10-byte header + 190-byte payload).
 - **Triple-tap.** `F5 04` enables silent mode, `F5 05` disables it.
 - **Double-tap is the boundary between firmware-handled and host-handled
-  actions.** When closing an active feature → `F5 00`. When opening a feature
-  configured to a host-handled action (Transcribe / Translate / Teleprompter
-  in the official Even app) → `F5 20`. Firmware-native actions (Dashboard) or
-  "None" do not cross the BLE boundary at all.
-- **Single taps are firmware-only in every state tested.** Idle, dashboard
-  with notes list visible, dashboard with notifications visible — the
-  firmware visibly responds on the glasses but no BLE event fires. Stop
-  designing around them.
+  actions.** When closing an active feature it sends `F5 00`. When opening a
+  feature configured to a host-handled action (Transcribe / Translate /
+  Teleprompter in the official Even app) it sends `F5 20`. Firmware-native
+  actions (Dashboard) or "None" do not cross the BLE boundary at all. Over a
+  text surface, double-tap arrives as `F5 00`, not `F5 20`.
+- **Single taps reach the host only on a tap-enabled surface.** `F5 01`
+  fires only while a tap-enabled `0x4E` text surface is up (open `0x31`, pin
+  and page with `0x51`). Under the usual `0x4E` status `0x71`, single taps
+  never reach the phone.
 - **Persisted-on-glasses settings.** Head-up / tilt-up behaviour:
   `0x08 06 00 00 03 <value>`. Double-tap action: `0x26 06 00 <seq> 05 <value>`.
   Both follow the same shape as the brightness command. The values persist
   in firmware and survive an app uninstall.
+- **Text rendering (`0x4E`).** Text is capped at 480 bytes with no bounds
+  check in firmware. Intermediate chunks ack `0xCB`, the last acks `0xC9`.
 - **Live streaming text (`0x52`).** Word-by-word incremental rendering with a
-  cursor and live-updating clock. The official app uses this for live
-  transcription; the companion app can use it for streaming Chat responses.
-- **Navigation structured card (`0x0a`).** One ~48-byte packet with
-  null-separated text fields (ETA, distance, road name, turn distance) plus
-  optional direction-icon and route-map bitmap chunks. The companion app's
-  current debug path replays the full 108-packet official lifecycle using an
-  **interleaved per-leg fire-and-forget transport** (right packet N, left
-  packet N, then next pair), which is now the stable way to get both eyes to
-  render together without starving one leg.
+  cursor and live-updating clock. The keepalive must be the full
+  `53 06 00 <seq> 03 00` frame; 30 s without one ends the session.
+- **Navigation structured card (`0x0a`).** TRIP_STATUS carries
+  null-separated text fields (capped at 24/24/64/24/24 bytes; overflow aborts
+  the whole packet) plus a built-in direction arrow and a position marker
+  (x 6..482, y 6..130). Route tiles go on both map packets. Send a `0x18`
+  clear before INIT, and send the master its final map packet after the slave
+  has finished.
 - **Dashboard data slot injection (`0x1e` TX).** Pushes titled content (note
   title + body) into the firmware's built-in dashboard grid layout.
 - **Note management.** Delete and reorder of saved notes use a three-step
-  `0x06 ... / 0x22` ack transaction with an 8-byte note UID — same UID shape
-  as the trailing block in `R21` payloads, suggesting `R21` advertises the
-  UID of the just-saved note.
+  `0x06 ... / 0x22` ack transaction with an 8-byte note UID, the same UID
+  shape as the trailing block in `R21` payloads, suggesting `R21` advertises
+  the UID of the just-saved note.
+- **Link liveness.** Any write within 30 s keeps the link alive. `0x25`
+  sub 4 is teleprompter sync, not a real heartbeat.
 
 ## Personal companion app
 
 What follows is the personal app this repo also hosts. It is written for me,
-on my hardware (Samsung Galaxy S24 Ultra), and is not intended as a
-general-purpose product.
+on my hardware (Samsung Galaxy S24 Ultra, G1 firmware 1.6.6), and is not
+intended as a general-purpose product.
 
 ### Modes
 
-- `Glance` — Android notification ingestion, lightweight text rendering to
-  the glasses, proactive auto-pop, deliberate recall / cycling with head
-  tilt, double-tap to close, plus a Glance-only assistant shortcut that
-  reuses the same OpenAI-backed transcription / assistant path as Chat mode.
-  Includes a persistent call HUD: active phone calls are detected via
+- `Glance`: Android notification ingestion with a notification carousel
+  paged by single tap on a tap-enabled `0x4E` surface, a media line,
+  proactive auto-pop, deliberate recall with head tilt, double-tap to close,
+  and a Glance-only assistant shortcut on left long-press. Includes a
+  persistent call HUD: active phone calls are detected via
   `TelephonyEventService` (with `READ_PHONE_STATE` permission) and rendered
-  as a duration-counting HUD that stays on the glasses for the call's lifetime,
-  resuming automatically after any notification carousel interaction.
-- `Capture` — start recording from the glasses mic on a trusted gesture, save
-  WAV to the public `Internal storage/Recordings/Even Companion` collection.
-  Practically usable; stop / save reliability is still an open validation
-  item.
-- `Navigate` — consumes Google Maps navigation notifications and renders
-  concise turn guidance to the glasses using the firmware's structured `0x0a`
-  navigation card protocol. Current working shape:
-  - full 108-packet interleaved replay for the initial bootstrap
-  - live dynamic `TRIP_STATUS` injected into that bootstrap
-  - captured icon/map bytes still reused from the official app
-  - 1-second `0x0a` `SYNC` poller to keep the session alive
-  - post-bootstrap updates currently experimenting with `TRIP_STATUS + SYNC`
-    Still under active device validation.
-- `Chat` — voice loop. Tilt up to start listening, tilt down to submit,
-  transcript handed to an OpenAI-compatible backend, the response is
-  rendered back to the glasses. Follow-up turns share an in-memory session
-  while Chat mode stays active.
+  as a duration-counting HUD that stays on the glasses for the call's
+  lifetime.
+- `Capture`: records from the glasses mic with a live HUD and saves WAV to
+  the public `Internal storage/Recordings/Even Companion` collection. Phone-mic
+  recording is a home-screen button rather than a mode; it uses the same WAV
+  format, folder and recordings list.
+- `Navigate`: walking navigation on the firmware `0x0a` navigation card.
+  Sharing a destination from Google Maps starts a trip; the route bundle
+  comes from `cartographer`, a self-hosted routing service, and the app
+  tracks GPS progress, swaps route tiles and moves the position marker.
+  Routing works inside synced regions, managed from the Regions page. With
+  no shared trip, live Google Maps navigation notifications drive the card
+  as a fallback.
+- `Chat`: voice loop. Tilt up to start listening, tilt down to submit; the
+  transcript goes to an OpenAI-compatible backend and the reply streams back
+  word by word on `0x52`. Follow-up turns share an in-memory session while
+  Chat mode stays active.
+
+QuickNote (right long-press) runs in every mode: the app pulls the LC3 audio,
+decodes it to WAV, transcribes it, tidies and categorises it, and files it in
+a Notes page with Shopping / To Do / Notes tabs.
 
 ### Trusted glasses interaction model
 
 The app routes only events that have held up in live testing:
 
-- `F5 00` — close active feature / home (also fires on double-tap to close)
-- `F5 02` — tilt-up / dashboard-open start
-- `F5 03` — tilt-down / dashboard-close start
-- `F5 17` — left long-press press-down (voice / Even AI start)
-- `F5 18` — left long-press release
-- `F5 1E` — dashboard / state-up follow-on confirmation
-- `F5 1F` — dashboard / state-down follow-on confirmation
-- `F5 20` — host-handled double-tap (mode cycle, contingent on the official
-  Even app's double-tap action being a host-handled feature; configurable
-  from this app's Settings → Firmware Settings dropdown)
+- `F5 00`: close active feature / home (also fires on double-tap to close)
+- `F5 01`: single tap, only while a tap-enabled `0x4E` surface is up
+- `F5 02`: tilt-up start
+- `F5 03`: tilt-down start
+- `F5 04` / `F5 05`: triple-tap silent-mode toggle
+- `F5 17`: left long-press down (voice start)
+- `F5 18`: left long-press release (voice stop)
+- `F5 1E` / `F5 30`: dashboard state-up follow-on
+- `F5 1F` / `F5 31`: dashboard state-down follow-on
+- `F5 20`: host-handled double-tap (mode cycle), contingent on the glasses'
+  double-tap action being a host-handled feature; configurable from this
+  app's Settings → Firmware Settings dropdown
 
-Single taps are deliberately not part of the trusted set — see the findings
-above. Right-long-press uses the `0x21` family rather than `F5`.
+Right long-press uses the `0x21` family rather than `F5`. Our own clears and
+renders can make the right lens emit `F5 00`, so it is not always a user
+gesture.
 
 ### Quick mode switching
 
@@ -193,7 +215,8 @@ Mode changes can come from any of:
 - the Settings → Firmware Settings → "Double-tap behaviour" dropdown set to
   "Companion app mode switch", which makes the firmware emit `F5 20` on
   double-tap and the companion app cycles through `Glance` → `Navigate` →
-  `Chat` → `Capture` → `Glance`. Cycle is debounced at 1500 ms.
+  `Chat` → `Capture` → `Glance`. The cycle is debounced at 1500 ms and
+  blocked while a Capture recording is running.
 
 ### Glasses display rule
 
@@ -206,17 +229,17 @@ Mode changes can come from any of:
 The Settings page has a "Firmware Settings" section that writes two
 persisted-on-glasses values:
 
-- **Tilt-up behaviour** — choose between letting the firmware show its own
+- **Tilt-up behaviour**: choose between letting the firmware show its own
   dashboard on tilt-up, or suppressing the firmware overlay so the companion
   app drives any visible response.
-- **Double-tap behaviour** — choose between cycling companion app modes (the
+- **Double-tap behaviour**: choose between cycling companion app modes (the
   setting that makes `F5 20` fire), opening the firmware dashboard locally,
   or doing nothing.
 
 Both choices are stored on the glasses themselves and survive an app
 uninstall. The companion app remembers the last pick across restarts and
 re-pushes persisted values on every reconnect (the authoritative-settings
-model — see `docs/current-architecture.md`).
+model; see `docs/current-architecture.md`).
 
 ### Technical shape
 
@@ -225,33 +248,39 @@ the original vendor demo and refactors around it rather than replacing it.
 
 Key pieces:
 
-- Flutter mode/controller layer
-- native dual-BLE Even G1 connection handling
-- existing text rendering path (`0x4E`)
-- Android notification listener
-- Android foreground companion service
+- Flutter mode/controller layer (`CompanionController` owns modes and
+  gesture routing)
+- native dual-BLE Even G1 connection handling with per-leg write queues
+- pixel-accurate `0x4E` text layout from the firmware glyph-width table
+- paced `0x52` streaming queue for Chat
+- shared `0x0a` nav card lifecycle for both Navigate paths
+- Android notification listener and foreground companion service
 - native glasses-mic audio decode path (LC3 → PCM)
-- Chat STT + backend request seam (`ChatBackend` abstraction)
+- self-hosted speech-to-text plus an OpenAI chat backend
 
 ### Project structure
 
 Important Flutter files:
 
 - [lib/ble_manager.dart](lib/ble_manager.dart)
-- [lib/models/app_mode.dart](lib/models/app_mode.dart)
 - [lib/services/companion_controller.dart](lib/services/companion_controller.dart)
-- [lib/services/device_status_service.dart](lib/services/device_status_service.dart)
+- [lib/services/proto.dart](lib/services/proto.dart)
 - [lib/services/glance_service.dart](lib/services/glance_service.dart)
+- [lib/services/glance_carousel.dart](lib/services/glance_carousel.dart)
 - [lib/services/capture_service.dart](lib/services/capture_service.dart)
+- [lib/services/phone_capture_service.dart](lib/services/phone_capture_service.dart)
 - [lib/services/navigate_service.dart](lib/services/navigate_service.dart)
+- [lib/services/nav_card_session.dart](lib/services/nav_card_session.dart)
+- [lib/services/walknav/](lib/services/walknav/)
 - [lib/services/chat_service.dart](lib/services/chat_service.dart)
-- [lib/services/chat_backend.dart](lib/services/chat_backend.dart)
+- [lib/services/streaming_render_queue.dart](lib/services/streaming_render_queue.dart)
+- [lib/services/g1_text_layout.dart](lib/services/g1_text_layout.dart)
 - [lib/services/openai_chat_backend.dart](lib/services/openai_chat_backend.dart)
 - [lib/services/openai_transcription_service.dart](lib/services/openai_transcription_service.dart)
+- [lib/services/device_status_service.dart](lib/services/device_status_service.dart)
+- [lib/services/recordings_service.dart](lib/services/recordings_service.dart)
 - [lib/services/app_settings_store.dart](lib/services/app_settings_store.dart)
-- [lib/services/proto.dart](lib/services/proto.dart)
-- [lib/views/home_page.dart](lib/views/home_page.dart)
-- [lib/views/settings_page.dart](lib/views/settings_page.dart)
+- [lib/views/](lib/views/)
 
 Important Android / native files:
 
@@ -261,18 +290,12 @@ Important Android / native files:
 - [android/app/src/main/kotlin/com/eddie/evencompanion/notifications/NotificationFeedStore.kt](android/app/src/main/kotlin/com/eddie/evencompanion/notifications/NotificationFeedStore.kt)
 - [android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/CompanionForegroundService.kt)
 - [android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/GlassesCaptureRecorder.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/PhoneCaptureRecorder.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/PhoneCaptureRecorder.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/WavRecordingStore.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/WavRecordingStore.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/NavLocationService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/NavLocationService.kt)
+- [android/app/src/main/kotlin/com/eddie/evencompanion/service/RegionSync.kt](android/app/src/main/kotlin/com/eddie/evencompanion/service/RegionSync.kt)
 - [android/app/src/main/kotlin/com/eddie/evencompanion/telephony/TelephonyEventService.kt](android/app/src/main/kotlin/com/eddie/evencompanion/telephony/TelephonyEventService.kt)
 - [android/app/src/main/cpp/liblc3.cpp](android/app/src/main/cpp/liblc3.cpp)
-
-Capture / analysis material:
-
-- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md),
-  [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md),
-  [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md) — the per-topic
-  write-ups produced from the snoop captures.
-- `logs/bluetooth/` (kept out of the published repository) — raw HCI
-  snoop logs, parser scripts (`parse_btsnoop.py`, `analyze_*.py`), and
-  per-session `wall clock *.md` annotations.
 
 ### Prerequisites
 
@@ -281,6 +304,7 @@ Capture / analysis material:
 - a paired Even G1 glasses set
 - an Android phone with notification access enabled for the app
 - an OpenAI API key if you want Chat mode to work end to end
+- a reachable Whisper-compatible transcription endpoint (see below)
 
 Primary target: Samsung Galaxy S24 Ultra on current Android. Other devices
 are not exercised.
@@ -294,22 +318,25 @@ are not exercised.
 ### Connection reliability
 
 - Per-leg health is tracked separately (connected / degraded / disconnected).
-- Heartbeat `0x25` is sent to each leg independently every 2 seconds (matching
-  the official Even Realities app's ~2 s cadence). Each leg starts its own
-  heartbeat timer immediately on connect.
-- A leg is marked degraded after 8 consecutive missed heartbeats; degraded legs
-  trigger bounded reconnect attempts.
-- When a leg recovers, the app resends current active content so left/right
-  displays converge again.
+- A `0x25` keepalive goes to each leg independently every 2 seconds. It is
+  really teleprompter sync; what keeps the link up is any write within 30 s.
+- A leg is marked degraded after 8 consecutive missed keepalives; degraded
+  legs trigger bounded reconnect attempts, and a single-leg drop reconnects
+  that leg without tearing down the session.
+- After a real disconnect the app flashes "Reconnected", force-clears both
+  lenses and resumes current content (a live nav card is re-booted instead).
 
 ### Permissions / setup
 
-- Notification access — required for Glance and Navigate. Toggle under
-  `Settings > Notification access` on the phone.
-- Bluetooth — required for scanning, pairing, and the dual-leg connection.
-- Phone state (`READ_PHONE_STATE`) — required for the call HUD. Grants access
-  to incoming/outgoing/active call detection via `TelephonyEventService`.
-- Foreground service — used so the app continues working while backgrounded.
+- Notification access: required for Glance and the Navigate fallback. Toggle
+  under `Settings > Notification access` on the phone.
+- Bluetooth: required for scanning, pairing, and the dual-leg connection.
+- Phone state (`READ_PHONE_STATE`): required for the call HUD.
+- Microphone: required for phone-mic recording, which runs in a
+  `microphone`-typed foreground service (without it Android 14+ records
+  silence).
+- Location: required for walking navigation and region sync.
+- Foreground service: keeps the app working while backgrounded.
 
 ### Chat backend configuration
 
@@ -340,7 +367,7 @@ flutter run --dart-define="OPENAI_API_KEY=sk-..."
 --dart-define="CHAT_MAX_HISTORY_MESSAGES=16"
 ```
 
-Pass the raw key value — do not wrap it in square brackets.
+Pass the raw key value; do not wrap it in square brackets.
 
 ### Speech-to-text runs on the local whisper-server
 
@@ -349,7 +376,7 @@ post to the self-hosted Speaches `whisper-server` on `deepthought`
 (`http://deepthought:56478/v1`, model
 `deepdml/faster-whisper-large-v3-turbo-ct2`), reached over Tailscale. It is
 unmetered and measured at 0.34 s for 9.7 s of glasses audio, roughly 28x
-realtime on the RTX 3090 — faster than the OpenAI round trip, not slower.
+realtime on the RTX 3090, which is faster than the OpenAI round trip.
 
 Consequences worth knowing:
 
@@ -372,11 +399,14 @@ Consequences worth knowing:
 
 - Verbose native Google Maps payload dumps are off by default. Enable on a
   connected device with:
-  
+
   ```powershell
   adb shell setprop log.tag.MapsNotificationDump DEBUG
   adb logcat -s MapsNotificationDump
   ```
+
+- Debuggable builds also expose adb broadcast hooks (protocol probe, walking
+  nav desk test, region sync, GPS trace recorder); see [AGENTS.md](AGENTS.md).
 
 ### Running the app
 
@@ -391,35 +421,36 @@ Validation note: `flutter run` is useful for iteration but is not enough as
 final validation. Final Android validation is an installed release APK on
 the target phone.
 
+Kotlin unit tests run on the JVM with
+`cd android && ./gradlew :app:testDebugUnitTest`.
+
 ### Current status
 
 Working well:
 
-- BLE scan / connect / dual-leg pairing
+- BLE scan / connect / dual-leg pairing and auto-reconnect
 - text rendering to the glasses
-- Glance notification display, cycling, deliberate dismissal
-- call HUD: incoming and active call detection via `TelephonyEventService`,
-  duration counter, persistent idle surface that survives carousel dismissal
-- QuickNote: right-temple long-press → `0x21` → `0x1e c8` LC3 audio stream →
+- Glance notification carousel with single-tap paging, deliberate dismissal
+  and the call HUD
+- QuickNote: right long-press → `0x21` → `0x1e c8` LC3 audio stream →
   STT → tidy → categorised notes in a 3-tab Notes panel
-- Chat mode end-to-end voice loop
-- Navigate mode via `0x0a` structured card (interleaved 108-packet bootstrap,
-  live `TRIP_STATUS`, dynamic `MAP_OVERVIEW` direction icon, 1-second `SYNC`
-  keepalive)
-- time sync on connect (`0x06` three-step transaction, local-epoch encoded)
+- Chat mode end-to-end voice loop with `0x52` streaming
+- glasses-mic Capture and phone-mic recording, with a shared recordings list
+- walking navigation on the `0x0a` card (passed a live walk on 2026-11-07),
+  with region sync
+- time sync on connect
 - battery / wear / brightness state on the home screen
-- Firmware settings dropdowns (tilt-up + double-tap) writing persisted
-  values via the newly-decoded settings opcodes
-- foreground companion-service foundation
+- Firmware settings dropdowns (tilt-up + double-tap) writing persisted values
 
 In progress / needs more device validation:
 
-- Navigate mode — startup hardening, field extraction cleanup, `PANORAMIC_MAP`
-  production path (currently captured/static)
-- Capture mode end-to-end recording reliability
-- background behaviour polish
-- left/right render synchronisation under heavy notification churn in
-  non-Navigate flows
+- Navigate: longer real-world walks; the Google Maps notification fallback
+  has not been device-tested since its rewrite
+- Capture stop/save semantics under continued real-world use
+- Chat latency, retries and edge-case error handling
+- left/right render synchronisation under rapid notification arrival
+
+The live task queue is [docs/current-worklist.md](docs/current-worklist.md).
 
 ## What this repo is not
 
@@ -434,10 +465,11 @@ In progress / needs more device validation:
 
 ### How this README is organised
 
-This README serves two audiences. The first half (up to "Personal companion app")
-is for anyone investigating the G1 BLE protocol — it covers confirmed findings,
-evidence basis, and links to the reference documentation. The second half is for
-anyone who wants to understand or run the personal Flutter companion app.
+This README serves two audiences. The first half (up to "Personal companion
+app") is for anyone investigating the G1 BLE protocol: it covers confirmed
+findings, evidence basis, and links to the reference documentation. The
+second half is for anyone who wants to understand or run the personal Flutter
+companion app.
 
 The full document map:
 
@@ -445,13 +477,20 @@ G1 reference layer (public findings):
 
 - [docs/protocol-reference.md](docs/protocol-reference.md)
 - [docs/even-g1-event-mapping.md](docs/even-g1-event-mapping.md)
+- [docs/firmware-decomp-notes.md](docs/firmware-decomp-notes.md)
+- [docs/firmware-decomp-display-relay.md](docs/firmware-decomp-display-relay.md)
 - [docs/investigation-notes.md](docs/investigation-notes.md)
 - [docs/python-sdk-comparison-notes.md](docs/python-sdk-comparison-notes.md)
 - [docs/external-protocol-wiki-notes.md](docs/external-protocol-wiki-notes.md)
-- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md)
+- [docs/g1-companion-apps-comparison-notes.md](docs/g1-companion-apps-comparison-notes.md)
 - [docs/FINDINGS-taps.md](docs/FINDINGS-taps.md)
 - [docs/FINDINGS-settings.md](docs/FINDINGS-settings.md)
+- [docs/FINDINGS-battery+brightness.md](docs/FINDINGS-battery+brightness.md)
 - [docs/FINDINGS-layouts.md](docs/FINDINGS-layouts.md)
+- [docs/FINDINGS-quicknote.md](docs/FINDINGS-quicknote.md)
+- [docs/FINDINGS-evenai-flash-on-clear.md](docs/FINDINGS-evenai-flash-on-clear.md)
+- [docs/FINDINGS-nav-marker-tiles.md](docs/FINDINGS-nav-marker-tiles.md)
+- [docs/FINDINGS-screen-off-gps.md](docs/FINDINGS-screen-off-gps.md)
 
 App implementation layer (private):
 
@@ -459,9 +498,11 @@ App implementation layer (private):
 - [docs/current-architecture.md](docs/current-architecture.md)
 - [docs/current-behaviour.md](docs/current-behaviour.md)
 - [docs/current-worklist.md](docs/current-worklist.md)
+- [docs/cartographer-contract.md](docs/cartographer-contract.md)
+- [docs/plans/](docs/plans/)
+- [docs/versioning.md](docs/versioning.md)
+- [docs/Setup-Linux.md](docs/Setup-Linux.md)
 - [docs/archive/](docs/archive/)
-
----
 
 If you are not me, you will probably get more out of the behaviour
 documentation in `docs/` than out of the personal companion app itself.
